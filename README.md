@@ -32,3 +32,5 @@ You have two options to run the pipeline:
     - Comment out any steps you wish to skip.
     - Run the entire script:
 `source("Main.R")`
+### Running standalone scripts
+Some scripts are not yet included in the main workflow and can be run on their own, sometimes needing data produced by other scripts...
