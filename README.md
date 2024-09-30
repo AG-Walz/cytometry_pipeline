@@ -8,7 +8,7 @@ This pipeline is supposed to become a comprehensive tool designed to facilitate 
 ### Prerequisites
 - R(version 4.0 or higher)
 - Rstudio (recommended, in some cases comment out rstudioapi and similar steps necessary)
-- Proper rights and internet to download packages automatically using `Bioconductor::BiocManager::install()`, `remotes::install_github()` and `devtools::install_github()`
+- Proper rights and internet connection to download packages automatically using `Bioconductor::BiocManager::install()`, `remotes::install_github()` and `devtools::install_github()`
 
 ### Setup 
 
