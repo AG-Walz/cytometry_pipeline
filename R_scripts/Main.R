@@ -30,7 +30,7 @@ knitr::opts_chunk$set(cache = TRUE, warning = FALSE,
 
 # ================================= INPUT ======================================
 
-parameter_file <- "Parameters_ICK.R"
+parameter_file <- "./../test_data/Parameters_template.R"
 
 source(parameter_file, chdir = TRUE)
 
@@ -43,7 +43,10 @@ source("Check.R", chdir = TRUE)
 # Homogenize / downsample
 source("Unify.R", chdir = TRUE)
 
-# Density plots, 
+# Downsample
+source("Downsample.R", chdir = TRUE)
+
+# plot density plots 
 source("Plot_raw.R", chdir = TRUE)
 
 # ============================ PREPROCESSING ===================================
