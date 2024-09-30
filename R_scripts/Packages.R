@@ -12,11 +12,11 @@
 ## =========================== General packages ============================= ##
 
 # List of required packages that can be installed with install.packages()
-packages = c("devtools","remotes", #"BiocManager",
-             "mclust","scales","tibble", 
+packages = c("devtools","remotes", "BiocManager",
+             "mclust","scales","tibble", "ggplot2",
              "viridis","plotly","data.table",   "ggrepel", 
              "rmarkdown", "RColorBrewer", "dplyr", "reshape2", "Rtsne", 
-             "ggplot2","diptest", "LaplacesDemon",  "diptest",  
+             "diptest", "LaplacesDemon",  "diptest",  
              "mousetrap", "readxl", "magrittr","ggridges", 'emdist', "plyr",
              "Matrix", "irlba", "RSpectra", "bigstatsr", "multimode","sBIC", 
              "tidyverse")
