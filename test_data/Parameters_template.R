@@ -76,7 +76,7 @@ plot_umap_raw_per_file = FALSE
 # Homogenize all flow_frames =  remove all columns that are not "of interest" and
 # order those columns to match the order of the variable markers_of_interest
 # CAVE: This step currently cannot be run before quality control 
-homogenize = "None" # accepts either ["before" or "after" or "None"]
+homogenize = "before" # accepts either ["before" or "after" or "None"]
 extract_ro_csv = FALSE # Save the reordered expression matrix in a CSV (May take a long time)
 extract_ro_fcs = FALSE # Saves reordered FCS file (May take a long time)
 
@@ -105,7 +105,7 @@ width_list <- c(1800, 2027,3210,1401,
 )#rep(1000, times = length(markers_of_interest))
 
 # Choose quality control algorithm: "None","flowAI", "PeacoQC", (not yet implemented: "flowCut" or "flowClean")
-qc_type <- "None"
+qc_type <- "flowAI"
 
 # Choose preprocessing order, either first quality control, then transform "QT" 
 # or the other way around "TQ"
