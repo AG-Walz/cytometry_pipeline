@@ -9,7 +9,7 @@
 #============================= General parameters===============================
 
 # Input directory path (either absolute or relative to the current working directory path)
-input_file_path <- "./test_data/"
+input_file_path <- "./../test_data/"
 
 
 # List all files in input directory ending with .fcs
@@ -20,15 +20,15 @@ project_name <- "ICK_24_09_30"
 
 
 # Sample names corresponding to the FCS files
-sample_names <- c( "20_2","23_3","25_3","30_1"
+sample_names <- c( "20_2","23_3","25_3"
 )
 
 # Batch names corresponding to the sample names
-batch_names <- c("2","3","3","1"
+batch_names <- c("2","3","3"
 )
 
 # Patient names corresponding to the sample names
-patient_names <- c( "20","23","25","30"
+patient_names <- c( "20","23","25"
 )
 
 # Create a dictionary mapping sample names to batches
@@ -61,6 +61,7 @@ extract_rw_csv = FALSE # Takes up to 5min per file
 check_panels = TRUE # Compare pannels with one another
 
 # Plot the density plots of the raw files
+plot_density_raw_per_file = FALSE
 plot_density_per_samplenames = FALSE # per marker for all sample names 
 plot_density_per_batch = FALSE # per marker for all subgroup1 members
 plot_density_per_condition = FALSE # per marker for all subgroup2 members
@@ -105,7 +106,7 @@ width_list <- c(1800, 2027,3210,1401,
 )#rep(1000, times = length(markers_of_interest))
 
 # Choose quality control algorithm: "None","flowAI", "PeacoQC", (not yet implemented: "flowCut" or "flowClean")
-qc_type <- "flowAI"
+qc_type <- "PeacoQC"
 
 # Choose preprocessing order, either first quality control, then transform "QT" 
 # or the other way around "TQ"

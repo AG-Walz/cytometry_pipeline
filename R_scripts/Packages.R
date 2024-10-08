@@ -48,7 +48,7 @@ githubrepo = c("DillonHammill/CytoExploreRData","DillonHammill/CytoExploreR",
 gitpackages = c("CytoExploreRData", "CytoExploreR", "Spectre", "cyCombine",
                 "tidyverse", "FlowSOM")
 req_github = githubrepo[!(githubrepo %in% installed.packages()[,"Package"])]
-#if(length(req_github)){devtools::install_github(req_github, dependencies= TRUE, build_vignettes = TRUE)}
+if(length(req_github)){devtools::install_github(req_github, dependencies= TRUE, build_vignettes = TRUE)}
 #invisible(sapply(gitpackages, library, character.only = TRUE))
 
 # options(repos = BiocManager::repositories()) # required for publishing  

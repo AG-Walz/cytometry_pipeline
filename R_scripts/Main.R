@@ -16,7 +16,7 @@
 # =============================== SETUP ========================================
 
 # Rename the library path if needed
-.libPaths("Q:/IM/AG_Märklin/FSFC_Pipeline/library/")
+# .libPaths("Q:/IM/AG_Märklin/FSFC_Pipeline/library/")
 
 # Set working directory to the same path as the current file
 setwd(dirname(rstudioapi::getSourceEditorContext()$path)) 
@@ -52,6 +52,7 @@ source("Plot_raw.R", chdir = TRUE)
 # ============================ PREPROCESSING ===================================
 
 # Preprocess the files
+## TODO: To improve, it is not running through
 source("Preprocess.R", chdir = TRUE)
 
 # Manual quality control to specify parameters more closely

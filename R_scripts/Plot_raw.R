@@ -25,15 +25,14 @@ if(plot_density_per_condition){
                      condition_names,target_ncell_subsampling)
 }
 # ========================= Test Other plots ============================== #
-'''ggcyto(flow_frames[[1]], aes(x = CD4, y = CD8 )) + 
-  geom_hex(bins = 100) + 
-  ylim(c(-100,4e3)) + 
-  xlim(c(-100,3e3))+              # Set x-axis limits
-  #scale_fill_continuous(name = "Density") +  # Add a legend with a label
-  theme(legend.position = "right")  # Adjust legend position (optional)
-
-ggcyto(flow_frames[[1]], aes(x = CD4)) +  geom_density(fill = "green")
-
-autoplot(flow_frames[[1]],"CD3")
-ggcyto(flow_frames[[1]], aes(CD4, CD8)) + geom_hex(bins = 200)
-'''
+# ggcyto(flow_frames[[1]], aes(x = CD4, y = CD8 )) + 
+#   geom_hex(bins = 100) + 
+#   ylim(c(-100,4e3)) + 
+#   xlim(c(-100,3e3))+              # Set x-axis limits
+#   #scale_fill_continuous(name = "Density") +  # Add a legend with a label
+#   theme(legend.position = "right")  # Adjust legend position (optional)
+# 
+# ggcyto(flow_frames[[1]], aes(x = CD4)) +  geom_density(fill = "green")
+# 
+# autoplot(flow_frames[[1]],"CD3")
+# ggcyto(flow_frames[[1]], aes(CD4, CD8)) + geom_hex(bins = 200)
