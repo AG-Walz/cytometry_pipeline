@@ -44,9 +44,9 @@ invisible(sapply(biopackages, library, character.only = TRUE))
 # Repeat the same procedure for Bioconductor packages
 githubrepo = c("DillonHammill/CytoExploreRData","DillonHammill/CytoExploreR",
                "ImmuneDynamics/Spectre","biosurf/cyCombine", 
-               "tidyverse/tidyverse","saeyslab/FlowSOM")
+               "tidyverse/tidyverse","saeyslab/FlowSOM", "maxsonBraunLab/CITE-Viz")
 gitpackages = c("CytoExploreRData", "CytoExploreR", "Spectre", "cyCombine",
-                "tidyverse", "FlowSOM")
+                "tidyverse", "FlowSOM", "CiteViz") # devtools::install_github("maxsonBraunLab/CITE-Viz")
 req_github = githubrepo[!(githubrepo %in% installed.packages()[,"Package"])]
 if(length(req_github)){devtools::install_github(req_github, dependencies= TRUE, build_vignettes = TRUE)}
 #invisible(sapply(gitpackages, library, character.only = TRUE))
