@@ -13,7 +13,7 @@ quality_control <- function(flowframe, sample_name) {
                                     folder_results = paste(qc_output_path,"/FlowAI_", sample_name, sep = ""))
       qc_output_dir <- dirname(qc_output_path)
       if (!dir.exists(qc_output_dir)) {
-        dir.create(qc_output_dir, recursive = TRUE)
+        dir_create(qc_output_dir)
       }
       flowCore::write.FCS(qc_df, paste0(qc_output_path,"/FlowAI_", sample_name, ".fcs"))
       qc_df
@@ -108,7 +108,7 @@ find_optimal_b_cofactor <- function(data, target_bimodality_coefficient = 0.9) {
 }
 
 get_opt_b_cofactor <- function(flowframe_list, target_bimodality_coefficient = 0.9,
-                               markers_of_interest){
+                              markers_of_interest){
   conc_eM <- concatenate_exprs_mtx(flowframe_list)
   cofactors <- list()
   for(j in 1:ncol(conc_eM)){
@@ -156,7 +156,7 @@ z_score_scaling <- function(flowframe, marker_indices){
 #=========================== Quantile normalization ============================
 norm_quant <- function(matrix){
   qn_matrix <- preprocessCore::normalize.quantiles(as.matrix(matrix, 
-                                                             nrow = length(markers_of_interest)))
+                                                            nrow = length(markers_of_interest)))
   return(qn_matrix)
 }
 quantile_norm <- function(flowframe, marker_indices){

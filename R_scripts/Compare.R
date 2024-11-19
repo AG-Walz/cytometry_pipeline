@@ -69,10 +69,13 @@ dir_create <- function(dir_path_list){
       path <- paste0(path, "/")
       }
     if (!is_directory(path)){
-      dir.create(path, showWarnings = FALSE) # Create directory 
+      suppressWarnings({
+        # Create directory if it does not exist
+        dir.create(path, showWarnings = FALSE) 
+      })
     }
   }
-}
+} # lapply(paths, dir.create, recursive = TRUE)
 
 
 #==================== Extract information from FF ==============================

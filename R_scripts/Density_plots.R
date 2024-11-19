@@ -14,9 +14,8 @@ plotMarkerDensity <- function(step_name, flowframe, output_folder) {
 #' @return This function does not return a value. It saves the density plots to the specified output folder.
 #'
   # Create the output folder if it does not exist
-  if (!dir.exists(output_folder)) {
-    dir.create(output_folder)
-  }
+  dir_create(output_folder)
+
   # Get the marker names
   marker_names <- markernames(flowframe)
   
@@ -56,9 +55,8 @@ overlap_per_marker <- function(flowfr, output_folder, groupnames,downsample_size
 #'
 #' @return This function does not return a value. It saves the results to the specified output folder.
 #'
-  if (!dir.exists(output_folder)) {
-    dir.create(output_folder)
-  }
+  # Create the output folder if it does not exist
+  dir_create(output_folder)
   cat("\nPlotting the cell density per marker for the following groups:\n", unique(groupnames), "\n")
   for(i in 1:length(markernames(flowfr[[1]]))){
     marker_i <- c()

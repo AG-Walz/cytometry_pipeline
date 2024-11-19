@@ -17,7 +17,7 @@ paths <- c(
   paste0(results_path, "/downsampled_files/")
 )
 
-lapply(paths, dir.create, recursive = TRUE)
+dir_create(paths)
 
 ## ========================= Read & Check FCS files ==========================##
 

@@ -9,7 +9,7 @@ lapply(source_files, source, chdir = TRUE)
 ## ====================== Create output directory paths ===================== ##
 # Determine the results path based on the project name
 results_path <- ifelse(is.na(file.info(project_name)$isdir) || !file.info(project_name)$isdir,
-             file.path(getwd(), "Results", project_name), project_name)
+                        file.path(getwd(), "Results", project_name), project_name)
 
 paths <- c(
   results_path,
@@ -18,7 +18,7 @@ paths <- c(
   paste0(results_path, "/downsampled_files/")
 )
 
-lapply(paths, dir.create, recursive = TRUE)
+dir_create(paths)
 
 ## ========================= Read FCS files ==========================##
 
@@ -38,9 +38,9 @@ if (length(input_fcs_files) == 0) {
   flow_frames <- c()
   for (i in 1:length(input_fcs_files)) {
     flow_frames[[i]] <- flowWorkspace::load_cytoframe_from_fcs(input_fcs_files[i],
-                                           transformation = FALSE, 
-                                           truncate_max_range = truncation,
-                                           min.limit = min_limit)
+                                          transformation = FALSE, 
+                                          truncate_max_range = truncation,
+                                          min.limit = min_limit)
     # Print number of cells before preprocessing
     cat("Sample", sample_names[i],"=", input_fcs_names[i], "had a total of", 
         nrow(flow_frames[[i]]), "cells.\n")

@@ -7,7 +7,7 @@
 #              executes various stages of data processing and analysis.
 #
 # Date Created: 2022-05-25
-# Date Modified: 2024-09-26
+# Date Modified: 2024-11-11
 # Version: 0.0
 # Dependencies: Listed in the Packages.R file
 # Usage: Edit the parameter_template.R, renaming it properly and setting the parameters 
@@ -18,7 +18,7 @@
 # Rename the library path if needed
 # .libPaths("Q:/IM/AG_Märklin/FSFC_Pipeline/library/")
 
-# Set working directory to the same path as the current file
+# !For RStudio only: Set working directory to the same path as the current file
 setwd(dirname(rstudioapi::getSourceEditorContext()$path)) 
 
 # Install and load packages

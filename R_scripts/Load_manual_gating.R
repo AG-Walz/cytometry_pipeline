@@ -8,7 +8,8 @@ setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
 input_file_path <-"T:/User/Nacho/Data/Cytometry/ICK_data/"
 output_path <- paste0(input_file_path, "/CD3_gated/")
-dir.create(output_path)
+dir_create(output_path)
+
 # Get list of FCS and csv files
 fcs_files <- list.files(input_file_path, pattern = "\\.fcs$", full.names = TRUE)
 csv_files <- list.files(input_file_path, pattern = "\\.csv$", full.names = TRUE)
