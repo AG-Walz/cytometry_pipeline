@@ -38,4 +38,3 @@ ggplot(stats, aes(x = Population, y = Percent)) +
   geom_bar(stat = "identity") +
   theme_minimal() +
   labs(title = "Population Percentage Shifts", x = "Population", y = "Percentage")
-

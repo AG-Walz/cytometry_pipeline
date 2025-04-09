@@ -10,16 +10,17 @@
 # loads each package into the R session.
 
 ## =========================== General packages ============================= ##
+# options(repos = c(CRAN = "https://cran.r-project.org"))
 
 # List of required packages that can be installed with install.packages()
-packages = c("devtools","remotes", "BiocManager",
+packages = c("devtools","remotes", "BiocManager", "Cairo",
              "mclust","scales","tibble", "ggplot2",
              "viridis","plotly","data.table",   "ggrepel", 
              "rmarkdown", "RColorBrewer", "dplyr", "reshape2", "Rtsne", 
-             "diptest", "LaplacesDemon",  "diptest",  
+             "diptest", "LaplacesDemon",  "diptest",  "ggpubr", "units",
              "mousetrap", "readxl", "magrittr","ggridges", 'emdist', "plyr",
              "Matrix", "irlba", "RSpectra", "bigstatsr", "multimode","sBIC", 
-             "tidyverse")
+             "tidyverse", "cytolib", "flowCore", "flowWorkspace")
 #
 
 # List of general required packages that are not already installed
@@ -31,9 +32,9 @@ invisible(sapply(packages, library, character.only = TRUE)) # Load packages
 
 # Repeat the same procedure for Bioconductor packages
 biopackages = c("openCyto","flowCore", "flowAI", "PeacoQC","flowWorkspace", 
-                "uwot", "pheatmap","tidyr", "ggcyto", "flowVS",
-                "preprocessCore", "flowTrans", "preprocessCore","harmony", 
-                "Biobase","BiocGenerics")
+                "flowWorkspaceData", "uwot", "pheatmap","tidyr", "ggcyto", 
+                "flowVS", "preprocessCore", "flowTrans", "preprocessCore",
+                "harmony", "Biobase","BiocGenerics")
 # "FlowSOM", "ggpubr", "phyloseq",
 req_biopackages = biopackages[!(biopackages %in% installed.packages()[,"Package"])]
 if(length(req_biopackages)){BiocManager::install(req_biopackages)}
@@ -41,15 +42,20 @@ invisible(sapply(biopackages, library, character.only = TRUE))
 
 ## =========================== Github repositories ========================== ##
 # setRepositories(ind = c(1:6, 8))
-# Repeat the same procedure for Bioconductor packages
-githubrepo = c("DillonHammill/CytoExploreRData","DillonHammill/CytoExploreR",
+# Repeat the same procedure for Github repository packages
+githubrepo = c("Bioconductor/BiocParallel","DillonHammill/openCyto", "DillonHammill/DataEditR", 
+               "JinmiaoChenLab/Rphenograph",
+               "DillonHammill/HeatmapR", "maxsonBraunLab/CITE-Viz",
+               "DillonHammill/CytoExploreRData","DillonHammill/CytoExploreR",
                "ImmuneDynamics/Spectre","biosurf/cyCombine", 
-               "tidyverse/tidyverse","saeyslab/FlowSOM", "maxsonBraunLab/CITE-Viz")
-gitpackages = c("CytoExploreRData", "CytoExploreR", "Spectre", "cyCombine",
-                "tidyverse", "FlowSOM", "CiteViz") # devtools::install_github("maxsonBraunLab/CITE-Viz")
-req_github = githubrepo[!(githubrepo %in% installed.packages()[,"Package"])]
-if(length(req_github)){devtools::install_github(req_github, dependencies= TRUE, build_vignettes = TRUE)}
-#invisible(sapply(gitpackages, library, character.only = TRUE))
+               "tidyverse/tidyverse","saeyslab/FlowSOM")
+gitpackages = c("BiocParallel","openCyto","DataEditR","Rphenograph","HeatmapR","CITEViz",
+                "CytoExploreRData", "CytoExploreR", "Spectre", "cyCombine", "tidyverse", "FlowSOM") 
+
+req_github = githubrepo[!(gitpackages %in% installed.packages()[,"Package"])]
+if(length(req_github)){devtools::install_github(req_github, dependencies = TRUE,
+                                                build_vignettes = FALSE)}
+invisible(sapply(gitpackages, library, character.only = TRUE))
 
 # options(repos = BiocManager::repositories()) # required for publishing  
 
