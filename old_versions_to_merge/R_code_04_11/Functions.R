@@ -67,9 +67,9 @@ dir_create <- function(dir_path_list){
   for(path in dir_path_list){
     if (!endsWith(path, "/")){
       path <- paste0(path, "/")
-      }
+    }
     if (!is_directory(path)){
-      dir.create(path, showWarnings = FALSE) # Create directory 
+      dir.create(path, showWarnings = TRUE) # Create directory
     }
   }
 }
@@ -128,7 +128,6 @@ compare_panels <- function(flowframes_list) {
   for (i in 2:length(flowframes_list)) {
     current_markers <- explore_data(flowframes_list[[i]])$markers
     marker_found <- FALSE
-    
     for (j in seq_along(marker_dict)) {
       if (identical(marker_dict[[j]], current_markers)) {
         marker_dict[[j]] <- c(marker_dict[[j]], i)
@@ -136,12 +135,11 @@ compare_panels <- function(flowframes_list) {
         break
       }
     }
-    
     if (!marker_found) {
       marker_dict[[length(marker_dict) + 1]] <- current_markers
     }
   }
-  
+
   return(marker_dict)
 }
 

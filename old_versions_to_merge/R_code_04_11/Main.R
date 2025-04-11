@@ -23,6 +23,7 @@ setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
 # Install and load packages
 source("Packages.R", chdir = FALSE)
+source("Functions.R", chdir = FALSE)
 
 # Increase memory and use cache for larger files
 knitr::opts_chunk$set(cache = TRUE, warning = FALSE, 

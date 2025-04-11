@@ -1,19 +1,22 @@
 # Required Libraries: flowWorkspace, dplyr, openxlsx
 
-input_csv_path <-"T:/User/Nacho/Data/Cytometry/ICK_data/"
-input_fcs_path <- ""
-output_path <- paste0(input_file_path, "/CD3_gated/")
+input_csv_path <-"/data/Maerklin/ICK/cytolution_gated/files_ICK18_58_pre-gating_2_17_2025/"
+input_fcs_path <- "/data/Maerklin/ICK/cytolution_gated/files_ICK18_58_pre-gating_2_17_2025/"
+output_path <- paste0(input_fcs_path, "/Gated_fo/")
 dir_create(output_path)
 
-# Get list of FCS and csv files
-fcs_files <- list.files(input_file_path, pattern = "\\.fcs$", full.names = TRUE)
-csv_files <- list.files(input_file_path, pattern = "\\.csv$", full.names = TRUE)
+selected_gates <- c(
+  "CD3...Manual.gating..1",
+  "Monocytes..Manual.gating."
+)
 
-# Ensure files are in pairs by name
-fcs_files_base <- gsub("\\.fcs$", "", basename(fcs_files))
-csv_files_base <- gsub("\\.csv$", "", basename(csv_files))
+# Get list of FCS and csv files
+fcs_files <- list.files(input_fcs_path, pattern = "\\.fcs$", full.names = TRUE)
+csv_files <- list.files(input_csv_path, pattern = "\\.csv$", full.names = TRUE)
 
 # Ensure files are in pairs by name, ignoring extensions
+fcs_files_base <- gsub("\\.fcs$", "", basename(fcs_files))
+csv_files_base <- gsub("\\.csv$", "", basename(csv_files))
 if (!setequal(fcs_files_base, csv_files_base)) {
   stop("Mismatch between FCS and CSV file names.")
 }
@@ -23,13 +26,14 @@ results_list <- list()
 
 # Iterate through the FCS and corresponding csv files
 for (i in seq_along(fcs_files)) {
-  fcs_file <- fcs_files[i]
-  fcs_name <- gsub("\\.fcs$", "", basename(fcs_file))
 
-  print(paste0("Processing file: ", fcs_file))
+  fcs_file <- fcs_files[i]
+
+  print(paste0("Processing file: ", basename(fcs_file)))
 
   # Find the corresponding csv file
-  csv_file <- csv_files[which(csv_files_base == fcs_name)]
+  # TODO: add check if seems necessary
+  csv_file <- csv_files[i]
 
   # Load the FCS file using flowWorkspace
   cytoframe <- load_cytoframe_from_fcs(fcs_file, transformation = FALSE)
@@ -41,47 +45,48 @@ for (i in seq_along(fcs_files)) {
   cytoframe_dim <- dim(cytoframe)
   csv_row_count <- nrow(gating_data)
 
-  print(paste0("Cytoframe dimensions: ", cytoframe_dim, collapse = " x "))
-  print(paste0("CSV row count: ", csv_row_count))
+  print(paste0("Cytoframe dimensions: ", paste(cytoframe_dim, collapse = " x ")))
+  print(paste0("CSV row count:        ", csv_row_count))
 
-  # Ensure that the number of rows in CSV matches the number of events (rows) in the cytoframe
+  # Ensure that the number of rows in CSV matches the number of
+  # events (rows) in the cytoframe
   if (csv_row_count != cytoframe_dim[1]) {
     stop("Mismatch between the number of rows in CSV and the number of events 
          in the FCS file.")
   }
 
-  # Filter based on the 'CD3 (Manual gating)' column (using row numbers)
-  cd3_gated_rows <- gating_data%>%
-    dplyr::filter(gating_data$CD3..Manual.gating. == 1) %>%
-    row_number()
+  # Dynamically filter based on specified gating criteria
+  for (j in seq_along(selected_gates)) {
+    gate <- selected_gates[j]
+    filtered_rows <- which(gating_data[[gate]] == 1)
 
-  # Subset the cytoframe based on the row numbers from the CSV
-  cytoframe_filtered <- cytoframe[cd3_gated_rows, ]
+    # Subset the cytoframe based on the row numbers from the CSV
+    cytoframe_filtered <- cytoframe[filtered_rows, ]
 
-  new_cytoframe_dim <- dim(cytoframe_filtered)
+    new_cytoframe_dim <- dim(cytoframe_filtered)
 
-  print(paste0("Gated_cytoframe dimensions: ", new_cytoframe_dim, 
-               collapse = " x "))
+    print(paste0(gate, ": ",
+                 paste(new_cytoframe_dim, collapse = " x "),
+                " (",round(new_cytoframe_dim[1]/cytoframe_dim[1],3),"%)"))
 
-  # Save the results to a list
-  results_list[[i]] <- data.frame(
-    fcs_file = basename(fcs_file),
-    num_cells_before = cytoframe_dim,
-    num_cells_after = new_cytoframe_dim
-  )
+    # Create a directory for the specific gate
+    gate_output_path <- file.path(output_path, gate)
+    dir_create(gate_output_path)
 
-  # Save or process the subsetted cytoframe as needed
-  # For example, save it to a new FCS file:
-  flowCore::write.FCS(cytoframe_filtered,
-                      filename  = paste0(input_file_path, "/CD3_gated/",
-                                         fcs_name, "_CD3_gated.fcs"))
+    # Save the filtered cytoframe to the respective gate directory
+    flowCore::write.FCS(
+      cytoframe_filtered,
+      filename = file.path(gate_output_path,
+                           paste0(fcs_name, "_", gate, "_gated.fcs"))
+    )
+
+    # Save the results to a list
+    results_list[[paste0(fcs_name, "_", gate)]] <- data.frame(
+      fcs_file = basename(fcs_file),
+      gate = gate,
+      num_cells_before = cytoframe_dim[1],
+      num_cells_after = new_cytoframe_dim[1]
+    )
+  }
 }
-# Combine all results into a single data frame
-results_df <- bind_rows(results_list)
 
-# Write the results to an Excel file
-output_excel <- file.path(output_path, "gating_results.xlsx")
-write.xlsx(results_df, file = output_excel)
-
-# Print message indicating completion
-print(paste0("Results saved to: ", output_path))
