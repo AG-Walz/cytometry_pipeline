@@ -1,17 +1,18 @@
-# ===================== CYTOMETRY ANALYSIS PIPELINE MAIN =============================
-# 
+# ===================== CYTOMETRY ANALYSIS PIPELINE MAIN =======================
+#
 # Title: Cytometry Analysis Pipeline
 # Author: Ignacio Garcia Ribelles
-# Description: This script orchestrates the flow of the cytometry analysis pipeline.
-#              It sets up the environment, loads necessary packages, and 
-#              executes various stages of data processing and analysis.
+# Description: This script orchestrates the flow of the cytometry analysis
+#              pipeline. It sets up the environment, loads necessary packages,
+#              and executes various stages of data processing and analysis.
 #
 # Date Created: 2022-05-25
 # Date Modified: 2024-09-26
 # Version: 0.0
 # Dependencies: Listed in the Packages.R file
-# Usage: Edit the parameter_template.R, renaming it properly and setting the parameters 
-# before running the sections of this script as needed or commenting unnecessary steps.
+# Usage: Edit the parameter_template.R, renaming it properly and setting the
+#        parameters before running the sections of this script as needed or
+#        commenting unnecessary steps.
 #
 # =============================== SETUP ========================================
 
@@ -19,14 +20,14 @@
 .libPaths("Q:/IM/AG_Märklin/FSFC_Pipeline/library/")
 
 # Set working directory to the same path as the current file
-setwd(dirname(rstudioapi::getSourceEditorContext()$path)) 
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
 # Install and load packages
 source("Packages.R", chdir = FALSE)
 source("Functions.R", chdir = FALSE)
 
 # Increase memory and use cache for larger files
-knitr::opts_chunk$set(cache = TRUE, warning = FALSE, 
+knitr::opts_chunk$set(cache = TRUE, warning = FALSE,
                       message = FALSE, cache.lazy = FALSE)
 
 # ================================= INPUT ======================================
@@ -41,10 +42,10 @@ source("Load_raw.R", chdir = TRUE)
 # Check loaded files (including panel comparison)
 source("Check.R", chdir = TRUE)
 
-# Homogenize / downsample
+# Homogenize and downsample
 source("Unify.R", chdir = TRUE)
 
-# Density plots, 
+# Density plots,
 source("Plot_raw.R", chdir = TRUE)
 
 # ============================ PREPROCESSING ===================================
@@ -53,13 +54,13 @@ source("Plot_raw.R", chdir = TRUE)
 source("Preprocess.R", chdir = TRUE)
 
 # Manual quality control to specify parameters more closely
-# flow_iQC()
+flow_iQC()
 
 # ============================ ANALYSIS ========================================
 
-# modality <- c(2,2,2,3,2,1,3,1,3)
+modality <- c(2, 2, 2, 3, 2, 1, 3, 1, 3)
 
-# choose_antimode <- c(1,1,1,2,1,1,1,1)
+choose_antimode <- c(1, 1, 1, 2, 1, 1, 1, 1)
 
 # ============================ PLOTTING ========================================
 

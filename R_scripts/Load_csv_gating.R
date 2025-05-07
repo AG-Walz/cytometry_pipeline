@@ -1,8 +1,14 @@
 # Required Libraries: flowWorkspace, dplyr, openxlsx
+# !For RStudio only: Set working directory to the same path as the current file
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
-input_csv_path <-"/data/Maerklin/ICK/cytolution_gated/files_ICK18_58_pre-gating_2_17_2025/"
-input_fcs_path <- "/data/Maerklin/ICK/cytolution_gated/files_ICK18_58_pre-gating_2_17_2025/"
-output_path <- paste0(input_fcs_path, "/Gated_fo/")
+input_csv_path <- paste0("/data/Maerklin/ICK/cytolution_gated/",
+                         "files_ICK18_58_pre-gating_2_17_2025/")
+input_fcs_path <- paste0("/data/Maerklin/ICK/cytolution_gated/",
+                         "files_ICK18_58_pre-gating_2_17_2025/")
+output_path <- paste0(input_fcs_path, "Gated_fo/")
+source("Packages.R")
+source("Functions.R")
 dir_create(output_path)
 
 selected_gates <- c(
@@ -28,6 +34,7 @@ results_list <- list()
 for (i in seq_along(fcs_files)) {
 
   fcs_file <- fcs_files[i]
+  fcs_name <- gsub("\\.fcs$", "", basename(fcs_file))
 
   print(paste0("Processing file: ", basename(fcs_file)))
 
@@ -36,7 +43,8 @@ for (i in seq_along(fcs_files)) {
   csv_file <- csv_files[i]
 
   # Load the FCS file using flowWorkspace
-  cytoframe <- load_cytoframe_from_fcs(fcs_file, transformation = FALSE)
+  cytoframe <- flowWorkspace::load_cytoframe_from_fcs(fcs_file,
+                                                      transformation = FALSE)
 
   # Load the corresponding csv file
   gating_data <- read.csv(csv_file, sep = ";", header = TRUE)
@@ -45,7 +53,8 @@ for (i in seq_along(fcs_files)) {
   cytoframe_dim <- dim(cytoframe)
   csv_row_count <- nrow(gating_data)
 
-  print(paste0("Cytoframe dimensions: ", paste(cytoframe_dim, collapse = " x ")))
+  print(paste0("Cytoframe dimensions: ",
+               cytoframe_dim, collapse = " x "))
   print(paste0("CSV row count:        ", csv_row_count))
 
   # Ensure that the number of rows in CSV matches the number of
@@ -67,7 +76,7 @@ for (i in seq_along(fcs_files)) {
 
     print(paste0(gate, ": ",
                  paste(new_cytoframe_dim, collapse = " x "),
-                " (",round(new_cytoframe_dim[1]/cytoframe_dim[1],3),"%)"))
+                 " (", round(new_cytoframe_dim[1] / cytoframe_dim[1], 3), "%)"))
 
     # Create a directory for the specific gate
     gate_output_path <- file.path(output_path, gate)
@@ -89,4 +98,3 @@ for (i in seq_along(fcs_files)) {
     )
   }
 }
-
