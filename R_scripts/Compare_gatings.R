@@ -47,13 +47,15 @@ label_dict <- c(
   "/No_erys/singlets/lymphocytes/CD3+/gd-/TCs (CD3+CD56-)" = "ncT cells",
   "/No_erys/singlets/lymphocytes/CD3+/gd-" = "ncT cells",
   "/No_erys/singlets/lymphocytes/CD3+" = "ncT cells",
-  "/No Erythrocytes/Single Cells/Lymphocytes/CD3+ TCRgd-/CD3+ CD56-" = "ncT cells",
+  "/No Erythrocytes/Single Cells/Lymphocytes/CD3+ TCRgd-/CD3+ CD56-" =
+    "ncT cells",
 
   "/no erys/Single Cells/lymphocytes/CD3+ TCRyd-/CD3+ CD56-/CD4 T cells" =
     "CD4T cells",
   "/No Erythrocytes/Single Cells/Lymphocytes/CD3+gdTCR-/CD3+CD56-/CD4+" =
     "CD4T cells",
-  "/No_erys/singlets/lymphocytes/CD3+/gd-/TCs (CD3+CD56-)/CD4TCs" = "CD4T cells",
+  "/No_erys/singlets/lymphocytes/CD3+/gd-/TCs (CD3+CD56-)/CD4TCs" =
+    "CD4T cells",
   "/No Erythrocytes/Single Cells/Lymphocytes/CD3+ TCRgd-/CD3+ CD56-/CD4+" =
     "CD4T cells",
 
@@ -61,14 +63,17 @@ label_dict <- c(
     "CD8T cells",
   "/No Erythrocytes/Single Cells/Lymphocytes/CD3+gdTCR-/CD3+CD56-/CD8+" =
     "CD8T cells",
-  "/No_erys/singlets/lymphocytes/CD3+/gd-/TCs (CD3+CD56-)/CD8TCs" = "CD8T cells",
+  "/No_erys/singlets/lymphocytes/CD3+/gd-/TCs (CD3+CD56-)/CD8TCs" =
+    "CD8T cells",
   "/No Erythrocytes/Single Cells/Lymphocytes/CD3+ TCRgd-/CD3+ CD56-/CD8+" =
     "CD8T cells",
 
   "/no erys/Single Cells/lymphocytes/CD3+ TCRyd-/NKTcells" = "NKT cells",
-  "/No Erythrocytes/Single Cells/Lymphocytes/CD3+gdTCR-/CD3+CD56+" = "NKT cells",
+  "/No Erythrocytes/Single Cells/Lymphocytes/CD3+gdTCR-/CD3+CD56+" =
+    "NKT cells",
   "/No_erys/singlets/lymphocytes/CD3+/gd-/NKTCs" = "NKT cells",
-  "/No Erythrocytes/Single Cells/Lymphocytes/CD3+ TCRgd-/CD3+ CD56+ " = "NKT cells",
+  "/No Erythrocytes/Single Cells/Lymphocytes/CD3+ TCRgd-/CD3+ CD56+ " =
+    "NKT cells",
 
   "/no erys/Single Cells/lymphocytes/yd Tcells" = "gdT cells",
   "/No Erythrocytes/Single Cells/Lymphocytes/CD3+ TCRgd+" = "gdT cells",
@@ -97,7 +102,7 @@ output_dir <- paste0(getwd(), "/venn_diagrams")
 # Create a directory to save the Venn diagrams
 dir.create(output_dir, showWarnings = FALSE)
 
-# ========================= Load flowjo population lists ===========================
+# ======================= Load flowjo population lists =========================
 
 # Check whether the target FCS is present in all of the FlowJo workspaces
 missing_fcs <- sapply(pop_strings_list, function(x) {
@@ -122,7 +127,7 @@ fj_label_lists <- sapply(pop_strings_list, function(x) {
   if (length(idx) == 1) {
     x[[idx]]
   } else if (length(idx) > 1) {
-    warning(sprintf("Multiple matches for '%s' in names(x), using the first.", 
+    warning(sprintf("Multiple matches for '%s' in names(x), using the first.",
                     target_fcs))
     x[[idx[1]]]
   } else {
@@ -142,7 +147,7 @@ fwrite(fj_label_lists_df, file = file.path(output_dir, paste0("fj_label_lists",
 
 # ========================= Load csv string lists ==============================
 
-# Normalize the target FCS base name (remove .fcs and replace hyphens/underscores)
+# Normalize target FCS base name (remove .fcs and replace hyphens/underscores)
 target_base <- gsub("\\.fcs$", "", target_fcs)
 target_base_norm <- gsub("[-_]", "", target_base)
 
@@ -154,14 +159,16 @@ match_idx <- which(grepl(target_base_norm, csv_names_norm, fixed = TRUE))
 if (length(match_idx) == 0) {
   stop(sprintf("No match found for FCS file for CSV '%s'", target_base))
 } else if (length(match_idx) > 1) {
-  message(sprintf("Found %d CSVs matching FCS '%s'. Using all matches.", length(match_idx), target_fcs))
+  message(sprintf("Found %d CSVs matching FCS '%s'. Using all matches.",
+                  length(match_idx), target_fcs))
   cy_label_lists <- lapply(match_idx, function(idx) {
     tmp <- idx_labels[[idx]]
     tmp[tmp == ""] <- "Removed"
     tmp
   })
   # Combine with fj_label_lists
-  label_lists <- cbind(fj_label_lists[, c(1, 2, 3)], do.call(cbind, cy_label_lists))
+  label_lists <- cbind(fj_label_lists[, c(1, 2, 3)],
+                       do.call(cbind, cy_label_lists))
 } else {
   cy_label_lists <- idx_labels[[match_idx]]
   cy_label_lists[cy_label_lists == ""] <- "Removed"
@@ -200,7 +207,7 @@ for (population in unique_populations) {
     warning("Skipping empty or NA population for Venn diagram.")
     next
   }
-  plot_and_save_venn(lists = label_lists, string = population, 
+  plot_and_save_venn(lists = label_lists, string = population,
                      output_dir = output_dir, scale_size = TRUE,
                      custom_name = custom_name)
 }
