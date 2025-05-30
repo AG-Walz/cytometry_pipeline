@@ -1,54 +1,110 @@
-# Required Libraries
+# -------------------- Required Libraries --------------------
 library(CytoML)
 library(flowWorkspace)
 library(flowCore)
+library(ggplot2)
+library(dplyr)
+
+# !For RStudio only: Set working directory to the same path as the current file
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
 # -------------------- Parameter Definition --------------------
 # Path to the FlowJo workspace file (.wsp)
-wsp_file <- paste0("/home/ngr24/Desktop/Maerklin/cytometry_pipeline/",
-                   "FlowJo tests/ICK-049-051.wsp")  # Replace with actual path
+# wsp_files <- file.choose()
+# List workspace files
+wsp_dir <- "./../Gating_comparisons/FlowJo_gatings/"
+
+# Custom name for the workspace (keep identifier as short as possible)
+custom_name <- c("Lea", "Jonas", "Samu2")
 
 # Path to the directory containing associated FCS files
-fcs_dir <- paste0("/home/ngr24/Desktop/Maerklin/cytometry_pipeline/",
-                  "FlowJo tests")  # Replace with the actual path
+fcs_dir <- "./../Gating_comparisons/raw_data/" # Replace with actual path
 
-out_dir <- "/home/ngr24/Desktop/Maerklin/cytometry_pipeline/FlowJo tests/"
+# Turn plotting barplots on or off
+# TODO: change T/F for choose which type of plotting you want to do inkl None
+plot_barplot <- FALSE
 
-# -------------------- Load Workspace --------------------
-# Open the FlowJo workspace
-flowjo_workspace <- open_flowjo_xml(wsp_file)
+# Output directory
+out_dir <- "./../Output/"
 
-# List available sample groups in the FlowJo workspace
-sample_groups <- fj_ws_get_sample_groups(flowjo_workspace)
-cat("Available sample groups:\n")
-print(sample_groups)
+# ------------------------------- Functions -------------------------------
+source("Functions.R")
+# ------------------------------ Load Workspace --------------------------------
+wsp_files <- list.files(path = wsp_dir, pattern = "\\.wsp$", full.names = TRUE)
 
-# Select a specific sample group (replace "YourGroupName" with the desired
-# group name) selected_group <- "All Samples"  # Replace with the name of
-# the group you want to use
+# Initialize all required lists in one line
+list_names <- c("fj_wsp_list", "gset_list", "sample_groups_list",
+                "pop_path_list", "samp_name_list", "pop_strings_list",
+                "total_counts", "percentages_of_parent", "remainder_counts",
+                "cyto_list")
+list2env(setNames(replicate(length(list_names), list(),
+                            simplify = FALSE), list_names), envir = .GlobalEnv)
 
-# Check if the selected group exists
-#if (!(selected_group %in% sample_groups$groupName)) {
-#  stop(paste("The selected group", selected_group, "does not exist in the
-# workspace."))
-# }
+# Iterate through each workspace file
+for (wsp_file in wsp_files) {
+  # Use the workspace file name as a unique identifier
+  wsp_id <- tools::file_path_sans_ext(basename(wsp_file))
+  wsp_out_dir <- file.path(out_dir, wsp_id)
+  dir.create(wsp_out_dir, showWarnings = FALSE, recursive = TRUE)
 
-# Parse the workspace into a GatingSet for the selected group
-#gating_set <- flowjo_to_gatingset(flowjo_workspace, name = selected_group,
-#                                  path = fcs_dir)
+  # Open the FlowJo workspace
+  fj_wsp_list[[wsp_id]] <- open_flowjo_xml(wsp_file)
 
-# Parse the workspace into a GatingSet
-gating_set <- flowjo_to_gatingset(flowjo_workspace, path = fcs_dir)
+  # Parse the workspace into a GatingSet
+  gset_list[[wsp_id]] <- flowjo_to_gatingset(fj_wsp_list[[wsp_id]],
+                                             path = fcs_dir)
+  # TODO: If there is only one population sample group to choose from 
+  # (be it All or whatever), then automatically choose that option, as I did a 
+  # while back - it is possible.
+  sample_groups_list[[wsp_id]] <- fj_ws_get_sample_groups(fj_wsp_list[[wsp_id]])
 
+  pop_path_list[[wsp_id]] <- gs_get_pop_paths(gset_list[[wsp_id]],
+                                              path = "full")
+  samp_name_list[[wsp_id]] <- sampleNames(gset_list[[wsp_id]])
+
+  # Population strings
+  pop_strings_list[[wsp_id]] <- get_population_strings_list(gset_list[[wsp_id]],
+                                                         samp_name_list[[wsp_id]])
+  save_population_strings(pop_strings_list, wsp_out_dir)
+
+  if(plot_barplot){
+    # Total counts
+    total_counts[[wsp_id]] <- get_population_stats(gating_set = gset_list[[wsp_id]])
+
+    colnames(total_counts[[wsp_id]])[3] <- "Count"
+    population_barplot(total_counts[[wsp_id]],
+                       paste0(wsp_out_dir, "total_population_counts_barplot.png"),
+                       "Total Population Counts by Sample", "Total Count")
+    # Percentages of parent
+    percentages_of_parent[[wsp_id]] <- get_population_stats(gset_list[[wsp_id]], 
+                                                            type = "percent")
+    colnames(percentages_of_parent[[wsp_id]])[3] <- "Count"
+    population_barplot(percentages_of_parent[[wsp_id]],
+                       paste0(wsp_out_dir, "percentages_of_parent_barplot.png"),
+                       "Percentages of Parent Population by Sample",
+                       "Percentage of Parent (%)")
+
+    # Remainder counts
+    remainder_counts[[wsp_id]] <- summarize_remainder_counts(pop_strings_list[[wsp_id]])
+    population_barplot(remainder_counts[[wsp_id]], 
+                       paste0(wsp_out_dir, "grouped_remainder_counts_barplot.png"),
+                       "Remaining Population Counts by Sample", "Remainder Counts")
+  }
+}
+
+# =============== Plot Venn diagram ================================
+
+
+# ------------------ Map Workspace Sample Names to FCS Files -------------------
 # Get the sample names from the GatingSet
 wsp_sample_names <- sampleNames(gating_set)
 
-#Get the actual FCS file names in the directory
+# Get the actual FCS file names in the directory
 fcs_files <- list.files(path = fcs_dir, pattern = "\\.fcs$", full.names = TRUE)
 fcs_file_names <- basename(fcs_files)
 
-# Map workspace sample names to actual FCS file names
-# Remove suffixes from workspace sample names to match FCS file names
+# Map workspace sample names to actual FCS file names by removing suffixes
+# from workspace sample names to match original FCS
 mapped_sample_names <- sapply(wsp_sample_names, function(ws_name) {
   # Remove everything after the first underscore
   base_name <- sub("_.*$", "", ws_name)
@@ -67,57 +123,8 @@ valid_samples <- !is.na(mapped_sample_names)
 workspace_sample_names <- wsp_sample_names[valid_samples]
 mapped_sample_names <- mapped_sample_names[valid_samples]
 
-
-# Initialize a list to store classes for each FCS file
-classes_list <- list()
-
-# -------------------- Process Each Sample --------------------
-for (i in seq_along(wsp_sample_names)) {
-  # Get the gating hierarchy for the sample
-  gating_hierarchy <- gating_set[[i]]
-
-  # Extract the population names (classes) for the sample
-  population_names <- gs_get_pop_paths(gating_set, path = "full")
-
-  # Access the cytoframe for th ecurrent sample
-  cytoframe <- load_cytoframe_from_fcs(fcs_files[[i]])
-
-  # Convert the cytoframe to a data frame
-  cytoframe_data <- exprs(cytoframe)
-
-  # Get the number of events in the cytoframe
-  num_events <- nrow(cytoframe_data)
-  classes <- rep(NA, num_events)
-
-  # Assign classes based on population data
-  for (pop_name in population_names) {
-    # Get the indices of events in the current population
-    indices <- gh_pop_get_indices(gating_hierarchy, pop_name)
-    classes[indices] <- pop_name
-  }
-
-  # Store the classes in the list
-  classes_list[[workspace_sample_names[i]]] <- classes
-}
-
-# -------------------- Output --------------------
-# Print the first few entries of the classes for each sample
-for (sample in names(classes_list)) {
-  cat("Sample:", sample, "\n")
-  # Count occurrences of each class
-  class_counts <- table(classes_list[[sample]])
-  cat("Class counts:\n")
-  print(class_counts)
-}
-
-# Save the classes list to an RDS file for later use
-saveRDS(classes_list, file = paste0(out_dir, "classes_list.rds"))
-
-# Print completion message
-cat(paste0("Classes list saved to '", out_dir, "classes_list.rds'\n"))
-
 # -------------------- Create DataFrames for Each Sample --------------------
-# Initialize a list to store dataframes for each sample
+# Initialize a list to store dataframes per sample
 dataframes_list <- list()
 
 # Iterate through each sample
@@ -156,11 +163,16 @@ for (i in seq_along(workspace_sample_names)) {
   dataframes_list[[workspace_sample_names[i]]] <- population_df
 }
 
-# -------------------- Output --------------------
+# -------------------- Save DataFrames to CSV --------------------
 # Save each dataframe to a CSV file
 for (wsp_name in names(dataframes_list)) {
-  output_file <- paste0(out_dir,
-                        sub("\\.fcs$", "", wsp_name), "_populations.csv")
+  output_file <- paste0(out_dir, sub("\\.fcs", "", wsp_name),
+                        "_", custom_name,"_populations.csv")
+  print(output_file)
   write.csv(dataframes_list[[wsp_name]], file = output_file, row.names = FALSE)
   cat(paste0("Population dataframe saved to '", output_file, "'\n"))
 }
+
+# -------------------- Verify DataFrame Rows --------------------
+nrow(dataframes_list[[1]])
+

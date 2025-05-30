@@ -1,4 +1,4 @@
-#=============================== COMPARE.R ==============================
+#=============================== Functions.R ==============================
 
 # This file contains a collection of helper functions for analyzing flow cytometry data in R.
 # The functions included in this file are designed to assist with various tasks such as:
@@ -9,7 +9,134 @@
 # - Retrieving specified parameters from FCS files.
 # - Checking the total number of events in a flow frame against the header information.
 
+# =================== Load FlowJo wsp functions ================================
+
+population_barplot <- function(population_counts, out_file, title, y_label) {
+  # Convert the population statistics to a data frame
+  population_df <- as.data.frame(population_counts)
+  
+  # Plot the barplot
+  population_plot <- ggplot(population_df, aes(x = Population,
+                                               y = Count, fill = Sample)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    theme_minimal() +
+    labs(title = title, x = "Population", y = y_label) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  # Save the plot to a file
+  ggsave(filename = out_file, plot = population_plot, width = 12, height = 8)
+  
+  # Print completion message
+  cat("Barplot saved to:", out_file, "\n")
+}
+
+get_population_stats <- function(gating_set, type = NULL) {
+  sample_names <- sampleNames(gating_set)
+  stats_list <- list()
+  for (sample in sample_names) {
+    if (is.null(type)) {
+      stats <- tibble(gh_pop_get_stats(gating_set[[sample]]))
+      stats_list[[sample]] <- data.frame(
+        Population = stats$pop,
+        Sample = sample,
+        Value = stats$count
+      )
+    } else {
+      stats <- tibble(gh_pop_get_stats(gating_set[[sample]], type = type))
+      stats_list[[sample]] <- data.frame(
+        Population = stats$pop,
+        Sample = sample,
+        Value = stats$percent
+      )
+    }
+  }
+  do.call(rbind, stats_list)
+}
+
+get_population_strings_list <- function(gating_set, sample_names) {
+  population_strings_list <- list()
+  for (i in seq_along(sample_names)) {
+    gating_hierarchy <- gating_set[[i]]
+    population_names <- gs_get_pop_paths(gating_hierarchy, path = "full")
+    cytoframe <- gh_pop_get_data(gating_hierarchy)
+    num_events <- nrow(exprs(cytoframe))
+    population_strings <- rep(NA, num_events)
+    for (pop_name in population_names) {
+      indices <- gh_pop_get_indices(gating_hierarchy, pop_name)
+      population_strings[indices] <- pop_name
+    }
+    population_strings_list[[sample_names[i]]] <- population_strings
+  }
+  population_strings_list
+}
+
+summarize_remainder_counts <- function(population_strings_list) {
+  population_data <- do.call(rbind, lapply(names(population_strings_list),
+                                           function(sample_name) {
+                                             data.frame(
+                                               Population = population_strings_list[[sample_name]],
+                                               Sample = sample_name
+                                             )
+                                           }))
+  population_data %>%
+    group_by(Sample, Population) %>%
+    summarise(Count = n(), .groups = "drop")
+}
+
+save_population_strings <- function(population_strings_list, out_dir) {
+  saveRDS(population_strings_list,
+          file = paste0(out_dir, "population_strings_list.rds"))
+  cat(paste0("Population strings list saved to '",
+             out_dir, "population_strings_list.rds'\n"))
+}
+
+plot_per_sample <- function(df, value_col, out_prefix, y_label, title) {
+  unique_samples <- unique(df$Sample)
+  for (sample in unique_samples) {
+    df_sample <- df[df$Sample == sample, ]
+    p <- ggplot(df_sample, aes(x = Population,
+                               y = !!sym(value_col), fill = Workspace)) +
+      geom_bar(stat = "identity", position = "dodge") +
+      theme_minimal() +
+      labs(title = paste(title, sample), x = "Population", y = y_label) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    ggsave(filename = paste0(out_dir, out_prefix, "_", sample, ".png"),
+           plot = p, width = 12, height = 8)
+  }
+}
+
+# TODO: Function to run loading at once centralized
+#=================== Cytolution gating ========================================
+flatten_label_list <- function(label_lists, gating_tree) {
+  unlist(lapply(label_lists, function(labels) {
+    if (length(labels) == 0) {
+      return("root")
+    } else if (length(labels) == 1) {
+      return(labels[[1]])
+    } else {
+      depths <- gating_tree[labels]
+      depths[is.na(depths)] <- -Inf
+      return(labels[which.max(depths)])
+    }
+  }))
+}
+
+detect_csv_sep <- function(file) {
+  first_line <- readLines(file, n = 1)
+  if (grepl(";", first_line)) {
+    return(";")
+  } else {
+    return(",")
+  }
+}
+
+labels_from_binary_df <- function(df) {
+  apply(df, 1, function(row) {
+    names(row)[which(row == 1)]
+  })
+}
 #==================== Helper Functions ==============================
+
 
 ensure_and_load_packages <- function(req_packages) {
 #' Ensure and Load Required Packages
@@ -77,7 +204,124 @@ dir_create <- function(dir_path_list){
   }
 } # lapply(paths, dir.create, recursive = TRUE)
 
+#======================= Compare_gating Functions =============================
+translate_labels <- function(string_list, dictionary) {
+  # dictionary: named vector, names are original, values are standardized
+  idx <- match(string_list, names(dictionary))
+  # If found, use dictionary value, else keep original
+  out <- ifelse(!is.na(idx), dictionary[idx], string_list)
+  return(out)
+}
 
+plot_venneuler <- function(sets, output_dir, filename) {
+  n_sets <- length(sets)
+  if (n_sets < 2) {
+    stop("At least two sets are required for an Euler diagram.")
+  }
+  nms <- names(sets)
+  all_indices <- sort(unique(unlist(sets)))
+  data <- as.data.frame(sapply(sets, function(idx) all_indices %in% idx))
+  colnames(data) <- nms
+  fit <- venneuler::venneuler(data)
+  
+  set_colors <- scales::hue_pal()(n_sets)
+  names(set_colors) <- nms
+  
+  png(filename = file.path(output_dir, paste0("venneuler_", filename, ".png")), 
+      width = 800, height = 600)
+  tryCatch({
+    plot(fit, main = paste(filename, "population comparison"), col = set_colors)
+    # Annotate overlaps if possible
+    if (is.numeric(fit$weights) && !is.null(fit$centers)) {
+      overlap_counts <- round(fit$weights)
+      for (i in seq_along(overlap_counts)) {
+        region <- fit$centers[i, ]
+        text(region[1], region[2], labels = overlap_counts[i], cex = 1.2, font = 2)
+      }
+    }
+    legend("topright", legend = nms, fill = set_colors, border = NA, cex = 1.2, box.lwd = 0)
+  }, error = function(e) {
+    message(sprintf("Error plotting '%s': %s", filename, e$message))
+  }, finally = {
+    dev.off()
+  })
+}
+
+plot_euler <- function(sets, output_dir, filename, custom_name = NULL) {
+  n_sets <- length(sets)
+  if (n_sets < 2) {
+    stop("At least two sets are required for an Euler diagram.")
+  }
+  # Use custom_name if provided and valid, else fallback to current names
+  if (!is.null(custom_name) && length(custom_name) == n_sets && all(!is.na(custom_name)) && all(custom_name != "")) {
+    names(sets) <- custom_name
+  }
+  fit <- eulerr::euler(sets)
+  set_colors <- scales::hue_pal()(n_sets)
+  names(set_colors) <- custom_name
+
+  png(filename = file.path(output_dir, paste0("euler_", filename, ".png")),
+      width = 600, height = 400)
+  tryCatch({
+    p <- plot(
+      fit,
+      main = paste(filename, "population comparison"),
+      fills = set_colors,
+      quantities = TRUE,
+      legend = custom_name
+    )
+    print(p)
+  }, error = function(e) {
+    message(sprintf("Error plotting '%s': %s", filename, e$message))
+  }, finally = {
+    dev.off()
+  })
+}
+plot_venn <- function(sets, filename, output_dir){
+  p <- venn::venn(
+    x = sets,
+    borders = FALSE,
+    ggplot = TRUE,
+    zcolor = "style",
+    box = FALSE,
+    plotsize = 10,
+    ilcs = 1,
+    sncs = 1,
+    ilabels = "counts"
+  ) +
+    ggplot2::ggtitle(paste(filename, "population comparison"))
+  ggplot2::ggsave(
+    filename = file.path(output_dir, paste0("venn_", filename, ".png")),
+    plot = p, width = 8, height = 6
+  )
+}
+# Function to plot and save venn for each string
+plot_and_save_venn <- function(lists, population, filename, output_dir, 
+                               scale_size = FALSE, custom_name = NULL) {
+  sets <- lapply(1:ncol(lists), function(i) which(lists[, i] == population))
+  # Remove empty sets
+  non_empty <- sapply(sets, length) > 0
+  sets <- sets[non_empty]
+  if (length(sets) < 2) return(invisible(NULL)) # Need at least 2 sets for a Venn/Euler diagram
+  
+  # Use custom_name if provided and valid, else fallback to colnames
+  if (!is.null(custom_name) && length(custom_name) == ncol(lists) &&
+      all(!is.na(custom_name)) && all(custom_name != "")) {
+    set_names <- custom_name[non_empty]
+  } else {
+    set_names <- colnames(lists)[non_empty]
+  }
+  names(sets) <- set_names
+  if (any(is.na(names(sets))) || any(names(sets) == "")) {
+    stop("All elements of `sets` must be named and non-empty for eulerr.")
+  }
+  # TODO: Replace scale_size for plot type and add upset plot and venneuler
+  if (scale_size) {
+    plot_euler(sets, output_dir, filename, custom_name = set_names)
+  } else {
+    plot_venn(sets, output_dir, filename)
+  }
+}
 #==================== Extract information from FF ==============================
 
 explore_data <- function(flowframe){

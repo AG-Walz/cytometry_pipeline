@@ -2,20 +2,46 @@
 # !For RStudio only: Set working directory to the same path as the current file
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
-input_csv_path <- paste0("/data/Maerklin/ICK/cytolution_gated/",
-                         "files_ICK18_58_pre-gating_2_17_2025/")
-input_fcs_path <- paste0("/data/Maerklin/ICK/cytolution_gated/",
-                         "files_ICK18_58_pre-gating_2_17_2025/")
+# =============================== Parameters ===================================
+
+# Taget FCS filename
+target_fcs <- "ICK-049-02_Unmixed.fcs"
+
+input_fcs_path <- paste0("/home/ngr24/Desktop/Maerklin/cytometry_pipeline/",
+                         "Gating_comparisons/raw_data")
+
+input_csv_path <- paste0("/home/ngr24/Desktop/Maerklin/cytometry_pipeline/",
+                         "Gating_comparisons/Cytolution_broad_vs_narrow_gating/")
+
+csv_label_dict <- c(
+  "CD3n..Manual.gating." = "ncCD3-",
+  "NKCs..Manual.gating." = "NK cells",
+  "gdTCRnTCs..Manual.gating." = "ncT cells",
+  "CD4TCs..Manual.gating." = "CD4T cells",
+  "CD8TCs..Manual.gating." = "CD8T cells",
+  "BCs..Manual.gating." = "B cells",
+  "gdTCRnCD56nTCs..Manual.gating." = "ncT cells",
+  "gdTCs..Manual.gating." = "gdT cells",
+  "NKTCs..Manual.gating." = "NKT cells",
+  "root" = "Removed"
+)
+
+gating_tree <- c(
+  "Other" = 0,
+  "T cells" = 1, "CD3-" = 1, "gdT cells" = 1,
+  "NK cells" = 2, "NKT cells" = 2, "B cells" = 2,
+  "CD8T cells" = 3, "CD4T cells" = 3
+)
+
 output_path <- paste0(input_fcs_path, "Gated_fo/")
+
+# ================================ Functions ===================================
+
 source("Packages.R")
 source("Functions.R")
 dir_create(output_path)
 
-selected_gates <- c(
-  "CD3...Manual.gating..1",
-  "Monocytes..Manual.gating."
-)
-
+#================================= Load files ==================================
 # Get list of FCS and csv files
 fcs_files <- list.files(input_fcs_path, pattern = "\\.fcs$", full.names = TRUE)
 csv_files <- list.files(input_csv_path, pattern = "\\.csv$", full.names = TRUE)
@@ -23,78 +49,86 @@ csv_files <- list.files(input_csv_path, pattern = "\\.csv$", full.names = TRUE)
 # Ensure files are in pairs by name, ignoring extensions
 fcs_files_base <- gsub("\\.fcs$", "", basename(fcs_files))
 csv_files_base <- gsub("\\.csv$", "", basename(csv_files))
-if (!setequal(fcs_files_base, csv_files_base)) {
-  stop("Mismatch between FCS and CSV file names.")
-}
 
-# Initialize a list to store results
-results_list <- list()
+#========================= Create CSV to FCS mapping ==========================
 
-# Iterate through the FCS and corresponding csv files
-for (i in seq_along(fcs_files)) {
+# TODO: Instead of extracting the FCS from the base names, extract from within
 
-  fcs_file <- fcs_files[i]
-  fcs_name <- gsub("\\.fcs$", "", basename(fcs_file))
+# Create a mapping from CSV to FCS
+csv_to_fcs <- character(length(csv_files))
+names(csv_to_fcs) <- csv_files
 
-  print(paste0("Processing file: ", basename(fcs_file)))
-
-  # Find the corresponding csv file
-  # TODO: add check if seems necessary
+for (i in seq_along(csv_files)) {
   csv_file <- csv_files[i]
-
-  # Load the FCS file using flowWorkspace
-  cytoframe <- flowWorkspace::load_cytoframe_from_fcs(fcs_file,
-                                                      transformation = FALSE)
-
-  # Load the corresponding csv file
-  gating_data <- read.csv(csv_file, sep = ";", header = TRUE)
-
-  # Check dimensions of the cytoframe
-  cytoframe_dim <- dim(cytoframe)
-  csv_row_count <- nrow(gating_data)
-
-  print(paste0("Cytoframe dimensions: ",
-               cytoframe_dim, collapse = " x "))
-  print(paste0("CSV row count:        ", csv_row_count))
-
-  # Ensure that the number of rows in CSV matches the number of
-  # events (rows) in the cytoframe
-  if (csv_row_count != cytoframe_dim[1]) {
-    stop("Mismatch between the number of rows in CSV and the number of events 
-         in the FCS file.")
+  # Normalize CSV and FCS base names (remove hyphens and underscores)
+  csv_base <- gsub("\\.csv$", "", basename(csv_file))
+  csv_base_norm <- gsub("[-_]", "", csv_base)
+  fcs_bases_norm <- gsub("[-_]", "", gsub("\\.fcs$", "", basename(fcs_files)))
+  # Find FCS base that is a substring of the CSV base (ignoring prefixes)
+  match_idx <- which(sapply(fcs_bases_norm, function(fcs_norm) {
+    grepl(fcs_norm, csv_base_norm, fixed = TRUE)}))
+  if (length(match_idx) != 1) {
+    stop(sprintf("Could not uniquely match FCS file for CSV '%s' (found %d matches)",
+                 csv_base, length(match_idx)))
   }
+  csv_to_fcs[csv_file] <- fcs_files[match_idx]
+}
 
-  # Dynamically filter based on specified gating criteria
-  for (j in seq_along(selected_gates)) {
-    gate <- selected_gates[j]
-    filtered_rows <- which(gating_data[[gate]] == 1)
+# Find the FCS of each csv using csv_to_fcs[csv_file]
+# Use this mapping on downstream code
 
-    # Subset the cytoframe based on the row numbers from the CSV
-    cytoframe_filtered <- cytoframe[filtered_rows, ]
+# Group CSVs by FCS
+fcs_to_csvs <- split(names(csv_to_fcs), csv_to_fcs)
 
-    new_cytoframe_dim <- dim(cytoframe_filtered)
-
-    print(paste0(gate, ": ",
-                 paste(new_cytoframe_dim, collapse = " x "),
-                 " (", round(new_cytoframe_dim[1] / cytoframe_dim[1], 3), "%)"))
-
-    # Create a directory for the specific gate
-    gate_output_path <- file.path(output_path, gate)
-    dir_create(gate_output_path)
-
-    # Save the filtered cytoframe to the respective gate directory
-    flowCore::write.FCS(
-      cytoframe_filtered,
-      filename = file.path(gate_output_path,
-                           paste0(fcs_name, "_", gate, "_gated.fcs"))
-    )
-
-    # Save the results to a list
-    results_list[[paste0(fcs_name, "_", gate)]] <- data.frame(
-      fcs_file = basename(fcs_file),
-      gate = gate,
-      num_cells_before = cytoframe_dim[1],
-      num_cells_after = new_cytoframe_dim[1]
-    )
+# Print mapping
+cat("CSV to FCS mapping:\n")
+for (fcs in names(fcs_to_csvs)) {
+  cat(basename(fcs), ":\n")
+  for (csv in fcs_to_csvs[[fcs]]) {
+    cat("  -", basename(csv), "\n")
   }
 }
+# When processing, you can use csv_to_fcs to know which FCS each CSV belongs to.
+# ================================ Main body =================================
+# Read the first CSV file to get the gating columns
+gating_data_example <- read.csv(list.files(input_csv_path, pattern = "\\.csv$",
+                                           full.names = TRUE)[1], sep = ",",
+                                header = TRUE)
+check_gates <- colnames(gating_data_example)
+
+# Check that all CSV files have the same column names
+csv_data <- list()
+label_lists <- list()
+flat_list <- list()
+idx_list <- list()
+idx_labels <- list()
+for (csv_file in csv_files) {
+  separator <- detect_csv_sep(csv_file)
+  csv_data[[csv_file]] <- read.csv(csv_file, sep = separator, header = TRUE)
+  if (!identical(colnames(csv_data[[csv_file]]), check_gates)) {
+    diff1 <- setdiff(check_gates, colnames(csv_data[[csv_file]] ))
+    diff2 <- setdiff(colnames(csv_data[[csv_file]] ), check_gates)
+    cat("Difference in columns for", basename(csv_file), ":\n")
+    if (length(diff1) > 0) cat("  In selected_gates but not in file:",
+                               paste(diff1, collapse = ", "), "\n")
+    if (length(diff2) > 0) cat("  In file but not in selected_gates:",
+                               paste(diff2, collapse = ", "), "\n")
+    stop(paste("Column names in", basename(csv_file),
+               "do not match the others."))
+  }
+  idx_list[[csv_file]] <-  csv_data[[csv_file]][, 1]
+  colnames(csv_data[[csv_file]]) <- translate_labels(
+    colnames(csv_data[[csv_file]]), csv_label_dict)
+  label_lists[[csv_file]] <- labels_from_binary_df(csv_data[[csv_file]])
+  flat_list[[csv_file]] <- flatten_label_list(label_lists[[csv_file]],
+                                              gating_tree)
+  # Extract the correct CSV-associated FCS file from the CSV mapping
+  fcs_file <- csv_to_fcs[[csv_file]]
+  num_events <- nrow(flowCore::read.FCS(fcs_file, truncate_max_range = FALSE))
+  idx_labels_vec <- rep("", num_events)
+  idx_labels_vec[idx_list[[csv_file]]+1] <- translate_labels(flat_list[[csv_file]],
+                                                           csv_label_dict)
+  # Initialize or add column
+  idx_labels[[csv_file]] <- data.frame(idx_labels_vec, stringsAsFactors = FALSE)
+}
+

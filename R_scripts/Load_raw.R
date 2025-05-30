@@ -3,7 +3,7 @@
 # The data is expected to be located in the file path specified in the parameters file.
 
 # Import loading functions
-source_files <- c(parameter_file,"Compare.R") # UMAP.R
+source_files <- c(parameter_file, "Compare.R") # UMAP.R
 lapply(source_files, source, chdir = TRUE)
 
 ## ====================== Create output directory paths ===================== ##
@@ -23,13 +23,14 @@ dir_create(paths)
 ## ========================= Read FCS files ==========================##
 
 # List all files in input directory ending with .fcs
-input_fcs_files <- list.files(path = input_file_path, pattern = ".fcs$",  full.names = TRUE)
+input_fcs_files <- list.files(path = input_file_path, pattern = ".fcs$",
+                              full.names = TRUE)
 
 # Extract the file names from the paths
-input_fcs_names <-gsub(input_file_path, "", input_fcs_files)
+input_fcs_names <- gsub(input_file_path, "", input_fcs_files)
 
 # Check that there are .fcs files in the input_file_directory
-cat("Reading FCS-files from", input_file_path,"\n")
+cat("Reading FCS-files from", input_file_path, "\n")
 if (length(input_fcs_files) == 0) {
   cat("There are no FCS files in the specified input file directory,",
       "please select another folder to proceed.\n")
@@ -38,11 +39,11 @@ if (length(input_fcs_files) == 0) {
   flow_frames <- c()
   for (i in 1:length(input_fcs_files)) {
     flow_frames[[i]] <- flowWorkspace::load_cytoframe_from_fcs(input_fcs_files[i],
-                                          transformation = FALSE, 
+                                          transformation = FALSE,
                                           truncate_max_range = truncation,
                                           min.limit = min_limit)
     # Print number of cells before preprocessing
-    cat("Sample", sample_names[i],"=", input_fcs_names[i], "had a total of", 
+    cat("Sample", sample_names[i], "=", input_fcs_names[i], "had a total of",
         nrow(flow_frames[[i]]), "cells.\n")
     # Extract expression matrix and plot density profile per input file
     if(extract_rw_csv){
