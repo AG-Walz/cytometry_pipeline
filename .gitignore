@@ -1,0 +1,111 @@
+# =============================================================================
+# Cytometry Pipeline .gitignore
+# =============================================================================
+# This file specifies which files/folders should be EXCLUDED from Git tracking.
+# Only R_scripts/ and test_data/ are tracked in the repository.
+# =============================================================================
+
+# ======================== R-SPECIFIC IGNORES ================================
+.Rhistory
+.RData
+.Rproj.user
+*.Rproj
+.Renviron
+.Rprofile
+
+# ======================== PYTHON-SPECIFIC IGNORES ===========================
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+*.egg-info/
+.eggs/
+
+# ======================== DATA FILES (Large, not for Git) ===================
+# FCS files (flow cytometry data - usually large)
+*.fcs
+
+# Workspace files
+*.wsp
+
+# Spreadsheet/tabular data
+*.csv
+*.xlsx
+*.xls
+*.tsv
+
+# R data files
+*.rds
+*.RData
+
+# ======================== OUTPUT FILES ======================================
+Output/
+*.log
+*.pdf
+*.png
+*.svg
+*.jpg
+*.jpeg
+*.tiff
+*.gif
+
+# ======================== EDITOR/IDE FILES ==================================
+.vscode/
+*.code-workspace
+.idea/
+*.sublime-*
+
+# ======================== ARCHIVE & OLD VERSIONS ============================
+archive/
+
+# ======================== PROJECT-SPECIFIC EXCLUDES =========================
+# These folders contain data/analysis that should not be in the repository
+
+# FlowJo test workspace (data copied to test_data/)
+FlowJo tests/
+
+# Gating comparison data
+Gating_comparisons/
+
+# Python scripts (not part of main R pipeline)
+Python_scripts/
+
+# Analysis output
+Output/
+
+# Temporary/generated files
+*.tmp
+*.temp
+*~
+.DS_Store
+Thumbs.db
+
+# Log files from analysis runs
+heatmap_log.txt
+output_log.txt
+cluster_extraction.log
+gate_stats.csv
+
+# Comparison script (temporary)
+compare_scripts.py
+
+# ======================== EXCEPTIONS (Files to INCLUDE) =====================
+# These patterns override the above ignores
+
+# Include test_data folder (but NOT large data files - only README)
+!test_data/
+!test_data/README.md
+
+# Include README files everywhere
+!README.md
+!**/README.md
+
+# Include all R scripts
+!R_scripts/
+!R_scripts/**/*.R
+!R_scripts/**/README.md
+
+# Include parameter templates (but not actual parameter files with data paths)
+!R_scripts/Parameters/*_template.R

@@ -1,149 +1,220 @@
-source_files <- c(parameter_file,"Compare.R", "UMAP_functions.R", "Downsampling_functions.R") # UMAP.R
+# ========================= PARAMETERS =========================
+
+fallback_dir <- "/home/ngr24/Desktop/Maerklin/Cytometry/R_scripts"
+input_file_path <- "/data/Cytometry/Conventional FC/files_ICS AML_pre-gating_9_16_2025/"
+results_path <- "/data/Cytometry/Conventional FC/files_ICS AML_pre-gating_9_16_2025/Results"
+project_name <- "ICSAML"
+
+# Marker selection options:
+# - "popup": Open GUI window for interactive marker selection
+# - "terminal": Choose from all filtered markers in terminal
+# - "all": Use all filtered markers
+# - vector of marker names: Use specific markers (e.g. c("CD4", "CD8", "TNF"))
+# - vector of column numbers: Use specific columns (e.g. c(5, 7, 9))
+MARKER_SELECTION_MODE <- "popup"  # Change this to control marker selection
+
+# Patterns to use to filter out markers
+EXCLUDE_PATTERNS <- c("^$", "ALD", "Column", "index", "Time", "FSC", "SSC")
+
+# Output format options: Choose which formats to generate
+# Set to TRUE for formats you want, FALSE to skip
+# You can choose any combination: none, one, two, or all three formats
+OUTPUT_FORMATS <- list(
+  pdf = TRUE,    # Vector format for publications (scalable, small file size)
+  png = TRUE,    # Raster format for pwp (high quality, larger file size)
+  svg = TRUE     # Vector format for web (scalable, editable)
+)
+
+# Plot dimensions (inches)
+PLOT_WIDTH <- 8
+PLOT_HEIGHT <- 6
+PNG_DPI <- 300  # Resolution for PNG files
+
+# ========================= SETUP =========================
+# Set working directory to script location
+setwd(fallback_dir)
+
+source_files <- c("Packages.R", "Functions.R", "UMAP_functions.R") # UMAP.R
 
 lapply(source_files, source, chdir = TRUE)
 
-results_path <- ifelse(is.na(file.info(project_name)$isdir) || !file.info(project_name)$isdir,
-                       file.path(getwd(), "Results", project_name), project_name)
+# Setup output directory
 umap_dir <- paste0(results_path, "/umap_plots/")
-dir_create(umap_dir)
+dir_create(c(results_path, umap_dir))
 
-# df <- data.table::fread(paste0(umap_dir, "/df.csv"))
-# umap_df<- data.table::fread(paste0(umap_dir,"/umap_df.csv"))
-# umapdf_with_labels<- data.table::fread(paste0(umap_dir,"/umapdf_with_labels.csv"))
+# ========================= DIRECT FCS LOADING =========================
 
-marker_indices_of_interest <-explore_data(flow_frames[[1]])$mcols[c(1:8, 10:33)]
+# Load FCS files into flow frames and extract sample names
+flow_frames <- load_fcs_folder(input_file_path)
 
-list_of_ffr <- flow_frames #subsample_flowframes(flow_frames,target_nrow = 1000)
-samples <- sample_names
-condition <- batch_names
-patient <- patient_names
+# ========================= MARKER SELECTION =========================
+# Get marker information and filter markers
+marker_info <- explore_data(flow_frames[[1]])
 
+# Filter out empty/unnamed markers and uninteresting ones
+all_markers <- marker_info$markers[marker_info$mcols]
+all_indices <- marker_info$mcols
 
-#===============================================================================
+# Apply filtering using base R to avoid namespace conflicts
+exclude_regex <- paste(EXCLUDE_PATTERNS, collapse = "|")
+keep_mask <- !grepl(exclude_regex, all_markers, ignore.case = TRUE)
+filtered_markers <- all_markers[keep_mask]
+filtered_indices <- all_indices[keep_mask]
 
-# Create a dictionary mapping values from vector1 to vector2
-cond_dictionary <- setNames(condition, samples)
-pati_dictionary <- setNames(patient, samples)
+# Simplified marker selection
+marker_indices_of_interest <- select_markers_by_mode(MARKER_SELECTION_MODE,
+                                                     filtered_markers,
+                                                     filtered_indices)
 
-# Extracting the number of rows from each flowframe's expression matrix
-num_rows <- sapply(list_of_ffr, function(flowframe) nrow(exprs(flowframe)))
+cat("Final markers to use for UMAP:", length(marker_indices_of_interest),
+    "markers | Indices:", paste(marker_indices_of_interest, collapse = ", "),
+    "\n")
+# ========================= DATA SUBSAMPLING =========================
+ffr <- flow_frames[1:2]
+cat("Extracting expression data using selected markers...\n")
 
-# Replicating each letter based on the number of rows in the corresponding flowframe
-sample_procedence <- unlist(mapply(rep, samples, num_rows))
+expression_data <- map(seq_along(ffr), ~ {
+  # Extract expression matrix for selected markers only
+  expr_matrix <- flowCore::exprs(flow_frames[[.x]])[,marker_indices_of_interest,
+                                                    drop = FALSE]
 
-# Condition procedence using condition dictionary
-condition_procedence <- cond_dictionary[sample_procedence]
-patient_procedence <- pati_dictionary[sample_procedence]
+  # Create sample labels for each cell
+  n_cells <- nrow(expr_matrix)
+  sample_name <- paste0("Sample_", .x)  # or extract from file names if available
+  labels <- rep(sample_name, n_cells)
+  
+  cat("Sample", .x, ":", n_cells, "cells x", ncol(expr_matrix), "markers\n")
+  
+  # Return both matrix and labels
+  list(matrix = expr_matrix, labels = labels)
+})
 
-#Concatenate all expression matrices in the list of flowframes
-df <-concatenate_exprs_mtx(list_of_ffr)
+# Combine data and clean
+df_combined <- map(expression_data, "matrix") %>% do.call(rbind, .)
+sample_labels <- map(expression_data, "labels") %>% unlist()
 
-# Remove all instances (rows) with NA values
-na_rows <- which(apply(df, 1, anyNA))  # Rows with at least one NA
-na_cols <- which(apply(df, 2, anyNA))  # Columns with at least one NA
-#condition_procedence  <- condition_procedence[-na_rows]
-#patient_procedence  <- patient_procedence[-na_rows]
-df <- na.omit(df)
+cat("Combined data:", nrow(df_combined), "cells x",
+    ncol(df_combined), "markers\n")
 
-# Subset the dataframe
-#df_subset <- as.data.frame(df[c(sample(nrow(df), 10000)),]) %>% 
-#  select(all_of(marker_indices_of_interest))
-df_subset <- as.data.frame(df) %>% 
-    select(all_of(marker_indices_of_interest))
-data.table::fwrite(df_subset, paste0(umap_dir,"/df.csv"))
+# Remove NA values efficiently
+complete_rows <- complete.cases(df_combined)
+df_clean <- df_combined[complete_rows, ]
+sample_labels_clean <- sample_labels[complete_rows]
 
-# Compute the UMAP embedding for the dataframe 
-umap_df <- uwot::umap(X=df_subset,n_neighbors = 15, min_dist = 0.1)
-colnames(umap_df) <- c("UMAP1", "UMAP2")
-data.table::fwrite(umap_df, paste0(umap_dir,"/umap_df.csv"))
+cat("After removing NAs:", nrow(df_clean), "cells\n")
 
+# Save the combined data
+data.table::fwrite(df_clean, paste0(umap_dir, "/combined_expression.csv"))
 
-umapdf_with_labels <- cbind(umap_df, sample_procedence, condition_procedence, patient_procedence)
-data.table::fwrite(umapdf_with_labels, paste0(umap_dir,"/umapdf_with_labels.csv"))
+# ========================= UMAP COMPUTATION =========================
+cat("Computing UMAP embedding...\n")
+umap_result <- uwot::umap(X = df_clean,
+                          n_neighbors = 15,
+                          min_dist = 0.1,
+                          verbose = TRUE)
 
+# Create final dataframe with UMAP coordinates and labels
+umap_df_final <- data.frame(
+  UMAP1 = umap_result[, 1],
+  UMAP2 = umap_result[, 2],
+  Sample = sample_labels_clean
+)
 
-#=============================================================================
-subset <- umapdf_with_labels[sample(nrow(umapdf_with_labels), 100000),]
+# Save UMAP results
+data.table::fwrite(umap_df_final, paste0(umap_dir, "/umap_results.csv"))
 
-custom_palette <- c("darkred","red","darkorange","gold", "greenyellow","limegreen","darkgreen",  "#1F9698",
-                    "navy","cyan2", "#009FFF", "deeppink", "purple",  "chocolate4", "black")
+# Create and save sample overview plot
+unique_samples <- unique(sample_labels_clean)
+colors <- rainbow(length(unique_samples)) %>% setNames(unique_samples)
 
-# Assign colors explicitly to the levels of Patient_ID
-color_sample <- setNames(custom_palette, levels(sample_names))
-color_patient <- setNames(custom_palette, levels(patient_names))
+umap_plot <- umap_df_final %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = Sample)) +
+  geom_point(size = 0.1, alpha = 0.6) +
+  scale_color_manual(values = colors) +
+  labs(title = "UMAP - Colored by Sample", x = "UMAP1", y = "UMAP2") +
+  theme_minimal() +
+  guides(color = guide_legend(override.aes = list(size = 2)))
 
+cat("Saving sample overview plot...\n")
+sample_formats <- save_plot_formats(umap_plot, paste0(umap_dir, "/umap_by_sample"))
+cat("Sample plot saved in formats:", paste(sample_formats, collapse = ", "), "\n")
 
-ggplot(data.frame(subset), aes(x=as.numeric(UMAP1), y= as.numeric(UMAP2))) +
-  geom_point(shape = 19, size = 0.1, stroke = 0.1) +
-  labs(x = "UMAP1", y = "UMAP2") +
-  theme_bw()
+# ========================= MARKER-SPECIFIC PLOTS =========================
+cat("Creating marker-specific plots for each sample...\n")
 
-samp_plot <- ggplot(data.frame(subset), 
-               aes(as.numeric(UMAP1), y= as.numeric(UMAP2),color = sample_procedence)) +
-  geom_point(shape = 19, size = 0.1, stroke = 0.1) +
-  labs(x = "UMAP1", y = "UMAP2",color = "Sample") +
-  #scale_color_manual(values = c("deepskyblue", "brown1"))+
-  guides(colour = guide_legend(override.aes = list(size=5),  ncol = 2))+
-  ggplot2::scale_color_manual(values = color_sample) +
-  theme_bw()
+# Get marker names and prepare data
+selected_marker_names <- marker_info$markers[marker_indices_of_interest] %>%
+  map_chr(~ if(.x == "" || is.na(.x)) paste0("Marker_", which(marker_info$markers == .x)) else .x)
 
-# Save the plot as a PNG file
-ggsave(plot=samp_plot,filename=paste0(umap_dir,"/sample_procedence.pdf"),width = 6.05, height = 3.9, units = "in")
+# Add expression data to UMAP dataframe and calculate ranges
+umap_with_markers <- umap_df_final
+marker_ranges <- list()
 
-cond_plot <- ggplot(data.frame(subset), 
-               aes(as.numeric(UMAP1), y= as.numeric(UMAP2), 
-                   color = condition_procedence)) +
-  geom_point(shape = 19, size = 0.1, stroke = 0.1) +
-  labs(x = "UMAP1", y = "UMAP2",color = "Timepoint") +
-  #scale_color_manual(values = c("deepskyblue", "brown1"))+
-  guides(fill=guide_legend(ncol=1, byrow=TRUE))+
-  guides(colour = guide_legend(override.aes = list(size=5),  ncol = 1))+
-  theme_bw()
+iwalk(marker_indices_of_interest, ~ {
+  marker_name <- selected_marker_names[.y]
+  clean_marker_name <- make.names(marker_name)
+  
+  umap_with_markers[[clean_marker_name]] <<- df_clean[, .y]
+  marker_ranges[[clean_marker_name]] <<- range(df_clean[, .y], na.rm = TRUE)
+  
+  cat("Marker", clean_marker_name, "range:",
+      marker_ranges[[clean_marker_name]][1], "to",
+      marker_ranges[[clean_marker_name]][2], "\n")
+})
 
-# Save the plot as a PNG file
-ggsave(plot=cond_plot,filename=paste0(umap_dir,"/condition_procedence.pdf"), width = 6.05, height = 3.9, units = "in")
+# Generate plots efficiently using base R
+plot_combinations <- expand_grid(
+  marker_idx = seq_along(marker_indices_of_interest),
+  sample = unique_samples
+)
 
+plot_combinations$marker_name <- selected_marker_names[plot_combinations$marker_idx]
+plot_combinations$clean_marker_name <- make.names(plot_combinations$marker_name)
+plot_combinations$plot_num <- seq_len(nrow(plot_combinations))
 
-pat_plot <- ggplot(data.frame(subset), 
-               aes(as.numeric(UMAP1), y= as.numeric(UMAP2), 
-                   color = patient_procedence)) +
-  geom_point(shape = 19, size = 0.1, stroke = 0.1) +
-  labs(x = "UMAP1", y = "UMAP2",color = "Patient") +
-  #scale_color_manual(values = c("deepskyblue", "brown1"))+
-  guides(fill=guide_legend(ncol=1, byrow=TRUE))+
-  guides(colour = guide_legend(override.aes = list(size=5),  ncol = 2))+
-  ggplot2::scale_color_manual(values = color_patient) +
-  theme_bw()
+total_plots <- nrow(plot_combinations)
 
-# Save the plot as a PNG file
-ggsave(plot=pat_plot,filename=paste0(umap_dir,"/patient_procedence.pdf"), width = 6.05, height = 3.9, units = "in")
+pwalk(plot_combinations, function(marker_idx, sample, marker_name, clean_marker_name, plot_num) {
+  
+  cat("Creating plots for marker:", marker_name, "\n")
+  
+  # Filter data for this sample using base R
+  sample_data <- umap_with_markers[umap_with_markers$Sample == sample, ]
+  
+  # Create plot
+  marker_plot <- sample_data %>%
+    ggplot(aes(x = UMAP1, y = UMAP2, color = .data[[clean_marker_name]])) +
+    geom_point(size = 0.1, alpha = 0.7) +
+    scale_color_viridis_c(name = marker_name, 
+                         limits = marker_ranges[[clean_marker_name]], 
+                         option = "viridis") +
+    labs(title = paste("UMAP -", marker_name, "expression"),
+         subtitle = paste("Sample:", sample),
+         x = "UMAP1", y = "UMAP2") +
+    theme_minimal() +
+    theme(legend.position = "right")
 
+  # Create safe filename and save
+  filename_base <- paste0(umap_dir, "/umap_",
+                          gsub("[^A-Za-z0-9_-]", "_", marker_name), "_",
+                          gsub("[^A-Za-z0-9_-]", "_", sample))
 
-#for (i in 1:length(markers_of_interest)){
-#  print(markers_of_interest[i])
-#  umap_marker(umap_df, concat_subsample, paste("UMAP coloured by ", markers_of_interest[i], " expression", sep=""), i, markers_of_interest[i])
-#}
+  marker_formats <- save_plot_formats(marker_plot, filename_base)
 
-#umap_marker(umap_df, concat_subsample, "test_1", 1, "CD49a")
+  cat("  Plot", plot_num, "/", total_plots, ":",
+      gsub("[^A-Za-z0-9_-]", "_", marker_name), "in",
+      gsub("[^A-Za-z0-9_-]", "_", sample),
+      "(", paste(marker_formats, collapse=", "), ")\n")
+})
 
-file_precedence <- rep(sample_names,each=downsample_size)
-umap_vector(umap_df, file_precedence,"file_procedence", rainbow(16)) 
+# ========================= COMPLETION SUMMARY =========================
+enabled_formats <- names(OUTPUT_FORMATS)[unlist(OUTPUT_FORMATS)]
+total_plots <- 1 + (length(marker_indices_of_interest) * length(unique_samples))
 
-patient <- rep(c("E","F","G", "H"), each=4*downsample_size)
-umap_vector(umap_df, patient,"Patient       ", c("red", "yellow", "green", "blue"))
-
-
-umap_vector(umap_df, salt_concentration,"Salt condition", c("aquamarine", "lightsalmon"))
-tsne_vector(dimred_res$layout[,c(1,2)], salt_concentration,"Salt condition", c("aquamarine", "lightsalmon"))
-umap_vec(tsne_dim$Y, salt_concentration,"Salt condition", c("aquamarine", "lightsalmon"))
-
-#umap_vector(umap_df, cluster_origin,"cluster origin")
-
-
-umap_vector(umap_df, udn_vector,"Cluster group ", c("Blue", "Grey", "Red"))
-
-metacluster_vector <- GetMetaclusters(fsom)
-metacluster_origin <- metacluster_vector[subsampling_idx]
-umap_vector(umap_df, metacluster_origin,"metacluster origin", rainbow(22))
-print(table(udn_vector))
-
+cat("✓ UMAP analysis complete!\n")
+cat("Results saved in:", umap_dir, "\n")
+cat("Files created:\n  - combined_expression.csv\n  - umap_results.csv\n")
+cat("  - Sample overview plot (", paste(enabled_formats, collapse = ", "), ")\n")
+cat("  -", length(marker_indices_of_interest) * length(unique_samples), 
+    "marker-specific plots (", paste(enabled_formats, collapse = ", "), ")\n")
+cat("Total plots generated:", total_plots, "plots in", length(enabled_formats), "format(s)\n")

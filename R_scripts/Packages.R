@@ -15,7 +15,7 @@
 # List of required packages that can be installed with install.packages()
 packages = c("devtools","remotes", "BiocManager", "Cairo",
              "mclust","scales","tibble", "ggplot2", "openxlsx",
-             "viridis","plotly","data.table",   "ggrepel", 
+             "viridis","plotly","data.table",   "ggrepel", "janitor",
              "rmarkdown", "RColorBrewer", "dplyr", "reshape2", "Rtsne", 
              "diptest", "LaplacesDemon",  "diptest",  "ggpubr", "units",
              "mousetrap", "readxl", "magrittr","ggridges", 'emdist', "plyr",

@@ -1,6 +1,7 @@
 #=============================== Functions.R ==============================
 
-# This file contains a collection of helper functions for analyzing flow cytometry data in R.
+# This file contains a collection of helper functions for analyzing
+# flow cytometry data in R.
 # The functions included in this file are designed to assist with various tasks such as:
 # - Checking if a path is a directory and creating directories if they do not exist.
 # - Extracting information from flowFrame objects, such as dye and marker names.
@@ -8,6 +9,279 @@
 # - Reading and parsing the text segment of FCS (Flow Cytometry Standard) files.
 # - Retrieving specified parameters from FCS files.
 # - Checking the total number of events in a flow frame against the header information.
+#
+# VERSION NOTES:
+# This version (R_scripts/Functions.R) contains the full function implementations.
+# The archive version (archive/R_scripts_20251121/Functions.R) is a modular loader
+# that sources functions from thematic subfolders. The actual function files have
+# been copied to the appropriate subfolders in R_scripts/.
+#
+# TODO (from archive modular structure):
+# - [ ] Consider implementing load_pipeline_functions() for automatic sourcing
+#       of all function files from subfolders (see archive version for reference)
+# - [ ] Add display_pipeline_overview() function for user guidance
+# - [ ] The archive version organizes functions into:
+#       - 01_data_loading/data_loading_functions.R
+#       - 02_preprocessing/preprocessing_functions.R (exists as Preprocessing_functions.R)
+#       - 03_normalization/homogenization_functions.R (copied)
+#       - 05_analysis/analysis_functions.R (copied)
+#       - 06_visualization/visualization_functions.R (copied)
+#       - 04_gating/gating_functions.R (copied)
+#       - 00_utilities/file_management.R, flowframe_functions.R, general_utilities.R (copied)
+# ============================================================================
+
+setwd_cwd <- function(fallback_dir) {
+  #' Set Working Directory to Script Location
+  #' This function sets the working directory to the location of the script being executed.
+  #'
+  #' @param fallback_dir The directory to use if the script location cannot be determined.
+  #' 
+  if (Sys.getenv("RSTUDIO")=="1" &&
+      requireNamespace("rstudioapi", quietly = TRUE)) {
+    # From RStudio
+    try({
+      script_path <- rstudioapi::getSourceEditorContext()$path
+    }, silent = TRUE)
+  } else if(is.na(script_path) || script_path == "") {
+    # From Command line
+    ca <- commandArgs(trailingOnly = FALSE)
+    file_arg <- sub("^--file=", "", ca[grep("^--file=", ca)])
+    if (length(file_arg) > 0) script_path <- file_arg
+  }else if ((is.na(script_path) || script_path == "") &&
+              !is.null(sys.frames()[[1]]$ofile)) {
+    # Via source()
+    script_path <- sys.frames()[[1]]$ofile
+  }else if ((is.na(script_path) || script_path == "") &&
+              requireNamespace("knitr", quietly = TRUE)) {
+    # Via RMarkdown
+    ci <- try(knitr::current_input(), silent = TRUE)
+    if (!inherits(ci, "try-error") && !is.null(ci)) script_path <- ci
+  }else{
+    # Otherwise default to fallback
+    script_dir <-  fallback_dir
+  }
+  setwd(script_dir)
+}
+
+# Helper function to save plots in selected formats
+save_plot_formats <- function(plot, filename_base,
+                              width = PLOT_WIDTH, height = PLOT_HEIGHT) {
+  formats_saved <- c()
+  
+  format_configs <- list(
+    pdf = list(ext = ".pdf", device = "pdf", extra_args = list()),
+    png = list(ext = ".png", device = "png", extra_args = list(dpi = PNG_DPI)),
+    svg = list(ext = ".svg", device = "svg", extra_args = list())
+  )
+  
+  for (format_name in names(OUTPUT_FORMATS)) {
+    if (OUTPUT_FORMATS[[format_name]]) {
+      config <- format_configs[[format_name]]
+      args <- c(
+        list(
+          filename = paste0(filename_base, config$ext),
+          plot = plot,
+          width = width,
+          height = height,
+          device = config$device
+        ),
+        config$extra_args
+      )
+      do.call(ggplot2::ggsave, args)
+      formats_saved <- c(formats_saved, toupper(format_name))
+    }
+  }
+  return(formats_saved)
+}
+
+# Function to read CSV files and remove matching columns
+remove_columns_from_csvs <- function(folder_path, colname_pattern, output_folder = NULL) {
+  require(data.table)
+  csv_files <- list.files(folder_path, pattern = "\\.csv$", full.names = TRUE)
+  if (length(csv_files) == 0) stop("No CSV files found in the specified folder")
+  
+  output_folder <- output_folder %||% file.path(folder_path, "filtered")
+  dir.create(output_folder, recursive = TRUE, showWarnings = FALSE)
+  
+  results <- map(csv_files, ~ {
+    cat("Processing:", basename(.x), "...")
+    data <- fread(.x, sep = ";", header = TRUE)
+    matching_cols <- grep(colname_pattern, names(data), value = TRUE)
+    
+    if (length(matching_cols) > 0) {
+      data_filtered <- data[, !names(data) %like% colname_pattern, with = FALSE]
+      cat(" removed", length(matching_cols), "columns")
+    } else {
+      data_filtered <- data
+      cat(" no matches found")
+    }
+    
+    output_file <- file.path(output_folder, basename(.x))
+    fwrite(data_filtered, output_file, sep = ";")
+    cat(" ->", ncol(data_filtered), "cols saved\n")
+    
+    list(original_cols = ncol(data), filtered_cols = ncol(data_filtered), 
+         removed_cols = matching_cols)
+  }) %>% setNames(basename(csv_files))
+  
+  cat("Summary: Processed", length(csv_files), "files -", output_folder, "\n")
+  invisible(results)
+}
+
+
+# ========================== GUI section ========================================
+
+# Function for advanced multi-selection (compact)
+tk_multiselect <- function(choices, title = "Select items") {
+  if (!require("tcltk", quietly = TRUE)) stop("tcltk package is required")
+  tt <- tktoplevel(); tkwm.title(tt, title); tkwm.geometry(tt, "400x300")
+  main_frame <- tkframe(tt); tkpack(main_frame, expand = TRUE, fill = "both")
+  listbox <- tklistbox(main_frame, selectmode = "extended", height = 10, width = 30)
+  scrollbar <- tkscrollbar(main_frame, orient = "vertical")
+  tkconfigure(listbox, yscrollcommand = function(...) tkset(scrollbar, ...))
+  tkconfigure(scrollbar, command = function(...) tkyview(listbox, ...))
+  tkpack(scrollbar, side = "right", fill = "y"); tkpack(listbox, side = "left", expand = TRUE, fill = "both")
+  for (item in choices) tkinsert(listbox, "end", item)
+  selected_items <- NULL
+  ok_function <- function() {
+    idx <- as.integer(tkcurselection(listbox)) + 1
+    selected_items <<- if (length(idx) > 0) choices[idx] else character(0)
+    tkdestroy(tt)
+  }
+  cancel_function <- function() { selected_items <<- NULL; tkdestroy(tt) }
+  ok_btn <- tkbutton(main_frame, text = "OK", command = ok_function)
+  cancel_btn <- tkbutton(main_frame, text = "Cancel", command = cancel_function)
+  tkpack(ok_btn, side = "left", padx = 5, pady = 5)
+  tkpack(cancel_btn, side = "left", padx = 5, pady = 5)
+  tkbind(listbox, "<Double-Button-1>", function() { ok_function() })
+  tkbind(tt, "<Return>", ok_function)
+  tkbind(tt, "<Escape>", cancel_function)
+  tkfocus(listbox); tkgrab.set(tt); tkwait.window(tt)
+  selected_items
+}
+
+# Helper for marker checkbox creation
+.create_marker_checkboxes <- function(parent, marker_info) {
+  vars <- vector("list", length(marker_info$indices))
+  for (i in seq_along(marker_info$indices)) {
+    vars[[i]] <- tclVar("1")
+    txt <- paste0("Column ", marker_info$indices[i], ": ", marker_info$names[i])
+    cb <- tkcheckbutton(parent, text = txt, variable = vars[[i]], anchor = "w")
+    tkpack(cb, side = "top", fill = "x")
+  }
+  vars
+}
+
+# Helper for marker checkbox creation with scrollbar
+.create_marker_checkboxes_scroll <- function(parent, marker_info) {
+  canvas <- tkcanvas(parent, bg = "white")
+  scrollbar <- tkscrollbar(parent, orient = "vertical", command = function(...) tkyview(canvas, ...))
+  tkconfigure(canvas, yscrollcommand = function(...) tkset(scrollbar, ...))
+  tkpack(scrollbar, side = "right", fill = "y")
+  tkpack(canvas, side = "left", expand = TRUE, fill = "both")
+  frame <- tkframe(canvas, bg = "white")
+  window_id <- tkcreate(canvas, "window", 0, 0, anchor = "nw", window = frame)
+  vars <- vector("list", length(marker_info$indices))
+  for (i in seq_along(marker_info$indices)) {
+    vars[[i]] <- tclVar("1")
+    txt <- paste0("Column ", marker_info$indices[i], ": ", marker_info$names[i])
+    cb <- tkcheckbutton(frame, text = txt, variable = vars[[i]], anchor = "w", bg = "white")
+    tkpack(cb, side = "top", fill = "x")
+  }
+  tkbind(frame, "<Configure>", function() {
+    bbox <- tkbbox(canvas, "all"); tkconfigure(canvas, scrollregion = bbox)
+  })
+  vars
+}
+
+# Marker selection popup
+select_markers <- function(marker_info, title = "Select Markers") {
+  tryCatch({
+    if (!require("tcltk", quietly = TRUE)) stop("tcltk package is required")
+    tt <- tktoplevel(); tkwm.title(tt, title); tkwm.geometry(tt, "400x350")
+    main_frame <- tkframe(tt); tkpack(main_frame, expand = TRUE, fill = "both", padx = 10, pady = 10)
+    label <- tklabel(main_frame, text = title, font = tkfont.create(size = 12, weight = "bold"))
+    tkpack(label, side = "top", pady = 5)
+    cb_frame <- tkframe(main_frame); tkpack(cb_frame, expand = TRUE, fill = "both")
+    vars <- .create_marker_checkboxes_scroll(cb_frame, marker_info)
+    selected_markers <- NULL
+    ok_function <- function() {
+      selected_markers <<- marker_info$indices[which(sapply(vars, tclvalue) == "1")]
+      tkdestroy(tt)
+    }
+    cancel_function <- function() { selected_markers <<- NULL; tkdestroy(tt) }
+    ok_btn <- tkbutton(main_frame, text = "OK", command = ok_function)
+    cancel_btn <- tkbutton(main_frame, text = "Cancel", command = cancel_function)
+    tkpack(ok_btn, side = "left", padx = 5, pady = 5)
+    tkpack(cancel_btn, side = "left", padx = 5, pady = 5)
+    tkbind(tt, "<Return>", ok_function)
+    tkbind(tt, "<Escape>", cancel_function)
+    tkfocus(tt); tkgrab.set(tt); tkwait.window(tt)
+    selected_markers
+  }, error = function(e) {
+    warning(paste("Error creating marker selection popup:", e$message)); NULL
+  })
+}
+
+# Simplified marker selection function
+select_markers_by_mode <- function(mode = c("all", "popup", "terminal"),
+                                   filtered_markers, filtered_indices) {
+  mode <- match.arg(mode)
+  switch(mode,
+    "all" = filtered_indices,
+    "popup" = {
+      cat("\nFiltered markers available:\n")
+      iwalk(filtered_markers, ~ cat(sprintf("%d. Column %d: %s\n", .y, filtered_indices[.y], .x)))
+      tryCatch({
+        selected <- select_markers(list(indices = filtered_indices, names = filtered_markers))
+        if (is.null(selected) || length(selected) == 0) filtered_indices else selected
+      }, error = function(e) { cat("Popup failed, using all markers\n"); filtered_indices })
+    },
+    "terminal" = {
+      cat("\nAvailable markers:\n")
+      iwalk(filtered_markers, ~ cat(sprintf("%d. Column %d: %s\n", .y, filtered_indices[.y], .x)))
+      cat("Enter marker numbers (comma-separated, or 'all'): ")
+      input <- readline()
+      if (input == "all") filtered_indices else {
+        nums <- as.numeric(strsplit(input, ",")[[1]])
+        filtered_indices[nums[nums %in% seq_along(filtered_indices)]]
+      }
+    },
+    # Default: use as-is if numeric vector, or fallback to all
+    if (is.numeric(mode)) mode else filtered_indices
+  )
+}
+
+# Load list of FCS files into flowframes
+load_fcs_list <- function(fcs_file_list) {
+  fcs_file_list %>%
+    map2(seq_along(.), ~ {
+      cat("Loading", basename(.x), "...")
+      ff <- flowWorkspace::load_cytoframe_from_fcs(.x, transformation = FALSE,
+                                                   truncate_max_range = FALSE)
+      cat(" Sample", .y, "has", nrow(ff), "cells and", ncol(ff), "markers\n")
+      return(ff)
+  })
+}
+
+load_fcs_folder <- function(input_file_path) {
+  # Load FCS files and extract sample names
+  cat("Reading FCS-files from", input_file_path, "\n")
+  input_fcs_files <- list.files(path = input_file_path,
+                                pattern = "\\.fcs$", full.names = TRUE)
+  sample_names <- input_fcs_files %>%
+    basename() %>%
+    gsub("\\.fcs$", "", .) %>%
+    sapply(function(x) strsplit(x, "_")[[1]][1:2] %>% paste(collapse = "_"))
+
+  cat("Found", length(input_fcs_files), "FCS files in", input_file_path, "\n")
+  cat("Sample names:", paste(sample_names, collapse = ", "), "\n")
+
+  # Load flow frames into a list
+  flow_frames <- load_fcs_list(input_fcs_files)
+
+  return(flow_frames)
+}
 
 # =================== Load FlowJo wsp functions ================================
 
@@ -106,9 +380,11 @@ plot_per_sample <- function(df, value_col, out_prefix, y_label, title) {
 }
 
 # TODO: Function to run loading at once centralized
+
 #=================== Cytolution gating ========================================
+
 flatten_label_list <- function(label_lists, gating_tree) {
-  unlist(lapply(label_lists, function(labels) {
+  sapply(label_lists, function(labels) {
     if (length(labels) == 0) {
       return("root")
     } else if (length(labels) == 1) {
@@ -118,7 +394,7 @@ flatten_label_list <- function(label_lists, gating_tree) {
       depths[is.na(depths)] <- -Inf
       return(labels[which.max(depths)])
     }
-  }))
+  }, USE.NAMES = FALSE)  # Ensure we get a simple vector
 }
 
 detect_csv_sep <- function(file) {
@@ -135,8 +411,21 @@ labels_from_binary_df <- function(df) {
     names(row)[which(row == 1)]
   })
 }
-#==================== Helper Functions ==============================
+# =========================== Plotting Functions ===============================
+# Custom function to format seconds as s, min, h
+time_formatter <- function(x) {
+  sapply(x, function(val) {
+    if (val < 60) {
+      sprintf("%.0fs", val)
+    } else if (val < 3600) {
+      sprintf("%.0fmin", val/60)
+    } else {
+      sprintf("%.1fh", val/3600)
+    }
+  })
+}
 
+#============================= Helper Functions ================================
 
 ensure_and_load_packages <- function(req_packages) {
 #' Ensure and Load Required Packages
@@ -204,7 +493,8 @@ dir_create <- function(dir_path_list){
   }
 } # lapply(paths, dir.create, recursive = TRUE)
 
-#======================= Compare_gating Functions =============================
+#======================= Compare_gating Functions ==============================
+
 translate_labels <- function(string_list, dictionary) {
   # dictionary: named vector, names are original, values are standardized
   idx <- match(string_list, names(dictionary))
@@ -230,7 +520,7 @@ plot_venneuler <- function(sets, output_dir, filename) {
   png(filename = file.path(output_dir, paste0("venneuler_", filename, ".png")), 
       width = 800, height = 600)
   tryCatch({
-    plot(fit, main = paste(filename, "population comparison"), col = set_colors)
+    plot(fit, main = paste(filename, "population"), col = set_colors)
     # Annotate overlaps if possible
     if (is.numeric(fit$weights) && !is.null(fit$centers)) {
       overlap_counts <- round(fit$weights)
@@ -265,7 +555,7 @@ plot_euler <- function(sets, output_dir, filename, custom_name = NULL) {
   tryCatch({
     p <- plot(
       fit,
-      main = paste(filename, "population comparison"),
+      main = paste(filename, "population"),
       fills = set_colors,
       quantities = TRUE,
       legend = custom_name
@@ -289,7 +579,7 @@ plot_venn <- function(sets, filename, output_dir){
     sncs = 1,
     ilabels = "counts"
   ) +
-    ggplot2::ggtitle(paste(filename, "population comparison"))
+    ggplot2::ggtitle(paste(filename, "population"))
   ggplot2::ggsave(
     filename = file.path(output_dir, paste0("venn_", filename, ".png")),
     plot = p, width = 8, height = 6
@@ -317,7 +607,8 @@ plot_and_save_venn <- function(lists, population, filename, output_dir,
   }
   # TODO: Replace scale_size for plot type and add upset plot and venneuler
   if (scale_size) {
-    plot_euler(sets, output_dir, filename, custom_name = set_names)
+    plot_euler(sets = sets, output_dir = output_dir, filename = filename, 
+               custom_name = set_names)
   } else {
     plot_venn(sets, output_dir, filename)
   }
@@ -325,7 +616,7 @@ plot_and_save_venn <- function(lists, population, filename, output_dir,
 #==================== Extract information from FF ==============================
 
 explore_data <- function(flowframe){
-  #' Explore Flow Cytometry Data
+#' Explore Flow Cytometry Data
 #'
 #' This function takes a flowFrame object and extracts information about the 
 #' dyes and markers used in the flow cytometry experiment. It returns a list 
@@ -483,8 +774,276 @@ check_tot <- function(flowframe){
                 "events do not match for flow frame",i))
   }
 }
+# ==================  Load csv gating functions=============================
+# Memory-efficient CSV to FCS mapping
+create_csv_fcs_mapping <- function(csv_files, fcs_files) {
+  csv_to_fcs <- character(length(csv_files))
+  names(csv_to_fcs) <- csv_files
+  
+  fcs_bases_norm <- gsub("[-_]", "", gsub("\\.fcs$", "", basename(fcs_files)))
+  
+  for (i in seq_along(csv_files)) {
+    csv_file <- csv_files[i]
+    csv_base_norm <- gsub("[-_]", "", gsub("\\.csv$", "", basename(csv_file)))
+    
+    match_idx <- which(sapply(fcs_bases_norm, function(fcs_norm) {
+      grepl(fcs_norm, csv_base_norm, fixed = TRUE)
+    }))
+    
+    if (length(match_idx) != 1) {
+      stop(sprintf("Could not uniquely match FCS file for CSV '%s' (found %d matches)",
+                   basename(csv_file), length(match_idx)))
+    }
+    csv_to_fcs[csv_file] <- fcs_files[match_idx]
+  }
+  
+  return(csv_to_fcs)
+}
 
-# Remove unused channels
-# for (i in 1:length(flow_frames)){flow_frames[[i]] <-cyto_channels_restrict(flow_frames[[i]])}
-# for(i in 1:length(flow_frames)){print(ncol(flow_frames[[i]]@exprs))}
-# all.equal(explore_data(flow_frames[[1]])$mcols,explore_data(flow_frames[[17]])$mcols)
+# Get FCS event count without loading full file
+get_fcs_event_count <- function(fcs_file) {
+  tryCatch({
+    ff <- flowCore::read.FCS(fcs_file, truncate_max_range = FALSE, 
+                            transformation = FALSE, which.lines = 1)
+    as.numeric(flowCore::keyword(ff, "$TOT")[[1]])
+  }, error = function(e) {
+    flowcore_ff <- flowCore::read.FCS(fcs_file, truncate_max_range = FALSE)
+    nrow(flowcore_ff)
+  })
+}
+
+# Check if CSV has manual gating columns
+has_manual_gating <- function(csv_file, pattern = "Manual gating") {
+  tryCatch({
+    separator <- detect_csv_sep(csv_file)
+    header <- fread(csv_file, sep = separator, nrows = 0)
+    any(grepl(pattern, names(header)))
+  }, error = function(e) FALSE)
+}
+
+# Filter CSV files to only those with manual gating
+filter_valid_csv_files <- function(csv_files, pattern = "Manual gating") {
+  valid_files <- csv_files[sapply(csv_files, has_manual_gating, pattern = pattern)]
+  cat("Found", length(valid_files), "valid CSV files with pattern:", pattern, "\n")
+  valid_files
+}
+
+# Read and filter CSV to essential columns only
+read_csv_filtered <- function(csv_file, pattern = "Manual gating") {
+  require(data.table)
+  separator <- detect_csv_sep(csv_file)
+  csv_data <- fread(csv_file, sep = separator, header = TRUE)
+  
+  # Filter to manual gating columns
+  manual_cols <- grep(pattern, names(csv_data), value = TRUE)
+  if (length(manual_cols) == 0) return(NULL)
+  
+  essential_cols <- c("index", manual_cols)
+  available_cols <- intersect(essential_cols, names(csv_data))
+  csv_data[, ..available_cols]
+}
+
+# Process binary labels efficiently with data.table
+labels_from_binary_dt <- function(dt) {
+  mat <- as.matrix(dt[, -1])  # Exclude index column
+  col_names <- names(dt)[-1]
+  # Return a list where each element contains the selected column names for that row
+  apply(mat, 1, function(row) {
+    selected <- col_names[which(row == 1)]
+    if (length(selected) == 0) selected <- character(0)
+    return(selected)
+  }, simplify = FALSE)  # Keep as list to avoid recycling issues
+}
+
+# Process small CSV data chunk
+process_csv_chunk <- function(csv_data, csv_label_dict, gating_tree, num_events) {
+  require(data.table)
+  
+  idx_list <- csv_data[[1]]  # First column should be index
+  setnames(csv_data, names(csv_data), translate_labels(names(csv_data), csv_label_dict))
+  
+  label_lists <- labels_from_binary_dt(csv_data)
+  flat_list <- flatten_label_list(label_lists, gating_tree)
+  
+  # Create result vector with proper length
+  idx_labels_vec <- rep("", num_events)
+  
+  # Ensure indices are within bounds and translate labels
+  valid_indices <- idx_list + 1
+  valid_indices <- valid_indices[valid_indices > 0 & valid_indices <= num_events]
+  
+  if (length(valid_indices) > 0) {
+    translated_labels <- translate_labels(flat_list[seq_along(valid_indices)], csv_label_dict)
+    idx_labels_vec[valid_indices] <- translated_labels
+  }
+  
+  # Return as data.table with explicit column creation
+  result_dt <- data.table(
+    cell_id = seq_len(num_events),
+    label = idx_labels_vec
+  )
+  
+  # Validate result has correct number of rows
+  if (nrow(result_dt) != num_events) {
+    stop(sprintf("Row count mismatch in process_csv_chunk: expected %d, got %d", 
+                 num_events, nrow(result_dt)))
+  }
+  
+  return(result_dt)
+}
+
+# Process large CSV in chunks
+process_csv_chunked <- function(csv_data, csv_label_dict, gating_tree, 
+                                num_events, chunk_size = 50000) {
+  require(data.table)
+  idx_labels_vec <- rep("", num_events)
+  n_chunks <- ceiling(nrow(csv_data) / chunk_size)
+  
+  for (i in seq_len(n_chunks)) {
+    start_row <- (i - 1) * chunk_size + 1
+    end_row <- min(i * chunk_size, nrow(csv_data))
+    
+    chunk_data <- csv_data[start_row:end_row]
+    chunk_result <- process_csv_chunk(chunk_data, csv_label_dict, gating_tree, num_events)
+    
+    # Only update non-empty labels
+    non_empty_idx <- which(chunk_result$label != "")
+    if (length(non_empty_idx) > 0) {
+      idx_labels_vec[non_empty_idx] <- chunk_result$label[non_empty_idx]
+    }
+    
+    # Cleanup chunk data
+    rm(chunk_data, chunk_result)
+    if (i %% 10 == 0) {
+      gc()
+      cat(".")  # Progress indicator
+    }
+  }
+  
+  # Return as proper data.table
+  result_dt <- data.table(
+    cell_id = seq_len(num_events),
+    label = idx_labels_vec
+  )
+  
+  # Validate result has correct number of rows
+  if (nrow(result_dt) != num_events) {
+    stop(sprintf("Row count mismatch in process_csv_chunked: expected %d, got %d", 
+                 num_events, nrow(result_dt)))
+  }
+  
+  return(result_dt)
+}
+
+# Get file size in MB
+get_file_size_mb <- function(file_path) {
+  file.info(file_path)$size / 1024^2
+}
+
+# Save results and clean memory
+save_and_cleanup <- function(result, output_file, cleanup_vars = NULL) {
+  require(data.table)
+  fwrite(result, output_file, sep = ";")
+  if (!is.null(cleanup_vars)) {
+    for (var in cleanup_vars) {
+      if (exists(var, envir = parent.frame())) {
+        rm(list = var, envir = parent.frame())
+      }
+    }
+  }
+  gc()
+  output_file
+}
+
+# Process single CSV file (main function)
+process_single_csv <- function(csv_file, pattern, csv_label_dict, gating_tree,
+                               csv_to_fcs, output_path, chunk_size = 50000) {
+  require(data.table)
+  
+  file_size_mb <- get_file_size_mb(csv_file)
+  cat("Processing:", basename(csv_file), sprintf("(%.1f MB)...", file_size_mb))
+  
+  # Read and filter CSV
+  csv_data <- read_csv_filtered(csv_file, pattern)
+  if (is.null(csv_data)) {
+    cat(" - No manual gating columns, skipping\n")
+    return(NULL)
+  }
+  
+  cat(sprintf(" -> %d cols", ncol(csv_data)))
+  
+  # Get FCS info
+  fcs_file <- csv_to_fcs[[csv_file]]
+  num_events <- get_fcs_event_count(fcs_file)
+  
+  # Process based on size
+  if (nrow(csv_data) > chunk_size) {
+    cat(sprintf(" (chunked: %d rows)", nrow(csv_data)))
+    result <- process_csv_chunked(csv_data, csv_label_dict, gating_tree, 
+                                 num_events, chunk_size)
+  } else {
+    result <- process_csv_chunk(csv_data, csv_label_dict, gating_tree, num_events)
+  }
+  
+  # Validate row count consistency
+  if (nrow(result) != num_events) {
+    cat(sprintf(" WARNING: Row count mismatch! Expected %d, got %d", num_events, nrow(result)))
+  }
+  
+  # Save and cleanup
+  output_file <- file.path(output_path, paste0(basename(csv_file), "_labels.csv"))
+  save_and_cleanup(result, output_file, c("csv_data", "result"))
+  cat(" -> saved")
+  
+  output_file
+}
+
+validate_csv_results <- function(results) {
+  
+  # Row count validation summary for saved files
+  if (length(results) > 0) {
+    cat("\nRow count validation summary:\n")
+    for (file_name in names(results)) {
+      result_file <- results[[file_name]]
+      if (file.exists(result_file)) {
+        result_data <- fread(result_file, sep = ";")
+        csv_file <- valid_csvs[basename(valid_csvs) == file_name]
+        if (length(csv_file) > 0) {
+          fcs_file <- csv_to_fcs[[csv_file]]
+          expected_rows <- get_fcs_event_count(fcs_file)
+          actual_rows <- nrow(result_data)
+          status <- if (actual_rows == expected_rows) "✓" else "✗"
+          cat(sprintf("  %s %s: %d/%d expected rows \n", 
+                     status, file_name, actual_rows, expected_rows))
+        }
+      }
+    }
+  }
+}
+  # Load and combine results (if needed later)
+load_csv_results <- function(result_files) {
+  require(data.table)
+  results <- list()
+  for (file in result_files) {
+    if (file.exists(file)) {
+      sample_name <- gsub("_labels\\.csv$", "", basename(file))
+      results[[sample_name]] <- fread(file, sep = ";")
+    }
+  }
+  results
+}
+
+# Memory status checker
+check_memory_usage <- function(warn_threshold = 0.8) {
+  if (Sys.info()["sysname"] == "Linux") {
+    mem_info <- system("free -m", intern = TRUE)
+    mem_line <- mem_info[2]
+    mem_values <- as.numeric(strsplit(mem_line, "\\s+")[[1]][-1])
+    used_pct <- mem_values[2] / mem_values[1]
+
+    if (used_pct > warn_threshold) {
+      cat("Warning: Memory usage at", round(used_pct * 100, 1), "%\n")
+      gc()
+    }
+  }
+}

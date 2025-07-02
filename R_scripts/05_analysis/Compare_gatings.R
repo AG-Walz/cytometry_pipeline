@@ -1,0 +1,143 @@
+# Required Libraries
+library(ggplot2)
+library(venn)
+library(VennDiagram)
+library(grid)
+library(eulerr)
+library(venneuler)
+library(rJava)
+library(data.table)
+
+# Example Input: Two lists of the same size
+# Generate two lists of 35,000 entries each
+set.seed(123)  # Set seed for reproducibility
+
+source("Functions.R")
+
+#================== Parameters ===================
+
+source("./Parameters/Compare_gatings_Endo_CD45_Julia.R")
+# Output directory
+output_dir <- paste0(getwd(), "/venn_diagrams_CD45")
+
+# Create a directory to save the Venn diagrams
+dir.create(output_dir, showWarnings = FALSE)
+
+# ======================= Load flowjo population lists =========================
+
+# Check whether the target FCS is present in all of the FlowJo workspaces
+missing_fcs <- sapply(pop_strings_list, function(x) {
+  !any(grepl(target_fcs, names(x), fixed = TRUE))
+})
+# If any workspaces are missing target FCS, stop the script and print a message
+if (any(missing_fcs)) {
+  stop(
+    sprintf(
+      "The following workspaces are missing the target FCS '%s': %s",
+      target_fcs,
+      paste(names(pop_strings_list)[missing_fcs], collapse = ", ")
+    )
+  )
+} else {
+  message(sprintf("Target FCS '%s' found in all workspaces.", target_fcs))
+}
+# Set of label lists
+fj_label_lists <- sapply(pop_strings_list, function(x) {
+  # Find the name in x that contains target_fcs as a substring
+  idx <- grep(target_fcs, names(x), fixed = TRUE)
+  if (length(idx) == 1) {
+    x[[idx]]
+  } else if (length(idx) > 1) {
+    warning(sprintf("Multiple matches for '%s' in names(x), using the first.",
+                    target_fcs))
+    x[[idx[1]]]
+  } else {
+    stop(sprintf("No match found for '%s' in names(x)", target_fcs))
+  }
+})
+# Translate the labels in the lists
+for (i in seq_along(fj_label_lists)) {
+  fj_label_lists[[i]] <- translate_labels(fj_label_lists[[i]], label_dict)
+}
+
+# Save fj_label_lists into CSV files using fwriter for efficiency
+fj_label_lists_df <- as.data.frame(fj_label_lists, stringsAsFactors = FALSE)
+fwrite(fj_label_lists_df, file = file.path(output_dir, paste0("fj_label_lists_",
+                                                              target_fcs,
+                                                              ".csv")))
+
+label_lists <- cbind(fj_label_lists[, c(1, 2, 3)])
+
+# ========================= Load csv string lists ==============================
+
+# Normalize target FCS base name (remove .fcs and replace hyphens/underscores)
+target_base <- gsub("\\.fcs$", "", target_fcs)
+target_base_norm <- gsub("[-_]", "", target_base)
+
+# Normalize the names in csv_label_lists
+csv_names_norm <- gsub("[-_]", "", names(idx_labels))
+
+# Find the index of the matching label
+match_idx <- which(grepl(target_base_norm, csv_names_norm, fixed = TRUE))
+if (length(match_idx) == 0) {
+  stop(sprintf("No match found for FCS file for CSV '%s'", target_base))
+} else if (length(match_idx) > 1) {
+  message(sprintf("Found %d CSVs matching FCS '%s'. Using all matches.",
+                  length(match_idx), target_fcs))
+  cy_label_lists <- lapply(match_idx, function(idx) {
+    tmp <- idx_labels[[idx]]
+    tmp[tmp == ""] <- "Removed"
+    tmp
+  })
+  # Combine with fj_label_lists
+  label_lists <- cbind(fj_label_lists[, c(1, 2, 3)],
+                       do.call(cbind, cy_label_lists))
+} else {
+  cy_label_lists <- idx_labels[[match_idx]]
+  cy_label_lists[cy_label_lists == ""] <- "Removed"
+  label_lists <- cbind(label_lists, cy_label_lists)
+}
+
+# Save fj_label_lists into CSV files using fwriter for efficiency
+cy_label_lists_df <- as.data.frame(cy_label_lists, stringsAsFactors = FALSE)
+fwrite(cy_label_lists_df, file = file.path(output_dir, paste0("cy_label_lists_",
+                                                              target_fcs,
+                                                              ".csv")))
+
+# Save fj_label_lists into CSV files using fwriter for efficiency
+label_lists_df <- as.data.frame(label_lists, stringsAsFactors = FALSE)
+fwrite(label_lists_df, file = file.path(output_dir, paste0("label_lists_",
+                                                           target_fcs,
+                                                           ".csv")))
+#============================ Manual loading ===================================
+label_lists <- data.frame(fread(paste0(output_dir, "/label_lists", 
+                                target_fcs,".csv")))[500000:1000000,]
+# ============================= Main Code ======================================
+
+# Ensure all lists are of the same size
+list_lengths <- sapply(label_lists, length)
+if (length(unique(list_lengths)) != 1) {
+  stop("All lists must have the same size.")
+}
+unique_combinations <- unique(label_lists)
+print(unique_combinations)
+
+# Get all unique strings across all lists (concatenate, don't unlist)
+unique_populations <- unique(as.vector(unlist(label_lists)))
+
+# Generate a Venn diagram for each unique string
+for (population in unique_populations) {
+  print(paste("Plotting", population))
+  if (is.na(population) || population == "") {
+    warning("Skipping empty or NA population for Venn diagram.")
+    next
+  }
+  plot_and_save_venn(lists = label_lists, population = population,
+                     filename = paste0("subsetted ", population, "_", 
+                                       target_fcs),
+                     output_dir = output_dir, scale_size = TRUE,
+                     custom_name = custom_name)
+}
+
+# Print completion message
+print(paste("Venn diagrams saved to:", output_dir))
