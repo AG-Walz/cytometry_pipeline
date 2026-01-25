@@ -1,8 +1,24 @@
+# =============================================================================
+# Concatenate Flow Cytometry Data Script
+# =============================================================================
+# Description: Concatenates multiple FCS files into a single expression matrix
+#              for downstream analysis and UMAP visualization.
+#
+# Dependencies: Packages.R, Functions.R, 06_visualization/visualization_functions.R,
+#               02_preprocessing/Downsampling_functions.R
+#
+# TODOs:
+#   - [ ] Add memory estimation before concatenation
+#   - [ ] Implement file-backed concatenation for very large datasets
+#   - [ ] Add option to select subset of files interactively
+#   - [ ] Support for different file formats (CSV, FCS, h5ad)
+# =============================================================================
+
 # ========================= PARAMETERS =========================
 
 fallback_dir <- "/home/ngr24/Desktop/Maerklin/Cytometry/R_scripts"
 input_file_path <- "/data/Maerklin/ICK/ICK_T1_PR/"
-results_path<- "/data/Maerklin/ICK/ICK_T1_PR/Results/"
+results_path <- "/data/Maerklin/ICK/ICK_T1_PR/Results/"
 project_name <- "ICK_T1_PR"
 
 # Marker selection options:
@@ -34,10 +50,11 @@ PNG_DPI <- 300  # Resolution for PNG files
 # Set working directory to script location
 setwd(fallback_dir)
 
-source_files <- c("Packages.R", "Functions.R", "UMAP_functions.R",
-                  "Downsampling_functions.R") # UMAP.R
-
-lapply(source_files, source, chdir = TRUE)
+# Source dependencies from proper locations
+source("Packages.R")
+source("Functions.R")
+source("06_visualization/visualization_functions.R")
+source("02_preprocessing/Downsampling_functions.R")
 
 # Setup output directory
 umap_dir <- paste0(results_path, "/umap_plots/")

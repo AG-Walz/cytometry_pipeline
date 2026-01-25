@@ -24,8 +24,9 @@ gating_tree <- c(
 output_path <- paste0(input_fcs_path, "UMAP")
 
 # ================================ Load Functions ==============================
-source("Packages.R")
-source("Functions.R")
+# Source from parent directory
+source("../Packages.R")
+source("../Functions.R")
 dir_create(output_path)
 
 # ================================ Main Processing ============================

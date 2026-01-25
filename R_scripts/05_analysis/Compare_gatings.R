@@ -12,7 +12,8 @@ library(data.table)
 # Generate two lists of 35,000 entries each
 set.seed(123)  # Set seed for reproducibility
 
-source("Functions.R")
+# Source from parent directory
+source("../Functions.R")
 
 #================== Parameters ===================
 

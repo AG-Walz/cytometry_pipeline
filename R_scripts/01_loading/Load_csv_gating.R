@@ -116,9 +116,9 @@ gating_tree <- c(
 )
 
 # ================================ Load Functions ==============================
-
-source("Packages.R")
-source("Functions.R")
+# Source from parent directory
+source("../Packages.R")
+source("../Functions.R")
 dir_create(output_path)
 
 # ======================== Validation & Setup ==================================

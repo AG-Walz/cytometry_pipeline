@@ -1,3 +1,20 @@
+# =============================================================================
+# UMAP Visualization Script for Cytometry Data
+# =============================================================================
+# Description: Creates UMAP dimensionality reduction plots for FCS flow 
+#              cytometry data with marker expression overlays
+#
+# Dependencies: Packages.R, Functions.R, 06_visualization/visualization_functions.R
+#
+# TODOs:
+#   - [ ] Add support for reading pre-computed UMAP coordinates from CSV
+#   - [ ] Implement t-SNE as alternative dimensionality reduction
+#   - [ ] Add clustering overlay options (FlowSOM, Leiden, etc.)
+#   - [ ] Support for batch processing multiple experiments
+#   - [ ] Add interactive HTML plots using plotly
+#   - [ ] Implement UMAP parameter optimization (grid search)
+# =============================================================================
+
 # ========================= PARAMETERS =========================
 
 fallback_dir <- "/home/ngr24/Desktop/Maerklin/Cytometry/R_scripts"
@@ -144,12 +161,13 @@ create_safe_filename <- function(base_name, marker_name, sample_name) {
 }
 
 # ========================= SETUP =========================
-# Set working directory to script location
+# Set working directory to parent R_scripts folder for consistent sourcing
 setwd(fallback_dir)
 
-source_files <- c("Packages.R", "Functions.R", "UMAP_functions.R") # UMAP.R
-
-lapply(source_files, source, chdir = TRUE)
+# Source dependencies from proper locations
+source("Packages.R")
+source("Functions.R")
+source("06_visualization/visualization_functions.R")
 
 # Setup output directory
 umap_dir <- paste0(results_path, "/umap_plots/")

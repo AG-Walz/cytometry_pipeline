@@ -6,7 +6,8 @@ library(scales)
 # !For RStudio only: Set working directory to the same path as the current file
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
-source("Functions.R")
+# Source from parent directory
+source("../Functions.R")
 
 x <- c(100, 1000, 10000, 100000, 340000,500000, 1272000)
 y <- c(0.006, 0.03, 1, 60, 1800, 4500,39600)

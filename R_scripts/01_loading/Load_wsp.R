@@ -28,7 +28,8 @@ plot_barplot <- FALSE
 out_dir <- "./../Output/"
 
 # ------------------------------- Functions -------------------------------
-source("Functions.R")
+# Source from parent directory
+source("../Functions.R")
 # ------------------------------ Load Workspace --------------------------------
 wsp_files <- list.files(path = wsp_dir, pattern = "\\.wsp$", full.names = TRUE)
 

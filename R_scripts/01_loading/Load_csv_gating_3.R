@@ -1,3 +1,23 @@
+# =============================================================================
+# Load CSV Gating Data Script
+# =============================================================================
+# Description: Loads and processes CSV files exported from flow cytometry 
+#              analysis software with gating information. Supports interactive
+#              marker and gate selection.
+#
+# Dependencies: data.table, lme4, lmerTest, emmeans, future.apply, progress, 
+#               tcltk, stringr, Functions.R
+#
+# TODOs:
+#   - [ ] Add support for multiple gating column patterns (FlowJo, Cytobank, etc.)
+#   - [ ] Implement automatic detection of gating format
+#   - [ ] Add validation for column data types (numeric markers, boolean gates)
+#   - [ ] Support for hierarchical gate structures
+#   - [ ] Add progress bar for large file loading
+#   - [ ] Implement memory-efficient chunked reading for very large files
+#   - [ ] Add option to cache loaded data as RDS files
+# =============================================================================
+
 # =========================== Packages ======================================
 
 pkgs <- c("data.table", "lme4", "lmerTest", "emmeans",
@@ -11,7 +31,8 @@ invisible(lapply(pkgs, library, character.only = TRUE))
 # !For RStudio only: Set working directory to the same path as the current file
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
-source("Functions.R")
+# Source from parent directory
+source("../Functions.R")
 
 # Parallelisation ---------------------------------------------------------------
 future::plan(multisession, workers = max(1, parallel::detectCores() - 1))

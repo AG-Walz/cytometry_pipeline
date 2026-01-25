@@ -27,8 +27,9 @@ output_folder <- paste0(input_folder, "Results/")
 gating_pat  <- "\\(Manual gating\\)$"
 
 # ========================== Source packages ==================================
-source("Packages.R")
-source("Functions.R")
+# Source from parent directory
+source("../Packages.R")
+source("../Functions.R")
 dir_create(output_folder)
 
 

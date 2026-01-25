@@ -1,7 +1,25 @@
+# =============================================================================
+# UMAP Visualization Script with Memory-Efficient Processing
+# =============================================================================
+# Description: Memory-optimized UMAP dimensionality reduction for large FCS 
+#              datasets. Supports subsampling and chunked processing.
+#
+# Dependencies: Packages.R, Functions.R, visualization_functions.R,
+#               02_preprocessing/Downsampling_functions.R, 01_loading/Memory_config.R
+#
+# TODOs:
+#   - [ ] Add automatic memory estimation based on file sizes
+#   - [ ] Implement GPU acceleration for UMAP (via rapids/cuml)
+#   - [ ] Add support for incremental/streaming UMAP
+#   - [ ] Implement checkpoint saving for long computations
+#   - [ ] Add multi-threaded file loading
+#   - [ ] Support for distributed processing across multiple machines
+# =============================================================================
+
 # ========================= PARAMETERS =========================
 
 fallback_dir <- "/home/ngr24/Desktop/Maerklin/Cytometry/R_scripts"
-input_file_path <- "/data/Maerklin/ICK/ICK_T1_PR/" #"/home/ngr24/Downloads/ICSAML" # "/data/Maerklin/ICK/ICK_T1_PR/"
+input_file_path <- "/data/Maerklin/ICK/ICK_T1_PR/"
 output_dir <- "./Results"
 project_name <- "ICK_T1_PR"
 
@@ -61,14 +79,17 @@ if (interactive()) {
   if (length(script_path) > 0) {
     script_dir <- dirname(script_path)
   } else {
-    script_dir <-  fallback_dir
+    script_dir <- fallback_dir
   }
 }
 setwd(script_dir)
-source_files <- c("Packages.R", "Functions.R", "UMAP_functions.R",
-                  "Downsampling_functions.R", "Memory_config.R") # UMAP.R
 
-lapply(source_files, source, chdir = TRUE)
+# Source dependencies from proper locations
+source("../Packages.R")
+source("../Functions.R")
+source("visualization_functions.R")
+source("../02_preprocessing/Downsampling_functions.R")
+source("../01_loading/Memory_config.R")
 
 # ========================= MEMORY MANAGEMENT FUNCTIONS =========================
 

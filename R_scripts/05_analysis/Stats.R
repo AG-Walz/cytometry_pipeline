@@ -1,3 +1,23 @@
+# =============================================================================
+# Statistical Analysis Script for Cytometry Data
+# =============================================================================
+# Description: Performs statistical analysis on gated cytometry data including
+#              mixed-effects models, log2FC, AUC calculations, and file variability
+#
+# Dependencies: data.table, lme4, lmerTest, emmeans, future.apply, progress, 
+#               tcltk, stringr, Functions.R
+#
+# TODOs:
+#   - [ ] Add support for metadata-based group comparisons (e.g., Treatment vs Control)
+#   - [ ] Implement more robust multiple testing correction options (Bonferroni, FDR variants)
+#   - [ ] Add volcano plot generation for results visualization
+#   - [ ] Support for paired sample analysis (before/after treatment)
+#   - [ ] Add effect size confidence intervals
+#   - [ ] Implement batch effect correction in statistical models
+#   - [ ] Add support for non-parametric alternatives when normality assumptions fail
+#   - [ ] Generate comprehensive HTML/PDF report of statistical results
+# =============================================================================
+
 # =========================== Packages ======================================
 
 pkgs <- c("data.table", "lme4", "lmerTest", "emmeans",
@@ -11,7 +31,8 @@ invisible(lapply(pkgs, library, character.only = TRUE))
 # !For RStudio only: Set working directory to the same path as the current file
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
-source("Functions.R")
+# Source from parent directory
+source("../Functions.R")
 
 # Parallelisation ---------------------------------------------------------------
 future::plan(multisession, workers = max(1, parallel::detectCores() - 1))
