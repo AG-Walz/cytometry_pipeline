@@ -86,7 +86,14 @@ cytometry_pipeline/
 ├── visualization/       UMAP, heatmaps, density, barplots, PCA, Venn/Euler
 ├── metadata_qc/         Metadata validation, acquisition QC, gating comparison
 ├── pipelines/           Config-driven pipeline orchestrators (A–E)
-├── config/              Parameter templates and study-specific configs
+├── config/
+│   ├── pipeline_A_config.R   Ready-to-edit config for each pipeline
+│   ├── pipeline_B_config.R
+│   ├── pipeline_C_config.R
+│   ├── pipeline_D_config.R
+│   ├── pipeline_E_config.R
+│   ├── standalone/           Configs for running individual scripts
+│   └── study_params/         Your study-specific parameter files
 ├── docs/                In-depth documentation
 └── test_data/           Example input files for testing
 ```
@@ -258,38 +265,88 @@ Metadata validation, acquisition quality checks, and inter-rater agreement.
 
 ## Configuration
 
+Each pipeline has a dedicated config file with only the parameters it needs. Copy the relevant config, edit the paths and markers, and run.
+
+### Pipeline Configs
+
+| Config | Pipeline | What to Edit |
+|--------|----------|--------------|
+| [pipeline\_A\_config.R](config/pipeline_A_config.R) | A — Raw FCS | `fcs_folder`, `markers`, `conditions_csv`, QC/transform/clustering options |
+| [pipeline\_B\_config.R](config/pipeline_B_config.R) | B — CSV Expression | `csv_folder`, `markers`, `condition_col`, `sample_col` |
+| [pipeline\_C\_config.R](config/pipeline_C_config.R) | C — CSV Gating | `csv_folder`, `conditions_csv`, analysis method (`glmm` or `enrichment`) |
+| [pipeline\_D\_config.R](config/pipeline_D_config.R) | D — FlowJo Comparison | `wsp_paths`, `custom_name`, `target_fcs`, `label_dict` |
+| [pipeline\_E\_config.R](config/pipeline_E_config.R) | E — Preprocessed UMAP | `fcs_folder`, `markers`, downsampling/clustering options |
+
+Usage:
+```bash
+Rscript pipelines/pipeline_A_raw_fcs.R --config config/pipeline_A_config.R
+```
+
+### Standalone Script Configs
+
+For running individual scripts outside the pipelines. Each config shows the exact function call with all available parameters.
+
+**Analysis:**
+
+| Config | Script | Purpose |
+|--------|--------|---------|
+| [cluster\_splitting\_config.R](config/standalone/cluster_splitting_config.R) | [cluster\_splitting.R](analysis/cluster_splitting.R) | Split data by cluster, generate tracking matrix |
+| [differential\_abundance\_config.R](config/standalone/differential_abundance_config.R) | [differential\_abundance.R](analysis/differential_abundance.R) | NB-GLMM differential abundance testing |
+| [cluster\_enrichment\_config.R](config/standalone/cluster_enrichment_config.R) | [cluster\_enrichment.R](analysis/cluster_enrichment.R) | Fisher's exact / mixed-effects enrichment |
+| [marker\_statistics\_config.R](config/standalone/marker_statistics_config.R) | [marker\_statistics.R](analysis/marker_statistics.R) | Per-marker summary stats with mixed models |
+| [expression\_matrices\_config.R](config/standalone/expression_matrices_config.R) | [expression\_matrices.R](analysis/expression_matrices.R) | Grouped expression matrices |
+| [abundance\_plotting\_config.R](config/standalone/abundance_plotting_config.R) | [abundance\_plotting.R](analysis/abundance_plotting.R) | Abundance barplots from tracking matrix |
+| [cell\_ratio\_config.R](config/standalone/cell_ratio_config.R) | [cell\_ratio.R](analysis/cell_ratio.R) | Cell population ratios (e.g., CD4/CD8) |
+
+**Visualization:**
+
+| Config | Script | Purpose |
+|--------|--------|---------|
+| [umap\_config.R](config/standalone/umap_config.R) | [umap.R](visualization/umap.R) | UMAP embeddings and overlay plots |
+| [heatmap\_config.R](config/standalone/heatmap_config.R) | [heatmaps.R](visualization/heatmaps.R) | Clustered expression heatmaps |
+| [density\_plots\_config.R](config/standalone/density_plots_config.R) | [density\_plots.R](visualization/density_plots.R) | Per-marker density/ridge plots |
+| [barplots\_config.R](config/standalone/barplots_config.R) | [barplots.R](visualization/barplots.R) | Composition barplots |
+| [pca\_config.R](config/standalone/pca_config.R) | [pca.R](visualization/pca.R) | PCA scatter and loadings plots |
+| [upset\_plots\_config.R](config/standalone/upset_plots_config.R) | [upset\_plots.R](visualization/upset_plots.R) | UpSet set intersection plots |
+| [venn\_diagrams\_config.R](config/standalone/venn_diagrams_config.R) | [venn\_diagrams.R](visualization/venn_diagrams.R) | Venn and Euler diagrams |
+
+**Loading & Metadata QC:**
+
+| Config | Script | Purpose |
+|--------|--------|---------|
+| [load\_fcs\_config.R](config/standalone/load_fcs_config.R) | [load\_fcs\_raw.R](loading/load_fcs_raw.R) | Load raw FCS files |
+| [load\_csv\_gating\_config.R](config/standalone/load_csv_gating_config.R) | [load\_csv\_gating.R](loading/load_csv_gating.R) | Load CSVs with binary gating columns |
+| [load\_flowjo\_wsp\_config.R](config/standalone/load_flowjo_wsp_config.R) | [load\_flowjo\_wsp.R](loading/load_flowjo_wsp.R) | Load FlowJo workspace |
+| [check\_metadata\_config.R](config/standalone/check_metadata_config.R) | [check\_metadata.R](metadata_qc/check_metadata.R) | Validate study metadata |
+| [check\_acquisition\_config.R](config/standalone/check_acquisition_config.R) | [check\_acquisition.R](metadata_qc/check_acquisition.R) | Extract FCS acquisition dates |
+| [compare\_gatings\_config.R](config/standalone/compare_gatings_config.R) | [compare\_gatings.R](metadata_qc/compare_gatings.R) | Compare FlowJo gating strategies |
+| [overlap\_statistics\_config.R](config/standalone/overlap_statistics_config.R) | [overlap\_statistics.R](metadata_qc/overlap_statistics.R) | Fleiss' kappa inter-rater agreement |
+
+### Other Config Files
+
 | File | Purpose |
 |------|---------|
-| [config/Parameters\_template.R](config/Parameters_template.R) | Master parameter template (~80 options). Copy this for each study. |
+| [config/Parameters\_template.R](config/Parameters_template.R) | Master template with all ~80 parameters (for reference) |
 | [config/Packages.R](config/Packages.R) | Explicit package loading |
-| [config/study\_params/](config/study_params/) | Study-specific parameter files (not tracked — use template to create your own) |
-
-### Example study configs (for reference)
-
-| File | Description |
-|------|-------------|
-| [Compare\_gatings\_Endo\_CD45\_Julia.R](config/study_params/Compare_gatings_Endo_CD45_Julia.R) | Pipeline D config — comparing two FlowJo workspaces on endothelial CD45 data |
-| [Compare\_gatings\_ICK\_broad\_narrow.R](config/study_params/Compare_gatings_ICK_broad_narrow.R) | Pipeline D config — broad vs. narrow gating strategies on ICK data |
+| [config/study\_params/](config/study_params/) | Study-specific configs (copy from pipeline configs above) |
 
 ### Key Parameters
 
-The `params` list in your config controls everything. The most important ones:
+The `params` list in pipeline configs controls everything. The most important ones:
 
 ```r
 params <- list(
-  input_dir           = "/path/to/data",
-  output_dir          = "/path/to/output",
-  project_name        = "my_study",
-  markers_of_interest = c("CD3", "CD4", "CD8", "CD19", "CD56"),
-  qc_type             = "flowai",        # "flowai" or "peacoqc"
-  transform_type      = "arcsinh",       # "arcsinh", "logicle", or "biexp"
-  downsample_method   = "Consistent",    # "Consistent" or "Maximal"
-  target_ncell        = 5000,
-  resolution          = 0.8,             # Leiden resolution
-  n_neighbors         = 30,              # KNN for Leiden/UMAP
-  stat_method         = "fisher",        # "fisher" or "mixed"
-  p_adjust_method     = "BH",
-  seed                = 42
+  fcs_folder      = "/path/to/data",          # or csv_folder for pipelines B/C
+  output_dir      = "/path/to/output",
+  markers         = c("CD3", "CD4", "CD8", "CD19", "CD56"),
+  qc_method       = "PeacoQC",               # Pipeline A only
+  transform_method = "arcsinh",               # Pipeline A only
+  downsample_method = "Consistent",           # Pipelines A, E
+  downsample_n    = 10000,
+  resolution      = 0.8,                      # Leiden clustering
+  n_neighbors     = 30,                       # KNN for Leiden/UMAP
+  condition_levels = c("Control", "Treatment"),
+  seed            = 42
 )
 ```
 
