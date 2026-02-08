@@ -1,9 +1,11 @@
 # =============================================================================
 # Cytometry Pipeline .gitignore
 # =============================================================================
-# This file specifies which files/folders should be EXCLUDED from Git tracking.
-# Only R_scripts/ and test_data/ are tracked in the repository.
-# =============================================================================
+
+# ======================== CLAUDE / AI FILES =================================
+CLAUDE.md
+**/CLAUDE.md
+.claude/
 
 # ======================== R-SPECIFIC IGNORES ================================
 .Rhistory
@@ -61,8 +63,6 @@ Output/
 archive/
 
 # ======================== PROJECT-SPECIFIC EXCLUDES =========================
-# These folders contain data/analysis that should not be in the repository
-
 # FlowJo test workspace (data copied to test_data/)
 FlowJo tests/
 
@@ -71,9 +71,6 @@ Gating_comparisons/
 
 # Python scripts (not part of main R pipeline)
 Python_scripts/
-
-# Analysis output
-Output/
 
 # Temporary/generated files
 *.tmp
@@ -94,18 +91,22 @@ compare_scripts.py
 # ======================== EXCEPTIONS (Files to INCLUDE) =====================
 # These patterns override the above ignores
 
-# Include test_data folder (but NOT large data files - only README)
-!test_data/
-!test_data/README.md
+# Include test_data example CSVs (small, needed for tests)
+!test_data/**
+!test_data/examples/*.csv
 
 # Include README files everywhere
 !README.md
 !**/README.md
 
-# Include all R scripts
-!R_scripts/
-!R_scripts/**/*.R
-!R_scripts/**/README.md
-
-# Include parameter templates (but not actual parameter files with data paths)
-!R_scripts/Parameters/*_template.R
+# Include all R scripts in subproject directories
+!R_shared/**/*.R
+!loading/**/*.R
+!preprocessing/**/*.R
+!harmonization/**/*.R
+!clustering/**/*.R
+!analysis/**/*.R
+!visualization/**/*.R
+!metadata_qc/**/*.R
+!pipelines/**/*.R
+!config/**/*.R

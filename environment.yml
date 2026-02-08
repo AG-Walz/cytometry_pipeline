@@ -1,0 +1,77 @@
+name: cytometry_env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - r-base>=4.3
+  - r-devtools
+  - r-remotes
+  - r-biocmanager
+  - r-cairo
+  - r-mclust
+  - r-scales
+  - r-tibble
+  - r-ggplot2
+  - r-openxlsx
+  - r-viridis
+  - r-plotly
+  - r-data.table
+  - r-ggrepel
+  - r-janitor
+  - r-rmarkdown
+  - r-rcolorbrewer
+  - r-dplyr
+  - r-reshape2
+  - r-rtsne
+  - r-diptest
+  - r-laplacesdemon
+  - r-ggpubr
+  - r-units
+  - r-mousetrap
+  - r-readxl
+  - r-magrittr
+  - r-ggridges
+  - r-emdist
+  - r-plyr
+  - r-matrix
+  - r-irlba
+  - r-rspectra
+  - r-bigstatsr
+  - r-multimode
+  # r-sbic # Not consistently available, install via R if needed
+  - r-tidyverse
+  - r-lme4
+  - r-lmertest
+  - r-emmeans
+  - r-future
+  - r-future.apply
+  - r-progress
+  
+  # Bioconductor Packages (bioconductor- prefix)
+  - bioconductor-opencyto
+  - bioconductor-flowcore
+  - bioconductor-flowai
+  - bioconductor-peacoqc
+  - bioconductor-flowworkspace
+  - bioconductor-flowworkspacedata
+  - r-uwot
+  - r-pheatmap
+  # - bioconductor-ggcyto # Sometimes tricky, usually available
+  - bioconductor-flowvs
+  - bioconductor-preprocesscore
+  - bioconductor-flowtrans
+  - bioconductor-biobase
+  - bioconductor-biocgenerics
+  - bioconductor-biocparallel
+  - bioconductor-cytolib
+  - bioconductor-flowsom
+
+  # System dependencies handy for R
+  - pkg-config
+  - make
+  - gcc
+  - gxx
+  - libxml2
+  - libpng
+  - libjpeg-turbo

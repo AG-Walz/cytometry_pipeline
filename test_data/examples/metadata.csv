@@ -1,0 +1,9 @@
+Sample_ID;Datum;Age;Sex;Diagnosis;Treatment_Group;Response;Batch
+ICK-001;15/03/2024;45;M;AML;Chemo;pCR;Batch1
+ICK-002;15/03/2024;62;F;AML;Chemo;npCR;Batch1
+ICK-003;22/03/2024;38;M;ALL;Immuno;pCR;Batch1
+ICK-004;22/03/2024;55;F;AML;Chemo;npCR;Batch2
+ICK-005;29/03/2024;41;M;ALL;Immuno;pCR;Batch2
+ICK-006;29/03/2024;67;F;AML;Chemo;?;Batch2
+ICK-007;05/04/2024;33;M;ALL;Immuno;pCR;Batch3
+ICK-008;05/04/2024;58;F;AML;Chemo;npCR;Batch3

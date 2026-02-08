@@ -1,0 +1,7 @@
+file_name;CD4+ T cells;CD8+ T cells;B cells;NK cells;Monocytes;gdT cells
+sample_001.csv;1234;567;890;234;456;78
+sample_002.csv;987;1234;345;567;234;112
+sample_003.csv;1456;432;1023;189;567;45
+sample_004.csv;876;1567;234;678;123;134
+sample_005.csv;1345;489;945;201;489;67
+sample_006.csv;901;1345;289;589;201;98

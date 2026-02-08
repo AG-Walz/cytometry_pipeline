@@ -1,0 +1,7 @@
+file_name;condition
+sample_001.csv;Control
+sample_002.csv;Treatment
+sample_003.csv;Control
+sample_004.csv;Treatment
+sample_005.csv;Control
+sample_006.csv;Treatment

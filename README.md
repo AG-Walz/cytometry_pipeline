@@ -1,7 +1,7 @@
 # Cytometry pipeline
 
 ## Overview
-This pipeline is supposed to become a comprehensive tool designed to facilitate the analysis of cytometry data by preprocessing, analyzing, and visualizing cytometry data efficiently using open-source R-packages. 
+This pipeline is supposed to become a comprehensive tool designed to facilitate the preprocessing, analysis, and visualization of cytometry data efficiently using open-source R-packages. 
 
 ## Getting started
 
