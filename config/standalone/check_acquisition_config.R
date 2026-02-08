@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: metadata_qc/check_acquisition.R
+# Standalone config: src/metadata_qc/check_acquisition.R
 # =============================================================================
 # Extracts acquisition dates and metadata from FCS file headers. Detects
 # likely duplicate files by matching date + file size combinations.
 #
 # Usage:
 #   source("config/standalone/check_acquisition_config.R")
-#   source("metadata_qc/check_acquisition.R")
+#   source("src/metadata_qc/check_acquisition.R")
 #   result <- check_acquisition_dates(
 #     parent_folder = parent_folder,
 #     output_dir    = output_dir

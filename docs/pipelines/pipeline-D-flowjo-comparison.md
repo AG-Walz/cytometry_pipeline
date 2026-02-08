@@ -79,7 +79,7 @@ Only gates present in `label_dict` are included in the comparison. Gates not lis
 ### Step 1: Load FlowJo Workspaces
 
 ```r
-# loading/load_flowjo_wsp.R
+# src/loading/load_flowjo_wsp.R
 all_labels <- list()
 for (i in seq_along(params$wsp_paths)) {
   ws <- load_flowjo_wsp(params$wsp_paths[i])
@@ -93,7 +93,7 @@ Each workspace is opened with `flowWorkspace::open_flowjo_xml()`, and gate membe
 ### Step 2: Compare Gatings
 
 ```r
-# metadata_qc/compare_gatings.R
+# src/metadata_qc/compare_gatings.R
 comparison <- compare_gatings(
   all_labels,
   label_dict  = params$label_dict,
@@ -106,7 +106,7 @@ Aligns events across workspaces (by event index) and produces a comparison matri
 ### Step 3: Overlap Statistics
 
 ```r
-# metadata_qc/overlap_statistics.R
+# src/metadata_qc/overlap_statistics.R
 kappa <- compute_fleiss_kappa(
   comparison,
   output_dir = file.path(params$output_dir, "02_overlap_stats")

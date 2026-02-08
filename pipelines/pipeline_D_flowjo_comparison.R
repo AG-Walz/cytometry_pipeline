@@ -18,13 +18,13 @@ if (!is.null(config_file)) {
 }
 
 base_dir <- dirname(getwd())
-shared_dir <- file.path(base_dir, "R_shared")
+shared_dir <- file.path(base_dir, "src", "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "cluster_utils.R"))
 
 # Step 1: Load FlowJo workspaces
 cat("\n--- Step 1: Loading FlowJo workspaces ---\n")
-source(file.path(base_dir, "loading", "load_flowjo_wsp.R"))
+source(file.path(base_dir, "src", "loading", "load_flowjo_wsp.R"))
 
 pop_strings_list <- list()
 for (i in seq_along(wsp_paths)) {
@@ -35,7 +35,7 @@ for (i in seq_along(wsp_paths)) {
 
 # Step 2: Compare gatings
 cat("\n--- Step 2: Comparing gating strategies ---\n")
-source(file.path(base_dir, "metadata_qc", "compare_gatings.R"))
+source(file.path(base_dir, "src", "metadata_qc", "compare_gatings.R"))
 label_lists <- compare_gatings(
   pop_strings_list = pop_strings_list,
   target_fcs = target_fcs,
@@ -48,7 +48,7 @@ label_lists <- compare_gatings(
 
 # Step 3: Overlap statistics
 cat("\n--- Step 3: Computing overlap statistics ---\n")
-source(file.path(base_dir, "metadata_qc", "overlap_statistics.R"))
+source(file.path(base_dir, "src", "metadata_qc", "overlap_statistics.R"))
 kappa_results <- compute_fleiss_kappa(
   label_lists = label_lists,
   output_dir = file.path(params$output_dir, "02_overlap_stats")

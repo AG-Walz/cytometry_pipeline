@@ -1,6 +1,6 @@
 [< Back to Documentation Index](../README.md)
 
-# preprocessing/ -- QC, Transformation, Downsampling, Normalization
+# src/preprocessing/ -- QC, Transformation, Downsampling, Normalization
 
 5 scripts for quality control, signal transformation, cell downsampling, and data normalization. Includes a pipeline orchestrator that chains these steps together.
 

@@ -1,5 +1,5 @@
 # =============================================================================
-# Standalone config: metadata_qc/compare_gatings.R
+# Standalone config: src/metadata_qc/compare_gatings.R
 # =============================================================================
 # Compares gating strategies from multiple FlowJo workspaces for a single
 # FCS file. Produces Venn/Euler diagrams per population showing agreement
@@ -9,8 +9,8 @@
 #
 # Usage:
 #   source("config/standalone/compare_gatings_config.R")
-#   source("loading/load_flowjo_wsp.R")
-#   source("metadata_qc/compare_gatings.R")
+#   source("src/loading/load_flowjo_wsp.R")
+#   source("src/metadata_qc/compare_gatings.R")
 #
 #   # Load each workspace
 #   pop_strings_list <- list()

@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: loading/load_fcs_raw.R
+# Standalone config: src/loading/load_fcs_raw.R
 # =============================================================================
 # Loads raw FCS files from a directory into flowFrame objects. Optionally
 # saves expression matrices as CSV and truncates extreme values.
 #
 # Usage:
 #   source("config/standalone/load_fcs_config.R")
-#   source("loading/load_fcs_raw.R")
+#   source("src/loading/load_fcs_raw.R")
 #   flow_data <- load_fcs_raw(
 #     input_dir    = input_dir,
 #     sample_names = sample_names,
@@ -16,7 +16,7 @@
 #   )
 #
 # Or from CLI:
-#   Rscript loading/load_fcs_raw.R /path/to/fcs [/path/to/output]
+#   Rscript src/loading/load_fcs_raw.R /path/to/fcs [/path/to/output]
 # =============================================================================
 
 # ========================= EDIT THESE ========================================

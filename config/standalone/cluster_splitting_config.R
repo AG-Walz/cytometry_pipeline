@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: analysis/cluster_splitting.R
+# Standalone config: src/analysis/cluster_splitting.R
 # =============================================================================
 # Splits combined expression CSVs into per-cluster files and generates a
 # sample-by-cluster tracking matrix (cell counts).
 #
 # Usage:
 #   source("config/standalone/cluster_splitting_config.R")
-#   source("analysis/cluster_splitting.R")
+#   source("src/analysis/cluster_splitting.R")
 #   result <- split_by_cluster(
 #     input_dir             = input_dir,
 #     output_dir            = output_dir,
@@ -17,7 +17,7 @@
 #   )
 #
 # Or from CLI:
-#   Rscript analysis/cluster_splitting.R <input_dir> <output_dir>
+#   Rscript src/analysis/cluster_splitting.R <input_dir> <output_dir>
 # =============================================================================
 
 # ========================= EDIT THESE ========================================

@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: analysis/differential_abundance.R
+# Standalone config: src/analysis/differential_abundance.R
 # =============================================================================
 # Tests differential abundance of cell clusters between two conditions using
 # negative binomial GLMM with sample-level random effects.
 #
 # Usage:
 #   source("config/standalone/differential_abundance_config.R")
-#   source("analysis/differential_abundance.R")
+#   source("src/analysis/differential_abundance.R")
 #   result <- run_differential_abundance(
 #     data_dir            = data_dir,
 #     conditions_csv      = conditions_csv,

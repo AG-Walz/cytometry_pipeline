@@ -23,13 +23,13 @@ Multi-pipeline flow cytometry analysis framework for immune cell phenotyping, su
 
 | Module | Guide |
 |--------|-------|
-| [loading/](subprojects/loading.md) | FCS, CSV, FlowJo workspace loaders |
-| [preprocessing/](subprojects/preprocessing.md) | QC, transformation, downsampling, normalization |
-| [harmonization/](subprojects/harmonization.md) | Panel comparison, homogenization, batch correction |
-| [clustering/](subprojects/clustering.md) | Leiden clustering, FlowJo gate import, unified assignment |
-| [analysis/](subprojects/analysis.md) | Differential abundance, enrichment, marker statistics |
-| [visualization/](subprojects/visualization.md) | UMAP, heatmaps, density, barplots, UpSet, Venn/Euler, PCA |
-| [metadata_qc/](subprojects/metadata-qc.md) | Metadata barplots, acquisition QC, Fleiss' kappa, gating comparison |
+| [src/loading/](subprojects/loading.md) | FCS, CSV, FlowJo workspace loaders |
+| [src/preprocessing/](subprojects/preprocessing.md) | QC, transformation, downsampling, normalization |
+| [src/harmonization/](subprojects/harmonization.md) | Panel comparison, homogenization, batch correction |
+| [src/clustering/](subprojects/clustering.md) | Leiden clustering, FlowJo gate import, unified assignment |
+| [src/analysis/](subprojects/analysis.md) | Differential abundance, enrichment, marker statistics |
+| [src/visualization/](subprojects/visualization.md) | UMAP, heatmaps, density, barplots, UpSet, Venn/Euler, PCA |
+| [src/metadata_qc/](subprojects/metadata-qc.md) | Metadata barplots, acquisition QC, Fleiss' kappa, gating comparison |
 
 ### Example Data
 
@@ -50,14 +50,15 @@ cytometry/
 │   ├── r-shared-reference.md  Shared utility API reference
 │   ├── pipelines/             Per-pipeline deep dives
 │   └── subprojects/           Per-module reference docs
-├── R_shared/              Shared utility library (8 modules)
-├── loading/               Data loading (FCS, CSV, WSP)
-├── preprocessing/         QC, transformation, downsampling
-├── harmonization/         Panel unification, batch correction
-├── clustering/            Leiden, FlowJo import, assignment
-├── analysis/              GLMM, enrichment, marker stats
-├── visualization/         Plots (UMAP, heatmap, density, etc.)
-├── metadata_qc/           Metadata checks, gating comparison
+├── src/                   Source code (9 subprojects)
+│   ├── R_shared/              Shared utility library (8 modules)
+│   ├── loading/               Data loading (FCS, CSV, WSP)
+│   ├── preprocessing/         QC, transformation, downsampling
+│   ├── harmonization/         Panel unification, batch correction
+│   ├── clustering/            Leiden, FlowJo import, assignment
+│   ├── analysis/              GLMM, enrichment, marker stats
+│   ├── visualization/         Plots (UMAP, heatmap, density, etc.)
+│   └── metadata_qc/          Metadata checks, gating comparison
 ├── pipelines/             Config-driven orchestrators (A-E)
 ├── config/                Parameter templates & study configs
 ├── test_data/             Example data and synthetic samples
@@ -89,7 +90,7 @@ What is your input data?
 
 ## Key Conventions
 
-- **Shared utilities**: All scripts `source()` from `R_shared/` -- never duplicate functions
+- **Shared utilities**: All scripts `source()` from `src/R_shared/` -- never duplicate functions
 - **Parameters**: Passed as function arguments via a `params` list, not as global variables
 - **GUI with CLI fallback**: Interactive dialogs use tcltk when available, falling back to `readline()` in headless environments
 - **CSV format**: `data.table::fread`/`fwrite` with semicolon separator by default

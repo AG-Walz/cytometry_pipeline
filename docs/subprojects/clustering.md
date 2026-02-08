@@ -1,6 +1,6 @@
 [< Back to Documentation Index](../README.md)
 
-# clustering/ -- Leiden Clustering, FlowJo Import, Unified Assignment
+# src/clustering/ -- Leiden Clustering, FlowJo Import, Unified Assignment
 
 3 scripts for assigning cell clusters via Leiden community detection, importing FlowJo gates, and providing a unified interface to multiple clustering sources.
 
@@ -57,7 +57,7 @@ run_leiden_with_umap(expr_matrix, sample_labels = NULL, output_dir = NULL,
 
 `leiden`, `igraph`, `uwot`, `Matrix`
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `stats_utils` (`run_umap`)
 
@@ -103,7 +103,7 @@ The `assignments` data.frame contains one row per cell. Each population is repre
 
 `CytoML`, `flowWorkspace`
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `cluster_utils` (`clean_cluster_name`)
 
@@ -172,6 +172,6 @@ assignments <- get_cluster_assignments("csv",
 )
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `cluster_utils`

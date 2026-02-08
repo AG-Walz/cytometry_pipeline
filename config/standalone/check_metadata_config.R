@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: metadata_qc/check_metadata.R
+# Standalone config: src/metadata_qc/check_metadata.R
 # =============================================================================
 # Validates and visualizes study metadata. Detects missing values, temporal
 # patterns, and metadata inconsistencies. Generates barplot summaries.
 #
 # Usage:
 #   source("config/standalone/check_metadata_config.R")
-#   source("metadata_qc/check_metadata.R")
+#   source("src/metadata_qc/check_metadata.R")
 #   check_metadata(
 #     metadata_file = metadata_file,
 #     output_dir    = output_dir,

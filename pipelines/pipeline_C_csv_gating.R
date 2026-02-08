@@ -18,12 +18,12 @@ if (!is.null(config_file)) {
 }
 
 base_dir <- dirname(getwd())
-shared_dir <- file.path(base_dir, "R_shared")
+shared_dir <- file.path(base_dir, "src", "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 
 # Step 1: Load CSV with gating data
 cat("\n--- Step 1: Loading CSV gating data ---\n")
-source(file.path(base_dir, "loading", "load_csv_gating.R"))
+source(file.path(base_dir, "src", "loading", "load_csv_gating.R"))
 gating_data <- load_csv_gating(
   csv_folder = params$csv_folder,
   output_dir = file.path(params$output_dir, "01_loaded")
@@ -31,7 +31,7 @@ gating_data <- load_csv_gating(
 
 # Step 2: Cluster splitting
 cat("\n--- Step 2: Splitting by cluster ---\n")
-source(file.path(base_dir, "analysis", "cluster_splitting.R"))
+source(file.path(base_dir, "src", "analysis", "cluster_splitting.R"))
 split_result <- split_by_cluster(
   data = gating_data$combined,
   cluster_labels = gating_data$cluster_labels,
@@ -40,8 +40,8 @@ split_result <- split_by_cluster(
 
 # Step 3: Statistical analysis (GLMM or enrichment)
 cat("\n--- Step 3: Statistical Analysis ---\n")
-source(file.path(base_dir, "analysis", "differential_abundance.R"))
-source(file.path(base_dir, "analysis", "cluster_enrichment.R"))
+source(file.path(base_dir, "src", "analysis", "differential_abundance.R"))
+source(file.path(base_dir, "src", "analysis", "cluster_enrichment.R"))
 
 if (exists("params") && !is.null(params$analysis_method) && params$analysis_method == "enrichment") {
   enrichment <- run_cluster_enrichment(
@@ -60,9 +60,9 @@ if (exists("params") && !is.null(params$analysis_method) && params$analysis_meth
 
 # Step 4: Visualization
 cat("\n--- Step 4: Visualization ---\n")
-source(file.path(base_dir, "visualization", "umap.R"))
-source(file.path(base_dir, "visualization", "barplots.R"))
-source(file.path(base_dir, "visualization", "heatmaps.R"))
+source(file.path(base_dir, "src", "visualization", "umap.R"))
+source(file.path(base_dir, "src", "visualization", "barplots.R"))
+source(file.path(base_dir, "src", "visualization", "heatmaps.R"))
 
 elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
 cat(sprintf("\n=== Pipeline C complete (%.1f minutes) ===\n", elapsed))

@@ -1,13 +1,13 @@
 # =============================================================================
-# Standalone config: visualization/umap.R
+# Standalone config: src/visualization/umap.R
 # =============================================================================
 # Computes UMAP embeddings and generates per-sample, per-marker, and
 # per-cluster overlay plots.
 #
 # Usage:
 #   source("config/standalone/umap_config.R")
-#   source("loading/load_fcs_raw.R")
-#   source("visualization/umap.R")
+#   source("src/loading/load_fcs_raw.R")
+#   source("src/visualization/umap.R")
 #   flow_data <- load_fcs_raw(input_dir = fcs_folder)
 #   result <- plot_umap(
 #     flow_frames           = flow_data$flow_frames,

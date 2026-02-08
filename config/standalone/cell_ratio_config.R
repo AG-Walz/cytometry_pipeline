@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: analysis/cell_ratio.R
+# Standalone config: src/analysis/cell_ratio.R
 # =============================================================================
 # Calculates ratios between specified cluster populations per sample
 # (e.g., CD4/CD8 ratio). Outputs a table with per-sample ratios and log2 ratios.
 #
 # Usage:
 #   source("config/standalone/cell_ratio_config.R")
-#   source("analysis/cell_ratio.R")
+#   source("src/analysis/cell_ratio.R")
 #   result <- calculate_cell_ratios(
 #     abundance_csv        = abundance_csv,
 #     numerator_clusters   = numerator_clusters,

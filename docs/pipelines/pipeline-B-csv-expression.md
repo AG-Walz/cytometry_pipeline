@@ -61,7 +61,7 @@ If `--config` is not provided, the pipeline falls back to `config/Parameters_tem
 ### Step 1: Load CSV Expression Files
 
 ```r
-# loading/load_csv_expression.R
+# src/loading/load_csv_expression.R
 expr_data <- load_csv_expression(
   csv_folder = params$csv_folder,
   markers    = params$markers
@@ -73,7 +73,7 @@ Reads all CSV files from the specified directory using `data.table::fread()` wit
 ### Step 2: Marker Statistics
 
 ```r
-# analysis/marker_statistics.R
+# src/analysis/marker_statistics.R
 stats <- run_marker_statistics(
   expr_data,
   markers       = params$markers,
@@ -87,10 +87,10 @@ Computes per-marker summary statistics (mean, median, SD, IQR) grouped by condit
 ### Step 3: Visualization
 
 ```r
-# visualization/density_plots.R
+# src/visualization/density_plots.R
 density_plots(expr_data, markers = params$markers, output_dir = params$output_dir)
 
-# visualization/heatmaps.R
+# src/visualization/heatmaps.R
 plot_heatmap(expr_data, markers = params$markers, output_dir = params$output_dir)
 ```
 

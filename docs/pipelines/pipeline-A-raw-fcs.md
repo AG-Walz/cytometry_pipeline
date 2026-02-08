@@ -72,7 +72,7 @@ If `--config` is not provided, the pipeline falls back to `config/Parameters_tem
 ### Step 1: Load FCS Files
 
 ```r
-# loading/load_fcs_raw.R
+# src/loading/load_fcs_raw.R
 flow_frames <- load_fcs_raw(
   fcs_folder = params$fcs_folder,
   truncate_max_range = params$truncate_max_range
@@ -84,7 +84,7 @@ Reads all `.fcs` files from the specified folder into a list of `flowFrame` obje
 ### Step 2: Preprocessing (QC + Transform)
 
 ```r
-# preprocessing/preprocess_pipeline.R
+# src/preprocessing/preprocess_pipeline.R
 flow_frames <- run_preprocessing(
   flow_frames,
   qc_method    = params$qc_method,
@@ -98,7 +98,7 @@ Applies quality control to remove aberrant events (margin events, signal anomali
 ### Step 3: Panel Harmonization
 
 ```r
-# harmonization/panel_homogenization.R
+# src/harmonization/panel_homogenization.R
 flow_frames <- homogenize_flowframes(
   flow_frames,
   markers = params$markers
@@ -110,7 +110,7 @@ Unifies marker panels across files. Files missing specific markers receive `NA` 
 ### Step 4: Downsampling
 
 ```r
-# preprocessing/downsampling.R
+# src/preprocessing/downsampling.R
 flow_frames <- downsample_flowframes(
   flow_frames,
   method = params$downsample_method,
@@ -123,7 +123,7 @@ Reduces event counts to balance representation across samples and manage memory.
 ### Step 5: Leiden Clustering + UMAP
 
 ```r
-# clustering/leiden.R
+# src/clustering/leiden.R
 results <- run_leiden_with_umap(
   flow_frames,
   markers      = params$markers,
@@ -137,10 +137,10 @@ Builds a shared nearest-neighbor graph, applies Leiden community detection, and 
 ### Step 6: Analysis
 
 ```r
-# analysis/cluster_splitting.R
+# src/analysis/cluster_splitting.R
 clusters <- split_by_cluster(results$expr_matrix, results$cluster_ids)
 
-# analysis/differential_abundance.R
+# src/analysis/differential_abundance.R
 da_results <- run_differential_abundance(
   clusters,
   condition_col = params$condition_col,
@@ -153,10 +153,10 @@ Splits the expression matrix by cluster assignment, then runs differential abund
 ### Step 7: Visualization
 
 ```r
-# visualization/umap.R
+# src/visualization/umap.R
 plot_umap(results$umap_coords, results$cluster_ids, output_dir = params$output_dir)
 
-# visualization/heatmaps.R
+# src/visualization/heatmaps.R
 plot_heatmap(results$expr_matrix, results$cluster_ids, output_dir = params$output_dir)
 ```
 

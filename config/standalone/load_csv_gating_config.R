@@ -1,5 +1,5 @@
 # =============================================================================
-# Standalone config: loading/load_csv_gating.R
+# Standalone config: src/loading/load_csv_gating.R
 # =============================================================================
 # Loads CSV files containing binary gating columns alongside expression data.
 # Auto-classifies columns (index, scatter, marker, gating, dim-reduction,
@@ -7,7 +7,7 @@
 #
 # Usage:
 #   source("config/standalone/load_csv_gating_config.R")
-#   source("loading/load_csv_gating.R")
+#   source("src/loading/load_csv_gating.R")
 #   result <- load_csv_gating(
 #     input_fcs_path  = input_fcs_path,
 #     input_csv_path  = input_csv_path,

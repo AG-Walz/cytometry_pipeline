@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: visualization/pca.R
+# Standalone config: src/visualization/pca.R
 # =============================================================================
 # Performs PCA and generates scatter plots of principal components plus
 # loadings plots showing which markers drive each component.
 #
 # Usage:
 #   source("config/standalone/pca_config.R")
-#   source("visualization/pca.R")
+#   source("src/visualization/pca.R")
 #   result <- plot_pca(
 #     expr_matrix   = expr_matrix,     # numeric matrix (cells x markers)
 #     sample_labels = sample_labels,   # character vector of sample IDs

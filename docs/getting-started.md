@@ -46,20 +46,21 @@ The project is organized into **9 subprojects** + supporting directories:
 
 ```
 cytometry/
-├── R_shared/          8 utility modules shared by all scripts
-├── loading/           Data loaders (FCS, CSV, FlowJo WSP)
-├── preprocessing/     QC, transformation, downsampling, normalization
-├── harmonization/     Panel comparison & unification, batch correction
-├── clustering/        Leiden clustering, FlowJo import, assignment
-├── analysis/          GLMM, enrichment, marker statistics
-├── visualization/     UMAP, heatmaps, density, barplots, Venn/Euler
-├── metadata_qc/       Metadata checks, acquisition QC, gating comparison
+├── src/               Source code (9 subprojects)
+│   ├── R_shared/          8 utility modules shared by all scripts
+│   ├── loading/           Data loaders (FCS, CSV, FlowJo WSP)
+│   ├── preprocessing/     QC, transformation, downsampling, normalization
+│   ├── harmonization/     Panel comparison & unification, batch correction
+│   ├── clustering/        Leiden clustering, FlowJo import, assignment
+│   ├── analysis/          GLMM, enrichment, marker statistics
+│   ├── visualization/     UMAP, heatmaps, density, barplots, Venn/Euler
+│   └── metadata_qc/      Metadata checks, acquisition QC, gating comparison
 ├── pipelines/         5 orchestrator scripts (A through E)
 ├── config/            Parameter templates and study-specific configs
 └── test_data/         Example data for testing
 ```
 
-Every subproject script sources shared utilities from `R_shared/` using this pattern:
+Every subproject script sources shared utilities from `src/R_shared/` using this pattern:
 
 ```r
 shared_dir <- file.path(dirname(getwd()), "R_shared")
@@ -148,7 +149,7 @@ You can also run scripts one at a time from an R session:
 
 ```r
 # Set working directory to the subproject
-setwd("/path/to/cytometry/loading")
+setwd("/path/to/cytometry/src/loading")
 
 # Source the script (this loads functions but doesn't execute)
 source("load_csv_gating.R")
@@ -243,7 +244,7 @@ For large datasets (>1 GB CSVs, >50k cells per file):
 Each subproject has a `tests/` directory using `testthat`:
 
 ```bash
-cd /path/to/cytometry/loading
+cd /path/to/cytometry/src/loading
 Rscript -e "testthat::test_dir('tests/')"
 ```
 
@@ -251,7 +252,7 @@ Or test all subprojects:
 
 ```bash
 cd /path/to/cytometry
-for dir in R_shared loading preprocessing harmonization clustering analysis visualization metadata_qc; do
+for dir in src/R_shared src/loading src/preprocessing src/harmonization src/clustering src/analysis src/visualization src/metadata_qc; do
   echo "=== Testing $dir ==="
   (cd $dir && Rscript -e "testthat::test_dir('tests/')" 2>&1) || true
 done

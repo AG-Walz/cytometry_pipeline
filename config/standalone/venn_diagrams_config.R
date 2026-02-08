@@ -1,5 +1,5 @@
 # =============================================================================
-# Standalone config: visualization/venn_diagrams.R
+# Standalone config: src/visualization/venn_diagrams.R
 # =============================================================================
 # Creates Venn diagrams (non-proportional) and area-proportional Euler
 # diagrams from named lists of sets. Commonly used with Pipeline D output
@@ -7,7 +7,7 @@
 #
 # Usage:
 #   source("config/standalone/venn_diagrams_config.R")
-#   source("visualization/venn_diagrams.R")
+#   source("src/visualization/venn_diagrams.R")
 #
 #   # Area-proportional Euler diagram
 #   plot_euler(

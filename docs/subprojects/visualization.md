@@ -1,6 +1,6 @@
 [< Back to Documentation Index](../README.md)
 
-# visualization/ -- Plotting
+# src/visualization/ -- Plotting
 
 7 scripts for generating publication-quality visualizations of cytometry data, including composition barplots, density overlays, heatmaps, PCA, UMAP, UpSet plots, and Venn/Euler diagrams.
 
@@ -65,7 +65,7 @@ plot_density(flow_frames, sample_names, markers, output_dir,
 
 Ridge plots use the `ggridges` package.
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `flowframe_utils` (`explore_data`)
 
@@ -159,7 +159,7 @@ list(
 )
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `stats_utils` (`run_pca`), `plot_utils` (`save_plot_formats`)
 
@@ -210,7 +210,7 @@ list(
 )
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `gui_utils`, `plot_utils`, `stats_utils` (`run_umap`), `flowframe_utils` (`explore_data`)
 

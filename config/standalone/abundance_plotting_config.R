@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: analysis/abundance_plotting.R
+# Standalone config: src/analysis/abundance_plotting.R
 # =============================================================================
 # Creates barplots from a cluster-by-sample tracking matrix showing cell
 # distribution across clusters. Supports stacked, grouped, and proportional.
 #
 # Usage:
 #   source("config/standalone/abundance_plotting_config.R")
-#   source("analysis/abundance_plotting.R")
+#   source("src/analysis/abundance_plotting.R")
 #   plot_abundance(
 #     tracking_matrix_path = tracking_matrix_path,
 #     conditions_csv       = conditions_csv,

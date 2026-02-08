@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: visualization/heatmaps.R
+# Standalone config: src/visualization/heatmaps.R
 # =============================================================================
 # Generates clustered heatmaps from expression matrices using pheatmap.
 # Two modes: raw expression heatmap, or median-expression per cluster.
 #
 # Usage (expression heatmap):
 #   source("config/standalone/heatmap_config.R")
-#   source("visualization/heatmaps.R")
+#   source("src/visualization/heatmaps.R")
 #   plot_heatmap(
 #     expr_matrix  = expr_matrix,   # numeric matrix (cells x markers)
 #     output_path  = output_path,

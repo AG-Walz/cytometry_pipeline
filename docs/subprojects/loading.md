@@ -1,6 +1,6 @@
 [< Back to Documentation Index](../README.md)
 
-# loading/ -- Data Loading
+# src/loading/ -- Data Loading
 
 6 scripts for ingesting flow cytometry data from FCS files, CSV expression matrices, FlowJo workspaces, and manual gating labels. All scripts source shared utilities via:
 
@@ -46,7 +46,7 @@ list(
 Rscript load_fcs_raw.R <input_dir> [output_dir]
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `fcs_utils`, `flowframe_utils`
 
@@ -114,7 +114,7 @@ list(
 Rscript load_csv_gating.R <input_fcs_path> [output_path]
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `gui_utils`, `fcs_utils`, `cluster_utils`, `memory_utils`
 
@@ -146,7 +146,7 @@ Named list of `data.table` objects, one per CSV file.
 Rscript load_csv_expression.R <input_dir>
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `memory_utils`
 
@@ -200,7 +200,7 @@ save_population_strings(pop_strings_list, out_dir)
 - No CLI interface. Used as a library function.
 - Requires `flowWorkspace` and `CytoML` packages.
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `flowframe_utils`
 
@@ -236,7 +236,7 @@ Named list of label vectors per sample. When `output_dir` is specified, also wri
 
 - No CLI interface. Used as a library function.
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `fcs_utils`, `cluster_utils`
 
@@ -271,6 +271,6 @@ create_merged_flowset(flow_frames)  # Returns: flowSet
 
 - No CLI interface. Used as a library function.
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `flowframe_utils`

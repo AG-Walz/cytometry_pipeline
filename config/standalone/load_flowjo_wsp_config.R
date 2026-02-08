@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: loading/load_flowjo_wsp.R
+# Standalone config: src/loading/load_flowjo_wsp.R
 # =============================================================================
 # Loads a FlowJo workspace (.wsp) and extracts gating sets, population
 # assignments, and population statistics.
 #
 # Usage:
 #   source("config/standalone/load_flowjo_wsp_config.R")
-#   source("loading/load_flowjo_wsp.R")
+#   source("src/loading/load_flowjo_wsp.R")
 #   wsp_data <- load_flowjo_wsp(
 #     wsp_path = wsp_path,
 #     fcs_dir  = fcs_dir,

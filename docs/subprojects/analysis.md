@@ -1,6 +1,6 @@
 [< Back to Documentation Index](../README.md)
 
-# analysis/ -- Statistical Analysis
+# src/analysis/ -- Statistical Analysis
 
 7 scripts for cluster splitting, differential abundance testing, enrichment analysis, marker statistics, expression matrix generation, abundance plotting, and cell ratio calculation.
 
@@ -52,7 +52,7 @@ Generated files:
 Rscript cluster_splitting.R <input_dir> <output_dir>
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `gui_utils`, `cluster_utils`, `memory_utils`
 
@@ -134,7 +134,7 @@ Generated files:
 Rscript differential_abundance.R <data_dir> <conditions_csv> <output_dir>
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `cluster_utils`, `memory_utils`, `stats_utils` (`fit_nb_glmm`)
 
@@ -180,7 +180,7 @@ run_cluster_enrichment(data_dir, conditions_csv, output_dir,
 - `enrichment_results.csv`
 - `intermediate_results.rds` (checkpointing for long-running analyses)
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `cluster_utils`, `memory_utils`, `stats_utils` (`calculate_enrichment`, `do_mixed_effects`)
 
@@ -238,7 +238,7 @@ Extracts the intraclass correlation coefficient (ICC) to quantify between-sample
 
 `lme4`, `lmerTest`, `future`
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `gui_utils`, `stats_utils`
 
@@ -267,7 +267,7 @@ create_expression_matrices(input_dir, output_dir, markers = NULL,
 - `exprmat_<group>.csv` -- one expression matrix per cluster group
 - `group_matrices_summary.csv` -- summary of generated matrices
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `cluster_utils`, `stats_utils`
 
@@ -295,7 +295,7 @@ plot_abundance(tracking_matrix_path, conditions_csv = NULL,
 
 `abundance_*.png` files in `output_dir`.
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `plot_utils`
 
@@ -343,6 +343,6 @@ ratios <- calculate_cell_ratios(
 )
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`

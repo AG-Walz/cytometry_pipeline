@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: analysis/expression_matrices.R
+# Standalone config: src/analysis/expression_matrices.R
 # =============================================================================
 # Generates grouped expression matrices from per-cluster CSV data. Useful for
 # creating input for heatmaps or downstream analysis tools.
 #
 # Usage:
 #   source("config/standalone/expression_matrices_config.R")
-#   source("analysis/expression_matrices.R")
+#   source("src/analysis/expression_matrices.R")
 #   result <- create_expression_matrices(
 #     input_dir        = input_dir,
 #     output_dir       = output_dir,

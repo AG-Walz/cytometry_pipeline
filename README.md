@@ -77,14 +77,15 @@ See the [Getting Started Guide](docs/getting-started.md) for detailed instructio
 
 ```
 cytometry_pipeline/
-├── R_shared/            Shared utility library (sourced by all subprojects)
-├── loading/             Data loading — FCS, CSV, FlowJo WSP
-├── preprocessing/       QC, transformation, downsampling, normalization
-├── harmonization/       Panel comparison, homogenization, batch correction
-├── clustering/          Leiden clustering, FlowJo import, cluster assignment
-├── analysis/            Differential abundance, enrichment, marker stats
-├── visualization/       UMAP, heatmaps, density, barplots, PCA, Venn/Euler
-├── metadata_qc/         Metadata validation, acquisition QC, gating comparison
+├── src/                 Processing modules
+│   ├── R_shared/        Shared utility library (sourced by all subprojects)
+│   ├── loading/         Data loading — FCS, CSV, FlowJo WSP
+│   ├── preprocessing/   QC, transformation, downsampling, normalization
+│   ├── harmonization/   Panel comparison, homogenization, batch correction
+│   ├── clustering/      Leiden clustering, FlowJo import, cluster assignment
+│   ├── analysis/        Differential abundance, enrichment, marker stats
+│   ├── visualization/   UMAP, heatmaps, density, barplots, PCA, Venn/Euler
+│   └── metadata_qc/    Metadata validation, acquisition QC, gating comparison
 ├── pipelines/           Config-driven pipeline orchestrators (A–E)
 ├── config/
 │   ├── pipeline_A_config.R   Ready-to-edit config for each pipeline
@@ -134,20 +135,20 @@ WSP₁ + WSP₂ + ... → Extract Gates → Compare Populations
 
 ### R\_shared — Shared Utility Library
 
-All subproject scripts source from `R_shared/` for common functionality. Never duplicate utilities — always add shared functions here.
+All subproject scripts source from `src/R_shared/` for common functionality. Never duplicate utilities — always add shared functions here.
 
 > Full API reference: [docs/r-shared-reference.md](docs/r-shared-reference.md)
 
 | Module | Purpose | Key Functions |
 |--------|---------|---------------|
-| [io\_utils.R](R_shared/io_utils.R) | File I/O, CSV handling, column classification, directory management | `detect_csv_sep`, `classify_csv_columns`, `make_outdir`, `die`, `save_and_cleanup` |
-| [gui\_utils.R](R_shared/gui_utils.R) | Interactive GUI dialogs (tcltk) with automatic CLI fallback | `select_markers`, `tk_multiselect`, `is_gui_available` |
-| [memory\_utils.R](R_shared/memory_utils.R) | Memory monitoring, chunked CSV reading, garbage collection | `check_memory`, `read_csv_chunked`, `get_available_memory_gb` |
-| [cluster\_utils.R](R_shared/cluster_utils.R) | Cluster name parsing, label manipulation, binary-to-categorical conversion | `clean_cluster_name`, `labels_from_binary_df`, `convert_binary_to_single_cluster` |
-| [plot\_utils.R](R_shared/plot_utils.R) | Multi-format plot saving (PDF/PNG/SVG), barplots, filename sanitization | `save_plot_formats`, `population_barplot`, `create_safe_filename` |
-| [flowframe\_utils.R](R_shared/flowframe_utils.R) | FlowFrame/FlowSet manipulation, expression matrix extraction | `explore_data`, `compare_panels`, `extract_exprmtx_list`, `from_mtx_to_ffr` |
-| [fcs\_utils.R](R_shared/fcs_utils.R) | Low-level FCS parsing, CSV-FCS mapping, batch loading | `readFCStext`, `check_tot`, `load_fcs_folder`, `create_csv_fcs_mapping` |
-| [stats\_utils.R](R_shared/stats_utils.R) | Statistical tests, mixed-effects models, PCA, UMAP | `calculate_enrichment`, `fit_nb_glmm`, `run_pca`, `run_umap`, `calculate_statistics` |
+| [io\_utils.R](src/R_shared/io_utils.R) | File I/O, CSV handling, column classification, directory management | `detect_csv_sep`, `classify_csv_columns`, `make_outdir`, `die`, `save_and_cleanup` |
+| [gui\_utils.R](src/R_shared/gui_utils.R) | Interactive GUI dialogs (tcltk) with automatic CLI fallback | `select_markers`, `tk_multiselect`, `is_gui_available` |
+| [memory\_utils.R](src/R_shared/memory_utils.R) | Memory monitoring, chunked CSV reading, garbage collection | `check_memory`, `read_csv_chunked`, `get_available_memory_gb` |
+| [cluster\_utils.R](src/R_shared/cluster_utils.R) | Cluster name parsing, label manipulation, binary-to-categorical conversion | `clean_cluster_name`, `labels_from_binary_df`, `convert_binary_to_single_cluster` |
+| [plot\_utils.R](src/R_shared/plot_utils.R) | Multi-format plot saving (PDF/PNG/SVG), barplots, filename sanitization | `save_plot_formats`, `population_barplot`, `create_safe_filename` |
+| [flowframe\_utils.R](src/R_shared/flowframe_utils.R) | FlowFrame/FlowSet manipulation, expression matrix extraction | `explore_data`, `compare_panels`, `extract_exprmtx_list`, `from_mtx_to_ffr` |
+| [fcs\_utils.R](src/R_shared/fcs_utils.R) | Low-level FCS parsing, CSV-FCS mapping, batch loading | `readFCStext`, `check_tot`, `load_fcs_folder`, `create_csv_fcs_mapping` |
+| [stats\_utils.R](src/R_shared/stats_utils.R) | Statistical tests, mixed-effects models, PCA, UMAP | `calculate_enrichment`, `fit_nb_glmm`, `run_pca`, `run_umap`, `calculate_statistics` |
 
 ---
 
@@ -159,12 +160,12 @@ Load cytometry data from various file formats into R objects.
 
 | Script | Purpose | Main Function |
 |--------|---------|---------------|
-| [load\_fcs\_raw.R](loading/load_fcs_raw.R) | Load raw FCS files into flowFrame objects, optionally extract CSVs | `load_fcs_raw(input_dir, sample_names, ...)` |
-| [load\_csv\_expression.R](loading/load_csv_expression.R) | Load CSV expression matrices, auto-detect separator, validate markers | `load_csv_expression(input_dir, sep, ...)` |
-| [load\_csv\_gating.R](loading/load_csv_gating.R) | Load CSVs with binary gating columns, classify columns, match to FCS | `load_csv_gating(input_fcs_path, input_csv_path, ...)` |
-| [load\_flowjo\_wsp.R](loading/load_flowjo_wsp.R) | Load FlowJo workspaces, extract gating sets and population assignments | `load_flowjo_wsp(wsp_path, fcs_dir, ...)` |
-| [load\_manual\_gating.R](loading/load_manual_gating.R) | Load manual gating labels from CSV, supports label translation | `load_manual_gating(csv_dir, fcs_dir, ...)` |
-| [create\_flowframes.R](loading/create_flowframes.R) | Create flowFrame objects from expression matrices, merge into flowSet | `create_flowframes_from_matrices(expr_list, ...)` |
+| [load\_fcs\_raw.R](src/loading/load_fcs_raw.R) | Load raw FCS files into flowFrame objects, optionally extract CSVs | `load_fcs_raw(input_dir, sample_names, ...)` |
+| [load\_csv\_expression.R](src/loading/load_csv_expression.R) | Load CSV expression matrices, auto-detect separator, validate markers | `load_csv_expression(input_dir, sep, ...)` |
+| [load\_csv\_gating.R](src/loading/load_csv_gating.R) | Load CSVs with binary gating columns, classify columns, match to FCS | `load_csv_gating(input_fcs_path, input_csv_path, ...)` |
+| [load\_flowjo\_wsp.R](src/loading/load_flowjo_wsp.R) | Load FlowJo workspaces, extract gating sets and population assignments | `load_flowjo_wsp(wsp_path, fcs_dir, ...)` |
+| [load\_manual\_gating.R](src/loading/load_manual_gating.R) | Load manual gating labels from CSV, supports label translation | `load_manual_gating(csv_dir, fcs_dir, ...)` |
+| [create\_flowframes.R](src/loading/create_flowframes.R) | Create flowFrame objects from expression matrices, merge into flowSet | `create_flowframes_from_matrices(expr_list, ...)` |
 
 ---
 
@@ -176,11 +177,11 @@ Quality control, mathematical transformation, downsampling, and normalization of
 
 | Script | Purpose | Main Function |
 |--------|---------|---------------|
-| [quality\_control.R](preprocessing/quality_control.R) | Automated QC via flowAI or PeacoQC — removes margin events, doublets, anomalies | `quality_control(flowframe, sample_name, qc_type, ...)` |
-| [transformation.R](preprocessing/transformation.R) | Arcsinh, logicle, or biexponential transformation of fluorescence channels | `transform_flowframe(flowframe, transform_type, ...)` |
-| [downsampling.R](preprocessing/downsampling.R) | Reduce event counts: proportional ("Maximal") or fixed ("Consistent") | `downsample_flowframes(flow_frames, target_cells, method, ...)` |
-| [normalization.R](preprocessing/normalization.R) | Z-score scaling, quantile normalization, Harmony batch correction | `z_score_scaling()`, `quantile_norm()`, `harmony_normalize()` |
-| [preprocess\_pipeline.R](preprocessing/preprocess_pipeline.R) | Orchestrates QC → Transform → Normalize → Scale with configurable order | `run_preprocessing(flow_frames, params, ...)` |
+| [quality\_control.R](src/preprocessing/quality_control.R) | Automated QC via flowAI or PeacoQC — removes margin events, doublets, anomalies | `quality_control(flowframe, sample_name, qc_type, ...)` |
+| [transformation.R](src/preprocessing/transformation.R) | Arcsinh, logicle, or biexponential transformation of fluorescence channels | `transform_flowframe(flowframe, transform_type, ...)` |
+| [downsampling.R](src/preprocessing/downsampling.R) | Reduce event counts: proportional ("Maximal") or fixed ("Consistent") | `downsample_flowframes(flow_frames, target_cells, method, ...)` |
+| [normalization.R](src/preprocessing/normalization.R) | Z-score scaling, quantile normalization, Harmony batch correction | `z_score_scaling()`, `quantile_norm()`, `harmony_normalize()` |
+| [preprocess\_pipeline.R](src/preprocessing/preprocess_pipeline.R) | Orchestrates QC → Transform → Normalize → Scale with configurable order | `run_preprocessing(flow_frames, params, ...)` |
 
 ---
 
@@ -192,9 +193,9 @@ Unify marker panels across heterogeneous FCS files and correct batch effects.
 
 | Script | Purpose | Main Function |
 |--------|---------|---------------|
-| [panel\_comparison.R](harmonization/panel_comparison.R) | Compare marker panels across flowFrames — identify shared/divergent markers | `compare_panels_detailed(flow_frames)` |
-| [panel\_homogenization.R](harmonization/panel_homogenization.R) | Unify flowFrames to common marker set, fill missing with NA | `homogenize_flowframes(flow_frames, markers_of_interest, ...)` |
-| [batch\_correction.R](harmonization/batch_correction.R) | Harmony-based batch effect correction preserving biological signal | `run_batch_correction(flow_frames, batch_labels, ...)` |
+| [panel\_comparison.R](src/harmonization/panel_comparison.R) | Compare marker panels across flowFrames — identify shared/divergent markers | `compare_panels_detailed(flow_frames)` |
+| [panel\_homogenization.R](src/harmonization/panel_homogenization.R) | Unify flowFrames to common marker set, fill missing with NA | `homogenize_flowframes(flow_frames, markers_of_interest, ...)` |
+| [batch\_correction.R](src/harmonization/batch_correction.R) | Harmony-based batch effect correction preserving biological signal | `run_batch_correction(flow_frames, batch_labels, ...)` |
 
 ---
 
@@ -206,9 +207,9 @@ Unsupervised and supervised cell population identification.
 
 | Script | Purpose | Main Function |
 |--------|---------|---------------|
-| [leiden.R](clustering/leiden.R) | Leiden community detection with optional UMAP embedding (KNN graph via uwot) | `run_leiden(expr_matrix, ...)`, `run_leiden_with_umap(...)` |
-| [flowjo\_import.R](clustering/flowjo_import.R) | Import gating hierarchies from FlowJo workspaces, extract per-cell assignments | `import_flowjo_gates(wsp_path, fcs_dir, ...)` |
-| [cluster\_assignment.R](clustering/cluster_assignment.R) | Unified interface for cluster assignments from any source (Leiden, FlowJo, CSV, FlowSOM) | `get_cluster_assignments(source, ...)` |
+| [leiden.R](src/clustering/leiden.R) | Leiden community detection with optional UMAP embedding (KNN graph via uwot) | `run_leiden(expr_matrix, ...)`, `run_leiden_with_umap(...)` |
+| [flowjo\_import.R](src/clustering/flowjo_import.R) | Import gating hierarchies from FlowJo workspaces, extract per-cell assignments | `import_flowjo_gates(wsp_path, fcs_dir, ...)` |
+| [cluster\_assignment.R](src/clustering/cluster_assignment.R) | Unified interface for cluster assignments from any source (Leiden, FlowJo, CSV, FlowSOM) | `get_cluster_assignments(source, ...)` |
 
 ---
 
@@ -220,13 +221,13 @@ Statistical analysis of clustered cytometry data.
 
 | Script | Purpose | Main Function |
 |--------|---------|---------------|
-| [cluster\_splitting.R](analysis/cluster_splitting.R) | Split combined expression data into per-cluster CSV files + tracking matrix | `split_by_cluster(input_dir, output_dir, ...)` |
-| [differential\_abundance.R](analysis/differential_abundance.R) | Test differential abundance between conditions via negative binomial GLMM | `run_differential_abundance(data_dir, conditions_csv, ...)` |
-| [cluster\_enrichment.R](analysis/cluster_enrichment.R) | Fisher's exact test or mixed-effects logistic regression for cluster enrichment | `run_cluster_enrichment(data_dir, conditions_csv, ...)` |
-| [marker\_statistics.R](analysis/marker_statistics.R) | Per-marker summary statistics (mean, SD, ICC) using linear mixed-effects models | `run_marker_statistics(input_folder, ...)` |
-| [expression\_matrices.R](analysis/expression_matrices.R) | Generate grouped expression matrices from per-cluster data | `create_expression_matrices(input_dir, ...)` |
-| [abundance\_plotting.R](analysis/abundance_plotting.R) | Stacked, grouped, or proportional barplots from cluster abundance data | `plot_abundance(tracking_matrix_path, ...)` |
-| [cell\_ratio.R](analysis/cell_ratio.R) | Calculate ratios between cluster populations per sample (e.g., CD4/CD8) | `calculate_cell_ratios(abundance_csv, ...)` |
+| [cluster\_splitting.R](src/analysis/cluster_splitting.R) | Split combined expression data into per-cluster CSV files + tracking matrix | `split_by_cluster(input_dir, output_dir, ...)` |
+| [differential\_abundance.R](src/analysis/differential_abundance.R) | Test differential abundance between conditions via negative binomial GLMM | `run_differential_abundance(data_dir, conditions_csv, ...)` |
+| [cluster\_enrichment.R](src/analysis/cluster_enrichment.R) | Fisher's exact test or mixed-effects logistic regression for cluster enrichment | `run_cluster_enrichment(data_dir, conditions_csv, ...)` |
+| [marker\_statistics.R](src/analysis/marker_statistics.R) | Per-marker summary statistics (mean, SD, ICC) using linear mixed-effects models | `run_marker_statistics(input_folder, ...)` |
+| [expression\_matrices.R](src/analysis/expression_matrices.R) | Generate grouped expression matrices from per-cluster data | `create_expression_matrices(input_dir, ...)` |
+| [abundance\_plotting.R](src/analysis/abundance_plotting.R) | Stacked, grouped, or proportional barplots from cluster abundance data | `plot_abundance(tracking_matrix_path, ...)` |
+| [cell\_ratio.R](src/analysis/cell_ratio.R) | Calculate ratios between cluster populations per sample (e.g., CD4/CD8) | `calculate_cell_ratios(abundance_csv, ...)` |
 
 ---
 
@@ -238,13 +239,13 @@ Publication-quality plots for cytometry data.
 
 | Script | Purpose | Main Function |
 |--------|---------|---------------|
-| [umap.R](visualization/umap.R) | UMAP embeddings with per-sample, per-marker, and per-cluster overlays | `plot_umap(flow_frames, markers_of_interest, ...)` |
-| [heatmaps.R](visualization/heatmaps.R) | Clustered heatmaps (pheatmap) — expression and median-expression per cluster | `plot_heatmap(...)`, `plot_cluster_heatmap(...)` |
-| [density\_plots.R](visualization/density_plots.R) | Per-marker density or ridge plots, grouped by sample or condition | `plot_density(flow_frames, markers, ...)` |
-| [barplots.R](visualization/barplots.R) | Composition barplots — stacked, grouped, proportional layouts | `plot_composition_barplot(data, ...)` |
-| [upset\_plots.R](visualization/upset_plots.R) | UpSet plots for set intersection visualization | `plot_upset(data, set_columns, ...)` |
-| [venn\_diagrams.R](visualization/venn_diagrams.R) | Venn diagrams and area-proportional Euler diagrams | `plot_euler(sets, ...)`, `plot_venn(sets, ...)` |
-| [pca.R](visualization/pca.R) | PCA scatter plots and loadings plots | `plot_pca(expr_matrix, ...)` |
+| [umap.R](src/visualization/umap.R) | UMAP embeddings with per-sample, per-marker, and per-cluster overlays | `plot_umap(flow_frames, markers_of_interest, ...)` |
+| [heatmaps.R](src/visualization/heatmaps.R) | Clustered heatmaps (pheatmap) — expression and median-expression per cluster | `plot_heatmap(...)`, `plot_cluster_heatmap(...)` |
+| [density\_plots.R](src/visualization/density_plots.R) | Per-marker density or ridge plots, grouped by sample or condition | `plot_density(flow_frames, markers, ...)` |
+| [barplots.R](src/visualization/barplots.R) | Composition barplots — stacked, grouped, proportional layouts | `plot_composition_barplot(data, ...)` |
+| [upset\_plots.R](src/visualization/upset_plots.R) | UpSet plots for set intersection visualization | `plot_upset(data, set_columns, ...)` |
+| [venn\_diagrams.R](src/visualization/venn_diagrams.R) | Venn diagrams and area-proportional Euler diagrams | `plot_euler(sets, ...)`, `plot_venn(sets, ...)` |
+| [pca.R](src/visualization/pca.R) | PCA scatter plots and loadings plots | `plot_pca(expr_matrix, ...)` |
 
 ---
 
@@ -256,10 +257,10 @@ Metadata validation, acquisition quality checks, and inter-rater agreement.
 
 | Script | Purpose | Main Function |
 |--------|---------|---------------|
-| [check\_metadata.R](metadata_qc/check_metadata.R) | Validate study metadata, detect missing values and temporal patterns | `check_metadata(metadata_file, ...)` |
-| [check\_acquisition.R](metadata_qc/check_acquisition.R) | Extract FCS acquisition dates, detect likely duplicate files | `check_acquisition_dates(parent_folder, ...)` |
-| [overlap\_statistics.R](metadata_qc/overlap_statistics.R) | Fleiss' kappa for inter-rater agreement across gating strategies | `compute_fleiss_kappa(label_lists, ...)` |
-| [compare\_gatings.R](metadata_qc/compare_gatings.R) | Compare multiple FlowJo gating strategies with Venn/Euler diagrams | `compare_gatings(pop_strings_list, ...)` |
+| [check\_metadata.R](src/metadata_qc/check_metadata.R) | Validate study metadata, detect missing values and temporal patterns | `check_metadata(metadata_file, ...)` |
+| [check\_acquisition.R](src/metadata_qc/check_acquisition.R) | Extract FCS acquisition dates, detect likely duplicate files | `check_acquisition_dates(parent_folder, ...)` |
+| [overlap\_statistics.R](src/metadata_qc/overlap_statistics.R) | Fleiss' kappa for inter-rater agreement across gating strategies | `compute_fleiss_kappa(label_lists, ...)` |
+| [compare\_gatings.R](src/metadata_qc/compare_gatings.R) | Compare multiple FlowJo gating strategies with Venn/Euler diagrams | `compare_gatings(pop_strings_list, ...)` |
 
 ---
 
@@ -290,37 +291,37 @@ For running individual scripts outside the pipelines. Each config shows the exac
 
 | Config | Script | Purpose |
 |--------|--------|---------|
-| [cluster\_splitting\_config.R](config/standalone/cluster_splitting_config.R) | [cluster\_splitting.R](analysis/cluster_splitting.R) | Split data by cluster, generate tracking matrix |
-| [differential\_abundance\_config.R](config/standalone/differential_abundance_config.R) | [differential\_abundance.R](analysis/differential_abundance.R) | NB-GLMM differential abundance testing |
-| [cluster\_enrichment\_config.R](config/standalone/cluster_enrichment_config.R) | [cluster\_enrichment.R](analysis/cluster_enrichment.R) | Fisher's exact / mixed-effects enrichment |
-| [marker\_statistics\_config.R](config/standalone/marker_statistics_config.R) | [marker\_statistics.R](analysis/marker_statistics.R) | Per-marker summary stats with mixed models |
-| [expression\_matrices\_config.R](config/standalone/expression_matrices_config.R) | [expression\_matrices.R](analysis/expression_matrices.R) | Grouped expression matrices |
-| [abundance\_plotting\_config.R](config/standalone/abundance_plotting_config.R) | [abundance\_plotting.R](analysis/abundance_plotting.R) | Abundance barplots from tracking matrix |
-| [cell\_ratio\_config.R](config/standalone/cell_ratio_config.R) | [cell\_ratio.R](analysis/cell_ratio.R) | Cell population ratios (e.g., CD4/CD8) |
+| [cluster\_splitting\_config.R](config/standalone/cluster_splitting_config.R) | [cluster\_splitting.R](src/analysis/cluster_splitting.R) | Split data by cluster, generate tracking matrix |
+| [differential\_abundance\_config.R](config/standalone/differential_abundance_config.R) | [differential\_abundance.R](src/analysis/differential_abundance.R) | NB-GLMM differential abundance testing |
+| [cluster\_enrichment\_config.R](config/standalone/cluster_enrichment_config.R) | [cluster\_enrichment.R](src/analysis/cluster_enrichment.R) | Fisher's exact / mixed-effects enrichment |
+| [marker\_statistics\_config.R](config/standalone/marker_statistics_config.R) | [marker\_statistics.R](src/analysis/marker_statistics.R) | Per-marker summary stats with mixed models |
+| [expression\_matrices\_config.R](config/standalone/expression_matrices_config.R) | [expression\_matrices.R](src/analysis/expression_matrices.R) | Grouped expression matrices |
+| [abundance\_plotting\_config.R](config/standalone/abundance_plotting_config.R) | [abundance\_plotting.R](src/analysis/abundance_plotting.R) | Abundance barplots from tracking matrix |
+| [cell\_ratio\_config.R](config/standalone/cell_ratio_config.R) | [cell\_ratio.R](src/analysis/cell_ratio.R) | Cell population ratios (e.g., CD4/CD8) |
 
 **Visualization:**
 
 | Config | Script | Purpose |
 |--------|--------|---------|
-| [umap\_config.R](config/standalone/umap_config.R) | [umap.R](visualization/umap.R) | UMAP embeddings and overlay plots |
-| [heatmap\_config.R](config/standalone/heatmap_config.R) | [heatmaps.R](visualization/heatmaps.R) | Clustered expression heatmaps |
-| [density\_plots\_config.R](config/standalone/density_plots_config.R) | [density\_plots.R](visualization/density_plots.R) | Per-marker density/ridge plots |
-| [barplots\_config.R](config/standalone/barplots_config.R) | [barplots.R](visualization/barplots.R) | Composition barplots |
-| [pca\_config.R](config/standalone/pca_config.R) | [pca.R](visualization/pca.R) | PCA scatter and loadings plots |
-| [upset\_plots\_config.R](config/standalone/upset_plots_config.R) | [upset\_plots.R](visualization/upset_plots.R) | UpSet set intersection plots |
-| [venn\_diagrams\_config.R](config/standalone/venn_diagrams_config.R) | [venn\_diagrams.R](visualization/venn_diagrams.R) | Venn and Euler diagrams |
+| [umap\_config.R](config/standalone/umap_config.R) | [umap.R](src/visualization/umap.R) | UMAP embeddings and overlay plots |
+| [heatmap\_config.R](config/standalone/heatmap_config.R) | [heatmaps.R](src/visualization/heatmaps.R) | Clustered expression heatmaps |
+| [density\_plots\_config.R](config/standalone/density_plots_config.R) | [density\_plots.R](src/visualization/density_plots.R) | Per-marker density/ridge plots |
+| [barplots\_config.R](config/standalone/barplots_config.R) | [barplots.R](src/visualization/barplots.R) | Composition barplots |
+| [pca\_config.R](config/standalone/pca_config.R) | [pca.R](src/visualization/pca.R) | PCA scatter and loadings plots |
+| [upset\_plots\_config.R](config/standalone/upset_plots_config.R) | [upset\_plots.R](src/visualization/upset_plots.R) | UpSet set intersection plots |
+| [venn\_diagrams\_config.R](config/standalone/venn_diagrams_config.R) | [venn\_diagrams.R](src/visualization/venn_diagrams.R) | Venn and Euler diagrams |
 
 **Loading & Metadata QC:**
 
 | Config | Script | Purpose |
 |--------|--------|---------|
-| [load\_fcs\_config.R](config/standalone/load_fcs_config.R) | [load\_fcs\_raw.R](loading/load_fcs_raw.R) | Load raw FCS files |
-| [load\_csv\_gating\_config.R](config/standalone/load_csv_gating_config.R) | [load\_csv\_gating.R](loading/load_csv_gating.R) | Load CSVs with binary gating columns |
-| [load\_flowjo\_wsp\_config.R](config/standalone/load_flowjo_wsp_config.R) | [load\_flowjo\_wsp.R](loading/load_flowjo_wsp.R) | Load FlowJo workspace |
-| [check\_metadata\_config.R](config/standalone/check_metadata_config.R) | [check\_metadata.R](metadata_qc/check_metadata.R) | Validate study metadata |
-| [check\_acquisition\_config.R](config/standalone/check_acquisition_config.R) | [check\_acquisition.R](metadata_qc/check_acquisition.R) | Extract FCS acquisition dates |
-| [compare\_gatings\_config.R](config/standalone/compare_gatings_config.R) | [compare\_gatings.R](metadata_qc/compare_gatings.R) | Compare FlowJo gating strategies |
-| [overlap\_statistics\_config.R](config/standalone/overlap_statistics_config.R) | [overlap\_statistics.R](metadata_qc/overlap_statistics.R) | Fleiss' kappa inter-rater agreement |
+| [load\_fcs\_config.R](config/standalone/load_fcs_config.R) | [load\_fcs\_raw.R](src/loading/load_fcs_raw.R) | Load raw FCS files |
+| [load\_csv\_gating\_config.R](config/standalone/load_csv_gating_config.R) | [load\_csv\_gating.R](src/loading/load_csv_gating.R) | Load CSVs with binary gating columns |
+| [load\_flowjo\_wsp\_config.R](config/standalone/load_flowjo_wsp_config.R) | [load\_flowjo\_wsp.R](src/loading/load_flowjo_wsp.R) | Load FlowJo workspace |
+| [check\_metadata\_config.R](config/standalone/check_metadata_config.R) | [check\_metadata.R](src/metadata_qc/check_metadata.R) | Validate study metadata |
+| [check\_acquisition\_config.R](config/standalone/check_acquisition_config.R) | [check\_acquisition.R](src/metadata_qc/check_acquisition.R) | Extract FCS acquisition dates |
+| [compare\_gatings\_config.R](config/standalone/compare_gatings_config.R) | [compare\_gatings.R](src/metadata_qc/compare_gatings.R) | Compare FlowJo gating strategies |
+| [overlap\_statistics\_config.R](config/standalone/overlap_statistics_config.R) | [overlap\_statistics.R](src/metadata_qc/overlap_statistics.R) | Fleiss' kappa inter-rater agreement |
 
 ### Other Config Files
 
@@ -424,7 +425,7 @@ See [test\_data/examples/README.md](test_data/examples/README.md) for column for
 
 ## Design Conventions
 
-- **Shared utilities first**: All scripts source `R_shared/` modules — never duplicate functions across subprojects
+- **Shared utilities first**: All scripts source `src/R_shared/` modules — never duplicate functions across subprojects
 - **Function arguments, not globals**: Parameters are passed explicitly, not read from global `CONFIG` objects
 - **GUI with CLI fallback**: Interactive dialogs (tcltk) automatically fall back to `readline()` in headless environments
 - **data.table for I/O**: CSV read/write via `fread`/`fwrite` with auto-detected separator (semicolon default)

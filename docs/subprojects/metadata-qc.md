@@ -1,6 +1,6 @@
 [< Back to Documentation Index](../README.md)
 
-# metadata_qc/ -- Metadata & Quality Assurance
+# src/metadata_qc/ -- Metadata & Quality Assurance
 
 4 scripts for validating study metadata, checking FCS acquisition dates, computing inter-rater agreement, and comparing gating strategies across FlowJo workspaces.
 
@@ -205,10 +205,10 @@ compare_gatings(pop_strings_list, target_fcs, label_dict,
 | `label_lists_{target_fcs}.csv` | Translated labels per workspace |
 | `{population}_{target_fcs}.png` | Venn/Euler diagram per population |
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `cluster_utils` (`translate_labels`)
 
 ### Additional Sources
 
-Sources `visualization/venn_diagrams.R` directly for diagram generation functions.
+Sources `src/visualization/venn_diagrams.R` directly for diagram generation functions.

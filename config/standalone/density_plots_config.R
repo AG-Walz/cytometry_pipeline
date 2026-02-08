@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: visualization/density_plots.R
+# Standalone config: src/visualization/density_plots.R
 # =============================================================================
 # Creates per-marker density or ridge plots, grouped by sample or condition.
 #
 # Usage:
 #   source("config/standalone/density_plots_config.R")
-#   source("loading/load_fcs_raw.R")
-#   source("visualization/density_plots.R")
+#   source("src/loading/load_fcs_raw.R")
+#   source("src/visualization/density_plots.R")
 #   flow_data <- load_fcs_raw(input_dir = fcs_folder)
 #   plot_density(
 #     flow_frames  = flow_data$flow_frames,

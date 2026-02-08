@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: analysis/cluster_enrichment.R
+# Standalone config: src/analysis/cluster_enrichment.R
 # =============================================================================
 # Tests whether clusters are enriched (over/under-represented) in one condition
 # vs. another using Fisher's exact test or mixed-effects logistic regression.
 #
 # Usage:
 #   source("config/standalone/cluster_enrichment_config.R")
-#   source("analysis/cluster_enrichment.R")
+#   source("src/analysis/cluster_enrichment.R")
 #   result <- run_cluster_enrichment(
 #     data_dir         = data_dir,
 #     conditions_csv   = conditions_csv,

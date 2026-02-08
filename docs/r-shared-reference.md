@@ -2,7 +2,7 @@
 
 # R_shared API Reference
 
-Complete reference for the 8 shared utility modules in `R_shared/`. These modules provide the foundational functions used across all cytometry pipeline subprojects.
+Complete reference for the 8 shared utility modules in `src/R_shared/`. These modules provide the foundational functions used across all cytometry pipeline subprojects.
 
 ---
 

@@ -18,12 +18,12 @@ if (!is.null(config_file)) {
 }
 
 base_dir <- dirname(getwd())
-shared_dir <- file.path(base_dir, "R_shared")
+shared_dir <- file.path(base_dir, "src", "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 
 # Step 1: Load preprocessed FCS (skip QC)
 cat("\n--- Step 1: Loading preprocessed FCS files ---\n")
-source(file.path(base_dir, "loading", "load_fcs_raw.R"))
+source(file.path(base_dir, "src", "loading", "load_fcs_raw.R"))
 flow_data <- load_fcs_raw(
   fcs_folder = params$fcs_folder,
   truncate_max_range = FALSE
@@ -32,7 +32,7 @@ cat("Loaded", length(flow_data$flow_frames), "samples\n")
 
 # Step 2: Homogenize panels
 cat("\n--- Step 2: Panel Homogenization ---\n")
-source(file.path(base_dir, "harmonization", "panel_homogenization.R"))
+source(file.path(base_dir, "src", "harmonization", "panel_homogenization.R"))
 homogenized <- homogenize_flowframes(
   flow_frames = flow_data$flow_frames,
   output_dir = file.path(params$output_dir, "01_harmonized")
@@ -40,7 +40,7 @@ homogenized <- homogenize_flowframes(
 
 # Step 3: Downsample
 cat("\n--- Step 3: Downsampling ---\n")
-source(file.path(base_dir, "preprocessing", "downsampling.R"))
+source(file.path(base_dir, "src", "preprocessing", "downsampling.R"))
 downsampled <- downsample_flowframes(
   flow_frames = homogenized$flow_frames,
   sample_names = flow_data$sample_names,
@@ -51,7 +51,7 @@ downsampled <- downsample_flowframes(
 
 # Step 4: Clustering + UMAP
 cat("\n--- Step 4: Leiden Clustering + UMAP ---\n")
-source(file.path(base_dir, "clustering", "leiden.R"))
+source(file.path(base_dir, "src", "clustering", "leiden.R"))
 clusters <- run_leiden_with_umap(
   expr_matrix = downsampled$combined_matrix,
   markers = params$markers,
@@ -62,7 +62,7 @@ clusters <- run_leiden_with_umap(
 
 # Step 5: UMAP visualization
 cat("\n--- Step 5: UMAP Visualization ---\n")
-source(file.path(base_dir, "visualization", "umap.R"))
+source(file.path(base_dir, "src", "visualization", "umap.R"))
 plot_umap(
   umap_coords = clusters$umap_coords,
   cluster_labels = clusters$labels,

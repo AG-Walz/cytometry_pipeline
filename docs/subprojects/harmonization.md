@@ -1,6 +1,6 @@
 [< Back to Documentation Index](../README.md)
 
-# harmonization/ -- Panel Comparison, Homogenization, Batch Correction
+# src/harmonization/ -- Panel Comparison, Homogenization, Batch Correction
 
 3 scripts for comparing marker panels across samples, unifying flowFrames to a common marker set, and correcting batch effects.
 
@@ -103,7 +103,7 @@ hg_frames <- homogenize_flowframes(
 )
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `flowframe_utils` (`explore_data`, `from_mtx_to_ffr`)
 
@@ -157,6 +157,6 @@ result <- run_batch_correction(
 # result$corrected_matrix is ready for downstream clustering
 ```
 
-### R_shared Dependencies
+### src/R_shared Dependencies
 
 `io_utils`, `flowframe_utils`

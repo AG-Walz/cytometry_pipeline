@@ -74,7 +74,7 @@ Pipeline E sets `truncate_max_range = FALSE` because the input files are already
 ### Step 1: Load FCS Files (No QC)
 
 ```r
-# loading/load_fcs_raw.R
+# src/loading/load_fcs_raw.R
 flow_frames <- load_fcs_raw(
   fcs_folder          = params$fcs_folder,
   truncate_max_range  = FALSE
@@ -86,7 +86,7 @@ Loads all `.fcs` files without applying any quality control or transformation. T
 ### Step 2: Panel Harmonization
 
 ```r
-# harmonization/panel_homogenization.R
+# src/harmonization/panel_homogenization.R
 flow_frames <- homogenize_flowframes(
   flow_frames,
   markers = params$markers
@@ -98,7 +98,7 @@ Unifies marker panels across files. Even preprocessed files may originate from d
 ### Step 3: Downsampling
 
 ```r
-# preprocessing/downsampling.R
+# src/preprocessing/downsampling.R
 flow_frames <- downsample_flowframes(
   flow_frames,
   method = params$downsample_method,
@@ -111,7 +111,7 @@ Reduces event counts for computational tractability. Particularly important when
 ### Step 4: Leiden Clustering + UMAP
 
 ```r
-# clustering/leiden.R
+# src/clustering/leiden.R
 results <- run_leiden_with_umap(
   flow_frames,
   markers      = params$markers,
@@ -125,7 +125,7 @@ Constructs a shared nearest-neighbor graph from the marker expression matrix, ap
 ### Step 5: UMAP Visualization
 
 ```r
-# visualization/umap.R
+# src/visualization/umap.R
 plot_umap(
   results$umap_coords,
   results$cluster_ids,

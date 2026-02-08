@@ -21,13 +21,13 @@ if (!is.null(config_file)) {
 
 # --- Source modules ---
 base_dir <- dirname(getwd())
-shared_dir <- file.path(base_dir, "R_shared")
+shared_dir <- file.path(base_dir, "src", "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "memory_utils.R"))
 
 # Step 1: Load FCS files
 cat("\n--- Step 1: Loading FCS files ---\n")
-source(file.path(base_dir, "loading", "load_fcs_raw.R"))
+source(file.path(base_dir, "src", "loading", "load_fcs_raw.R"))
 flow_data <- load_fcs_raw(
   fcs_folder = params$fcs_folder,
   truncate_max_range = params$truncate_max_range
@@ -36,7 +36,7 @@ cat("Loaded", length(flow_data$flow_frames), "samples\n")
 
 # Step 2: Preprocessing (QC + Transform + Normalize)
 cat("\n--- Step 2: Preprocessing ---\n")
-source(file.path(base_dir, "preprocessing", "preprocess_pipeline.R"))
+source(file.path(base_dir, "src", "preprocessing", "preprocess_pipeline.R"))
 preprocessed <- run_preprocessing(
   flow_frames = flow_data$flow_frames,
   sample_names = flow_data$sample_names,
@@ -49,7 +49,7 @@ preprocessed <- run_preprocessing(
 
 # Step 3: Panel homogenization
 cat("\n--- Step 3: Panel Homogenization ---\n")
-source(file.path(base_dir, "harmonization", "panel_homogenization.R"))
+source(file.path(base_dir, "src", "harmonization", "panel_homogenization.R"))
 homogenized <- homogenize_flowframes(
   flow_frames = preprocessed$flow_frames,
   output_dir = file.path(params$output_dir, "02_harmonization")
@@ -57,7 +57,7 @@ homogenized <- homogenize_flowframes(
 
 # Step 4: Downsampling
 cat("\n--- Step 4: Downsampling ---\n")
-source(file.path(base_dir, "preprocessing", "downsampling.R"))
+source(file.path(base_dir, "src", "preprocessing", "downsampling.R"))
 downsampled <- downsample_flowframes(
   flow_frames = homogenized$flow_frames,
   sample_names = flow_data$sample_names,
@@ -68,7 +68,7 @@ downsampled <- downsample_flowframes(
 
 # Step 5: Clustering
 cat("\n--- Step 5: Clustering ---\n")
-source(file.path(base_dir, "clustering", "leiden.R"))
+source(file.path(base_dir, "src", "clustering", "leiden.R"))
 clusters <- run_leiden_with_umap(
   expr_matrix = downsampled$combined_matrix,
   markers = params$markers,
@@ -79,8 +79,8 @@ clusters <- run_leiden_with_umap(
 
 # Step 6: Analysis
 cat("\n--- Step 6: Statistical Analysis ---\n")
-source(file.path(base_dir, "analysis", "cluster_splitting.R"))
-source(file.path(base_dir, "analysis", "differential_abundance.R"))
+source(file.path(base_dir, "src", "analysis", "cluster_splitting.R"))
+source(file.path(base_dir, "src", "analysis", "differential_abundance.R"))
 split_data <- split_by_cluster(
   data = downsampled$combined_data,
   cluster_labels = clusters$labels,
@@ -89,8 +89,8 @@ split_data <- split_by_cluster(
 
 # Step 7: Visualization
 cat("\n--- Step 7: Visualization ---\n")
-source(file.path(base_dir, "visualization", "umap.R"))
-source(file.path(base_dir, "visualization", "heatmaps.R"))
+source(file.path(base_dir, "src", "visualization", "umap.R"))
+source(file.path(base_dir, "src", "visualization", "heatmaps.R"))
 plot_umap(
   umap_coords = clusters$umap_coords,
   cluster_labels = clusters$labels,

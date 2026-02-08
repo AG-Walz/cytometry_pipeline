@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: analysis/marker_statistics.R
+# Standalone config: src/analysis/marker_statistics.R
 # =============================================================================
 # Computes per-marker summary statistics (mean, SD, variance components, ICC)
 # within each cluster using linear mixed-effects models.
 #
 # Usage:
 #   source("config/standalone/marker_statistics_config.R")
-#   source("analysis/marker_statistics.R")
+#   source("src/analysis/marker_statistics.R")
 #   result <- run_marker_statistics(
 #     input_folder   = input_folder,
 #     output_folder  = output_folder,
@@ -16,7 +16,7 @@
 #   )
 #
 # Or from CLI:
-#   Rscript analysis/marker_statistics.R <input_folder> <output_folder>
+#   Rscript src/analysis/marker_statistics.R <input_folder> <output_folder>
 # =============================================================================
 
 # ========================= EDIT THESE ========================================

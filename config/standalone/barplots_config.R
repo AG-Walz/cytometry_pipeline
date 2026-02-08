@@ -1,12 +1,12 @@
 # =============================================================================
-# Standalone config: visualization/barplots.R
+# Standalone config: src/visualization/barplots.R
 # =============================================================================
 # Creates composition barplots showing cell distribution across clusters
 # and samples. Supports stacked, grouped, and proportional layouts.
 #
 # Usage:
 #   source("config/standalone/barplots_config.R")
-#   source("visualization/barplots.R")
+#   source("src/visualization/barplots.R")
 #   plot_composition_barplot(
 #     data       = data,        # data.frame with cluster and sample columns
 #     output_dir = output_dir,

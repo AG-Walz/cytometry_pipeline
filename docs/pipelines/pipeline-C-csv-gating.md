@@ -85,7 +85,7 @@ If `--config` is not provided, the pipeline falls back to `config/Parameters_tem
 ### Step 1: Load CSV Gating Files
 
 ```r
-# loading/load_csv_gating.R
+# src/loading/load_csv_gating.R
 gating_data <- load_csv_gating(
   csv_folder     = params$csv_folder,
   gating_pattern = params$gating_pattern,
@@ -98,7 +98,7 @@ Reads all CSV files, runs `classify_csv_columns()` to separate expression data f
 ### Step 2: Split by Cluster
 
 ```r
-# analysis/cluster_splitting.R
+# src/analysis/cluster_splitting.R
 clusters <- split_by_cluster(
   gating_data$expr_matrix,
   gating_data$gating_columns
@@ -110,7 +110,7 @@ Separates events into per-cluster subsets based on the binary gating columns. Ea
 ### Step 3: Differential Abundance or Enrichment
 
 ```r
-# analysis/differential_abundance.R
+# src/analysis/differential_abundance.R
 da_results <- run_differential_abundance(
   clusters,
   condition_col = params$condition_col,
@@ -119,7 +119,7 @@ da_results <- run_differential_abundance(
 
 # -- or --
 
-# analysis/cluster_enrichment.R
+# src/analysis/cluster_enrichment.R
 enrich_results <- run_cluster_enrichment(
   clusters,
   condition_col = params$condition_col
@@ -131,10 +131,10 @@ When `analysis_method = "enrichment"`, Fisher's exact test is applied per cluste
 ### Step 4: Visualization
 
 ```r
-# visualization/umap.R
+# src/visualization/umap.R
 plot_umap(gating_data$umap_coords, gating_data$gating_columns, output_dir = params$output_dir)
 
-# visualization/barplots.R
+# src/visualization/barplots.R
 barplots(clusters, condition_col = params$condition_col, output_dir = params$output_dir)
 ```
 
