@@ -176,8 +176,8 @@ run_differential_abundance <- function(data_dir,
         )
       }
     }
-    ggplot2::ggsave(file.path(output_dir, "volcano_plot.png"),
-                    p, width = 10, height = 8)
+    save_plot_formats(p, file.path(output_dir, "volcano_plot"),
+                      width = 14, height = 10)
     cat("Volcano plot saved.\n")
   }, error = function(e) warning("Volcano plot failed: ", e$message))
 

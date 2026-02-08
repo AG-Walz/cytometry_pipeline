@@ -39,24 +39,28 @@ plot_heatmap <- function(expr_matrix, output_path,
   expr_matrix[is.infinite(expr_matrix)] <- NA
   expr_matrix[is.nan(expr_matrix)] <- NA
 
-  png(output_path, width = width * 100, height = height * 100)
-  p <- pheatmap::pheatmap(
-    expr_matrix,
-    main = title,
-    scale = scale,
-    cluster_rows = cluster_rows,
-    cluster_cols = cluster_cols,
-    color = color_palette,
-    border_color = NA,
-    show_rownames = nrow(expr_matrix) <= 50,
-    show_colnames = TRUE,
-    fontsize_row = max(6, 12 - nrow(expr_matrix) / 10),
-    fontsize_col = 8
-  )
-  dev.off()
+  # Strip extension from output_path to get base name
+  filename_base <- sub("\\.[^.]+$", "", output_path)
 
-  cat("Heatmap saved to:", output_path, "\n")
-  invisible(p)
+  draw_heatmap <- function() {
+    pheatmap::pheatmap(
+      expr_matrix,
+      main = title,
+      scale = scale,
+      cluster_rows = cluster_rows,
+      cluster_cols = cluster_cols,
+      color = color_palette,
+      border_color = NA,
+      show_rownames = nrow(expr_matrix) <= 50,
+      show_colnames = TRUE,
+      fontsize_row = max(6, 12 - nrow(expr_matrix) / 10),
+      fontsize_col = 8
+    )
+  }
+
+  save_base_plot_formats(filename_base, draw_heatmap,
+                         width = width, height = height)
+  invisible(NULL)
 }
 
 #' Create median expression heatmap grouped by cluster

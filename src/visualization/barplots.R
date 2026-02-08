@@ -31,8 +31,8 @@ plot_composition_barplot <- function(data, output_dir,
     labs(title = title, x = x_col, y = "Cell Count") +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-  ggsave(file.path(output_dir, paste0("barplot_", x_col, "_", fill_col, ".png")),
-         p, width = 10, height = 6)
+  save_plot_formats(p, file.path(output_dir, paste0("barplot_", x_col, "_", fill_col)),
+                    width = 14, height = 8)
   cat("Barplot saved to:", output_dir, "\n")
   invisible(p)
 }

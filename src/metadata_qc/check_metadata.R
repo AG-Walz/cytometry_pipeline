@@ -136,8 +136,8 @@ check_metadata <- function(metadata_file, output_dir,
 
   plot_width  <- max(8, 2.1 * ncol_facets)
   plot_height <- max(6, 3.0 * nrow_facets)
-  ggsave(file.path(output_dir, "consensus_barplots_compact.png"),
-         p, width = plot_width, height = plot_height, dpi = 300)
+  save_plot_formats(p, file.path(output_dir, "consensus_barplots_compact"),
+                    width = plot_width, height = plot_height)
 
   # Save summary CSV
   data.table::fwrite(as.data.frame(counts[, c("column", "value", "Count")]),
@@ -187,8 +187,8 @@ check_metadata <- function(metadata_file, output_dir,
         strip.text = element_text(size = 9, face = "bold")
       )
 
-    ggsave(file.path(output_dir, sprintf("consensus_barplots_compact_bySplit_%d.png", n_splits)),
-           p_b, width = plot_width, height = plot_height, dpi = 300)
+    save_plot_formats(p_b, file.path(output_dir, sprintf("consensus_barplots_compact_bySplit_%d", n_splits)),
+                      width = plot_width, height = plot_height)
   }
 
   cat("Metadata check plots saved to:", output_dir, "\n")
@@ -306,8 +306,8 @@ plot_temporal_heatmap <- function(metadata_file, output_dir,
       panel.grid = element_blank()
     )
 
-  ggsave(file.path(output_dir, "temporal_feature_heatmap.png"),
-         p_heat, width = 10, height = plot_height_heat, dpi = 300, limitsize = FALSE)
+  save_plot_formats(p_heat, file.path(output_dir, "temporal_feature_heatmap"),
+                    width = 14, height = plot_height_heat)
 
   cat("Temporal heatmap saved to:", output_dir, "\n")
   invisible(NULL)

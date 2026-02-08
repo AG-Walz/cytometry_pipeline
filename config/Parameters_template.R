@@ -71,10 +71,14 @@ params <- list(
   sample_large_files = TRUE,
 
   # ========================= Output Formats ==================================
-  output_formats = list(pdf = TRUE, png = TRUE, svg = FALSE),
-  plot_width     = 10,
-  plot_height    = 8,
-  png_dpi        = 300,
+  output_formats = list(pdf = TRUE, png = TRUE, svg = TRUE),
+  plot_width     = 14,
+  plot_height    = 10,
+  png_dpi        = 200,
+
+  # ========================= Abundance Analysis =============================
+  exclude_patterns = c("^AI_Cluster_", "^Unlabeled_\\d+", "^Clustering raw$"),
+  cytolution_metadata_file = NULL,  # Path to metadata CSV for grouped abundance plots
 
   # ========================= Seed ============================================
   seed = 42

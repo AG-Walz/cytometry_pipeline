@@ -7,6 +7,7 @@
 
 shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
+source(file.path(shared_dir, "plot_utils.R"))
 
 #' Create an UpSet plot from binary membership data
 #'
@@ -19,26 +20,29 @@ plot_upset <- function(data, set_columns, output_path,
                         title = "UpSet Plot", min_size = 1) {
   require(UpSetR)
 
-  png(output_path, width = 1200, height = 800, res = 100)
-  tryCatch({
-    UpSetR::upset(
-      as.data.frame(data),
-      sets = set_columns,
-      order.by = "freq",
-      decreasing = TRUE,
-      mainbar.y.label = "Intersection Size",
-      sets.x.label = "Set Size",
-      text.scale = 1.2,
-      main.bar.color = "steelblue",
-      sets.bar.color = "grey50",
-      mb.ratio = c(0.6, 0.4)
-    )
-    title(main = title, line = 2.5)
-  }, error = function(e) {
-    message("UpSet plot error: ", e$message)
-  }, finally = dev.off())
+  filename_base <- sub("\\.[^.]+$", "", output_path)
 
-  cat("UpSet plot saved to:", output_path, "\n")
+  draw_upset <- function() {
+    tryCatch({
+      UpSetR::upset(
+        as.data.frame(data),
+        sets = set_columns,
+        order.by = "freq",
+        decreasing = TRUE,
+        mainbar.y.label = "Intersection Size",
+        sets.x.label = "Set Size",
+        text.scale = 1.2,
+        main.bar.color = "steelblue",
+        sets.bar.color = "grey50",
+        mb.ratio = c(0.6, 0.4)
+      )
+      title(main = title, line = 2.5)
+    }, error = function(e) {
+      message("UpSet plot error: ", e$message)
+    })
+  }
+
+  save_base_plot_formats(filename_base, draw_upset, width = 16, height = 10)
 }
 
 #' Create UpSet plot from a list of sets
@@ -50,20 +54,23 @@ plot_upset_from_list <- function(sets, output_path,
                                   title = "UpSet Plot") {
   require(UpSetR)
 
-  png(output_path, width = 1200, height = 800, res = 100)
-  tryCatch({
-    UpSetR::upset(
-      UpSetR::fromList(sets),
-      order.by = "freq",
-      decreasing = TRUE,
-      mainbar.y.label = "Intersection Size",
-      sets.x.label = "Set Size",
-      text.scale = 1.2
-    )
-    title(main = title, line = 2.5)
-  }, error = function(e) {
-    message("UpSet plot error: ", e$message)
-  }, finally = dev.off())
+  filename_base <- sub("\\.[^.]+$", "", output_path)
 
-  cat("UpSet plot saved to:", output_path, "\n")
+  draw_upset <- function() {
+    tryCatch({
+      UpSetR::upset(
+        UpSetR::fromList(sets),
+        order.by = "freq",
+        decreasing = TRUE,
+        mainbar.y.label = "Intersection Size",
+        sets.x.label = "Set Size",
+        text.scale = 1.2
+      )
+      title(main = title, line = 2.5)
+    }, error = function(e) {
+      message("UpSet plot error: ", e$message)
+    })
+  }
+
+  save_base_plot_formats(filename_base, draw_upset, width = 16, height = 10)
 }

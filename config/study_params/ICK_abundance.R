@@ -60,6 +60,11 @@ markers_of_interest <- c(
   "CD274 | APC.FIRE.810.A"
 )
 
+# ========================= METADATA =========================================
+
+# Cytolution metadata file mapping file_name to clinical variables
+cytolution_metadata_file <- "/mnt/volume/nacho/data/ICK/export_cytolution.csv"
+
 # ========================= PLOT OPTIONS =====================================
 
 # Plot types to generate: "stacked", "grouped", "proportional"

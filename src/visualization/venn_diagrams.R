@@ -7,6 +7,7 @@
 
 shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
+source(file.path(shared_dir, "plot_utils.R"))
 
 #' Plot Euler diagram from set data
 #'
@@ -24,16 +25,20 @@ plot_euler <- function(sets, output_dir, filename, custom_name = NULL) {
   fit <- eulerr::euler(sets)
   set_colors <- scales::hue_pal()(n_sets)
 
-  png(file.path(output_dir, paste0("euler_", filename, ".png")),
-      width = 600, height = 400)
-  tryCatch({
-    p <- plot(fit, main = paste(filename, "population"),
-              fills = set_colors, quantities = TRUE,
-              legend = names(sets))
-    print(p)
-  }, error = function(e) {
-    message("Error plotting '", filename, "': ", e$message)
-  }, finally = dev.off())
+  filename_base <- file.path(output_dir, paste0("euler_", filename))
+
+  draw_euler <- function() {
+    tryCatch({
+      p <- plot(fit, main = paste(filename, "population"),
+                fills = set_colors, quantities = TRUE,
+                legend = names(sets))
+      print(p)
+    }, error = function(e) {
+      message("Error plotting '", filename, "': ", e$message)
+    })
+  }
+
+  save_base_plot_formats(filename_base, draw_euler, width = 10, height = 8)
 }
 
 #' Plot Venn diagram
@@ -48,10 +53,8 @@ plot_venn <- function(sets, filename, output_dir) {
     zcolor = "style", box = FALSE, plotsize = 10,
     ilcs = 1, sncs = 1, ilabels = "counts"
   ) + ggplot2::ggtitle(paste(filename, "population"))
-  ggplot2::ggsave(
-    file.path(output_dir, paste0("venn_", filename, ".png")),
-    plot = p, width = 8, height = 6
-  )
+  save_plot_formats(p, file.path(output_dir, paste0("venn_", filename)),
+                    width = 10, height = 8)
 }
 
 #' Plot Venn/Euler for each population in a binary matrix

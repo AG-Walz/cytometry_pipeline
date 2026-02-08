@@ -52,8 +52,8 @@ plot_density <- function(flow_frames, sample_names, markers,
         geom_density(alpha = 0.3) +
         theme_minimal() +
         labs(title = paste("Density:", marker), x = marker, y = "Density")
-      ggsave(file.path(output_dir, paste0("density_", marker, ".png")),
-             p, width = 8, height = 6)
+      save_plot_formats(p, file.path(output_dir, paste0("density_", marker)),
+                        width = 10, height = 8)
     }
 
     if (plot_type %in% c("ridge", "both")) {
@@ -64,8 +64,8 @@ plot_density <- function(flow_frames, sample_names, markers,
           ggridges::geom_density_ridges(alpha = 0.7) +
           theme_minimal() +
           labs(title = paste("Ridge:", marker), x = marker)
-        ggsave(file.path(output_dir, paste0("ridge_", marker, ".png")),
-               p2, width = 8, height = 6)
+        save_plot_formats(p2, file.path(output_dir, paste0("ridge_", marker)),
+                          width = 10, height = 8)
       }
     }
   }

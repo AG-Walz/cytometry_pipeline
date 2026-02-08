@@ -49,7 +49,7 @@ plot_pca <- function(expr_matrix, sample_labels = NULL,
          y = paste0("PC2 (", var_expl[2], "%)"))
 
   save_plot_formats(p, file.path(output_dir, "pca_plot"),
-                    width = 8, height = 6)
+                    width = 10, height = 8)
 
   # Loadings plot
   loadings_df <- as.data.frame(pca$loadings)
@@ -64,7 +64,7 @@ plot_pca <- function(expr_matrix, sample_labels = NULL,
     labs(title = paste(title, "- Loadings"))
 
   save_plot_formats(p_load, file.path(output_dir, "pca_loadings"),
-                    width = 8, height = 8)
+                    width = 10, height = 10)
 
   cat("PCA plots saved to:", output_dir, "\n")
   list(pca_result = pca, scatter_plot = p, loadings_plot = p_load)

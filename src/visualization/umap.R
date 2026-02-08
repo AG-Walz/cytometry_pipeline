@@ -32,8 +32,8 @@ plot_umap <- function(flow_frames, sample_names,
                       n_neighbors = 15,
                       min_dist = 0.1,
                       marker_selection_mode = "all",
-                      output_formats = list(pdf = FALSE, png = TRUE, svg = FALSE),
-                      plot_width = 8, plot_height = 6,
+                      output_formats = list(pdf = FALSE, png = TRUE, svg = TRUE),
+                      plot_width = 10, plot_height = 8,
                       seed = 42) {
   require(ggplot2)
   make_outdir(output_dir)

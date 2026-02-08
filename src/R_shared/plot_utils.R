@@ -13,13 +13,13 @@
 #' @param png_dpi DPI for PNG output
 #' @return Character vector of formats saved
 save_plot_formats <- function(plot, filename_base,
-                              width = 10, height = 8,
-                              formats = list(pdf = TRUE, png = TRUE, svg = FALSE),
-                              png_dpi = 300) {
+                              width = 14, height = 10,
+                              formats = list(pdf = TRUE, png = TRUE, svg = TRUE),
+                              png_dpi = 200) {
   format_configs <- list(
     pdf = list(ext = ".pdf", device = "pdf", extra_args = list()),
     png = list(ext = ".png", device = "png", extra_args = list(dpi = png_dpi)),
-    svg = list(ext = ".svg", device = "svg", extra_args = list())
+    svg = list(ext = ".svg", device = grDevices::svg, extra_args = list())
   )
   formats_saved <- c()
   for (format_name in names(formats)) {
@@ -38,6 +38,27 @@ save_plot_formats <- function(plot, filename_base,
   formats_saved
 }
 
+#' Save a base R plot in PNG + SVG formats
+#' @param filename_base Base filename (without extension)
+#' @param plot_fn Function that draws the plot (called twice: once for PNG, once for SVG)
+#' @param width Plot width in inches
+#' @param height Plot height in inches
+#' @param png_dpi DPI for PNG output
+save_base_plot_formats <- function(filename_base, plot_fn,
+                                   width = 14, height = 10,
+                                   png_dpi = 200) {
+  # PNG
+  grDevices::png(paste0(filename_base, ".png"),
+                 width = width, height = height, units = "in", res = png_dpi)
+  plot_fn()
+  grDevices::dev.off()
+  # SVG
+  grDevices::svg(paste0(filename_base, ".svg"), width = width, height = height)
+  plot_fn()
+  grDevices::dev.off()
+  cat("Saved:", paste0(filename_base, ".{png,svg}"), "\n")
+}
+
 #' Create a grouped barplot of population counts
 #' @param population_counts Data frame with Population, Count, Sample columns
 #' @param out_file Output file path
@@ -51,7 +72,9 @@ population_barplot <- function(population_counts, out_file, title, y_label) {
     ggplot2::theme_minimal() +
     ggplot2::labs(title = title, x = "Population", y = y_label) +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
-  ggplot2::ggsave(filename = out_file, plot = p, width = 12, height = 8)
+  # Strip extension from out_file to get base name for save_plot_formats
+  filename_base <- sub("\\.[^.]+$", "", out_file)
+  save_plot_formats(p, filename_base, width = 16, height = 10)
   cat("Barplot saved to:", out_file, "\n")
 }
 
@@ -74,9 +97,9 @@ plot_per_sample <- function(df, value_col, out_dir, out_prefix, y_label, title) 
       ggplot2::theme_minimal() +
       ggplot2::labs(title = paste(title, sample), x = "Population", y = y_label) +
       ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
-    ggplot2::ggsave(
-      filename = file.path(out_dir, paste0(out_prefix, "_", sample, ".png")),
-      plot = p, width = 12, height = 8
+    save_plot_formats(p,
+      file.path(out_dir, paste0(out_prefix, "_", sample)),
+      width = 16, height = 10
     )
   }
 }
