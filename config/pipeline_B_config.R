@@ -1,46 +1,42 @@
 # =============================================================================
-# config/pipeline_B_config.R — Pipeline B: CSV Expression → Statistics
+# config/pipeline_B_config.R — Pipeline B: CSV Expression -> Statistics
 # =============================================================================
-# Flow: Load CSV expression matrices → Marker statistics → Density/Heatmap
-#
-# Use this pipeline when you already have expression data exported as CSV files
-# (e.g., from FlowJo, Cytolution, or another tool) and want to run marker-level
-# statistics and visualizations without any FCS processing.
+# Flow: Load CSV expression matrices -> Marker statistics -> Density/Heatmap
 #
 # Usage:
-#   Rscript pipelines/pipeline_B_csv_expression.R --config config/pipeline_B_config.R
-# Or in R:
-#   source("config/pipeline_B_config.R")
-#   source("pipelines/pipeline_B_csv_expression.R")
+#   cd pipelines && Rscript pipeline_B_csv_expression.R --config ../config/pipeline_B_config.R
 # =============================================================================
+
+# Compute project root relative to this config file
+.config_path <- tryCatch(
+  normalizePath(sys.frame(1)$ofile),
+  error = function(e) {
+    for (i in rev(seq_len(sys.nframe()))) {
+      f <- sys.frame(i)$ofile
+      if (!is.null(f)) return(normalizePath(f))
+    }
+    stop("Cannot determine config file path")
+  }
+)
+base_dir <- dirname(dirname(.config_path))
 
 params <- list(
 
-  # ========================= EDIT THESE ======================================
-
-  # -- Input / Output --
-  csv_folder = "/path/to/csv/expression/files",  # Directory with expression CSV files
-  output_dir = "/path/to/output",                 # All results saved here
+  # ========================= Input / Output ==================================
+  csv_folder = file.path(base_dir, "test_data", "csv_expression"),
+  output_dir = file.path(base_dir, "output", "pipeline_B_results"),
 
   # -- Markers --
-  # Column names in your CSVs that correspond to markers.
-  # Only these columns will be used for statistics and plots.
-  markers = c(
-    "CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR"
-  ),
+  markers = c("CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR"),
 
-  # -- Grouping --
-  # Column names in your CSVs used for grouping in statistical tests and plots.
-  condition_col = "condition",   # Column with group/condition labels
-  sample_col    = "sample",      # Column with sample identifiers
+  # -- Statistics --
+  test_type = "lmer",
 
-  # ========================= OPTIONAL (sensible defaults) ====================
-
-  # -- Output --
-  output_formats = list(pdf = TRUE, png = TRUE, svg = FALSE),
+  # ========================= Output ==========================================
+  output_formats = list(pdf = FALSE, png = TRUE, svg = FALSE),
   plot_width     = 10,
   plot_height    = 8,
 
-  # -- Reproducibility --
+  # ========================= Reproducibility =================================
   seed = 42
 )

@@ -1,59 +1,55 @@
 # =============================================================================
-# config/pipeline_C_config.R — Pipeline C: CSV Gating → Cluster Analysis
+# config/pipeline_C_config.R — Pipeline C: CSV Gating -> Cluster Analysis
 # =============================================================================
-# Flow: Load gating CSV → Split clusters → GLMM/Enrichment → UMAP/Barplots
-#
-# Use this pipeline when you have CSV files with binary gating columns
-# (e.g., exported from Cytolution or manual gating) alongside expression data.
-# The pipeline splits data by cluster, runs differential abundance or
-# enrichment analysis, and produces UMAP and barplot visualizations.
+# Flow: Load gating CSV -> Split clusters -> Enrichment -> Barplots/Abundance
 #
 # Usage:
-#   Rscript pipelines/pipeline_C_csv_gating.R --config config/pipeline_C_config.R
-# Or in R:
-#   source("config/pipeline_C_config.R")
-#   source("pipelines/pipeline_C_csv_gating.R")
+#   cd pipelines && Rscript pipeline_C_csv_gating.R --config ../config/pipeline_C_config.R
 # =============================================================================
+
+# Compute project root relative to this config file
+.config_path <- tryCatch(
+  normalizePath(sys.frame(1)$ofile),
+  error = function(e) {
+    for (i in rev(seq_len(sys.nframe()))) {
+      f <- sys.frame(i)$ofile
+      if (!is.null(f)) return(normalizePath(f))
+    }
+    stop("Cannot determine config file path")
+  }
+)
+base_dir <- dirname(dirname(.config_path))
 
 params <- list(
 
-  # ========================= EDIT THESE ======================================
-
-  # -- Input / Output --
-  csv_folder = "/path/to/csv/gating/files",  # Directory with gating CSV files
-  output_dir = "/path/to/output",             # All results saved here
+  # ========================= Input / Output ==================================
+  csv_folder     = file.path(base_dir, "test_data", "csv_gating"),
+  output_dir     = file.path(base_dir, "output", "pipeline_C_results"),
 
   # -- Conditions --
-  conditions_csv   = "/path/to/conditions.csv",  # CSV with columns: sample, condition
-  condition_col    = "condition",                 # Column name for condition labels
-  sample_col       = "sample",                    # Column name for sample identifiers
-  condition_levels = c("Control", "Treatment"),   # Two-level condition for DA testing
+  conditions_csv   = file.path(base_dir, "test_data", "csv_gating_conditions.csv"),
+  condition_levels = c("Control", "Treatment"),
 
-  # ========================= OPTIONAL (sensible defaults) ====================
+  # ========================= Analysis ========================================
+  analysis_method  = "enrichment",
+  stat_method      = "pooled",
+  cluster_regex    = "Clustering annotated",
+  min_cluster_size = 5,
+  p_adjust_method  = "BH",
 
-  # -- Analysis --
-  # Choose which statistical method to use:
-  #   "glmm"       — Negative binomial GLMM for differential abundance (default)
-  #   "enrichment" — Fisher's exact test or mixed-effects logistic regression
-  analysis_method = "glmm",
+  # -- Gating loading --
+  gating_pattern   = "\\(Clustering annotated\\)$|^Clustering raw$",
+  processing_mode  = "manual",
 
-  # -- Cluster Splitting --
-  cluster_regex    = "Clustering annotated",  # Regex to identify cluster/gating columns
-  min_cluster_size = 10,                      # Drop clusters with fewer cells
+  # -- Abundance --
+  exclude_patterns         = c(),
+  cytolution_metadata_file = NULL,
 
-  # -- Statistics --
-  stat_method     = "mixed_effects",  # "mixed_effects" or "pooled"
-  p_adjust_method = "BH",             # p-value correction: "BH", "bonferroni", "holm"
-
-  # -- Markers (optional) --
-  # If NULL, all non-gating numeric columns are used as markers.
-  markers = NULL,
-
-  # -- Output --
-  output_formats = list(pdf = TRUE, png = TRUE, svg = FALSE),
+  # ========================= Output ==========================================
+  output_formats = list(pdf = FALSE, png = TRUE, svg = FALSE),
   plot_width     = 10,
   plot_height    = 8,
 
-  # -- Reproducibility --
+  # ========================= Reproducibility =================================
   seed = 42
 )

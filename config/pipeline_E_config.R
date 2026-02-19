@@ -1,53 +1,50 @@
 # =============================================================================
-# config/pipeline_E_config.R — Pipeline E: Preprocessed FCS → UMAP/Clustering
+# config/pipeline_E_config.R — Pipeline E: Preprocessed FCS -> UMAP/Clustering
 # =============================================================================
-# Flow: Load FCS (skip QC) → Homogenize → Downsample → Leiden → UMAP
-#
-# Use this pipeline when you have already preprocessed FCS files (QC'd,
-# transformed, normalized) and want to quickly run unsupervised clustering
-# and UMAP visualization. Skips quality control and transformation steps.
+# Flow: Load FCS (skip QC) -> Homogenize -> Downsample -> Leiden -> UMAP
 #
 # Usage:
-#   Rscript pipelines/pipeline_E_preprocessed_umap.R --config config/pipeline_E_config.R
-# Or in R:
-#   source("config/pipeline_E_config.R")
-#   source("pipelines/pipeline_E_preprocessed_umap.R")
+#   cd pipelines && Rscript pipeline_E_preprocessed_umap.R --config ../config/pipeline_E_config.R
 # =============================================================================
+
+# Compute project root relative to this config file
+.config_path <- tryCatch(
+  normalizePath(sys.frame(1)$ofile),
+  error = function(e) {
+    for (i in rev(seq_len(sys.nframe()))) {
+      f <- sys.frame(i)$ofile
+      if (!is.null(f)) return(normalizePath(f))
+    }
+    stop("Cannot determine config file path")
+  }
+)
+base_dir <- dirname(dirname(.config_path))
 
 params <- list(
 
-  # ========================= EDIT THESE ======================================
-
-  # -- Input / Output --
-  fcs_folder = "/path/to/preprocessed/fcs/files",  # Preprocessed FCS files
-  output_dir = "/path/to/output",                   # All results saved here
+  # ========================= Input / Output ==================================
+  fcs_folder = file.path(base_dir, "test_data", "fcs_samples"),
+  output_dir = file.path(base_dir, "output", "pipeline_E_results"),
 
   # -- Markers --
-  markers = c(
-    "CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR"
-  ),
+  markers_of_interest = c("CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR"),
 
-  # ========================= OPTIONAL (sensible defaults) ====================
+  # ========================= Homogenization ==================================
+  markername_replacing = list(),
 
-  # -- Panel Homogenization --
-  markername_replacing = list(
-    # `PD1 (CD279)` = "PD1",
-    # `Fas (CD95)` = "CD95"
-  ),
+  # ========================= Downsampling ====================================
+  downsample_method = "Consistent",
+  downsample_n      = 100,
 
-  # -- Downsampling --
-  downsample_method = "Consistent",  # "Consistent" (fixed n per sample) or "Maximal" (proportional)
-  downsample_n      = 10000,         # Target cells per sample (Consistent) or total (Maximal)
+  # ========================= Clustering (Leiden) =============================
+  n_neighbors = 15,
+  resolution  = 0.5,
 
-  # -- Clustering (Leiden) --
-  n_neighbors = 30,     # KNN graph neighbors (higher = coarser clusters)
-  resolution  = 0.8,    # Leiden resolution (higher = more clusters)
-
-  # -- Output --
-  output_formats = list(pdf = TRUE, png = TRUE, svg = FALSE),
+  # ========================= Output ==========================================
+  output_formats = list(pdf = FALSE, png = TRUE, svg = FALSE),
   plot_width     = 10,
   plot_height    = 8,
 
-  # -- Reproducibility --
+  # ========================= Reproducibility =================================
   seed = 42
 )

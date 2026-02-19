@@ -1,16 +1,16 @@
 [< Back to Documentation Index](../README.md)
 
-# src/analysis/ -- Statistical Analysis
+# src/analysis/ — Statistical Analysis
 
-7 scripts for cluster splitting, differential abundance testing, enrichment analysis, marker statistics, expression matrix generation, abundance plotting, and cell ratio calculation.
+Seven scripts for cluster splitting, differential abundance testing, enrichment analysis, marker statistics, expression matrix generation, abundance plotting, and cell ratio calculation. These scripts are the statistical backbone of Pipelines A and C.
 
 ---
 
 ## cluster_splitting.R
 
-Splits combined expression data into per-cluster CSV files for downstream analysis.
+Splits combined expression data into per-cluster CSV files based on binary gating columns. Produces a tracking matrix counting cells per cluster per sample.
 
-### Main Function
+### Function
 
 ```r
 split_by_cluster(input_dir, output_dir,
@@ -23,28 +23,56 @@ split_by_cluster(input_dir, output_dir,
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `input_dir` | character | *required* | Directory with input CSVs containing expression + cluster columns |
+| `input_dir` | character | *required* | Directory with CSVs containing expression + cluster columns |
 | `output_dir` | character | *required* | Directory for per-cluster output CSVs |
-| `cluster_regex` | character | `"Clustering annotated"` | Regex to identify cluster label columns |
-| `markers_of_interest` | character vector | `NULL` | Markers to retain; `NULL` keeps all expression columns |
-| `min_cells_per_cluster` | integer | `10` | Minimum cells required to output a cluster file |
-| `chunk_size` | integer | `10000` | Rows per chunk for memory-efficient processing |
-| `overwrite_existing` | logical | `TRUE` | Whether to overwrite existing output files |
+| `cluster_regex` | character | `"Clustering annotated"` | Regex to identify cluster columns |
+| `markers_of_interest` | character vector | `NULL` | Markers to retain; `NULL` keeps all |
+| `min_cells_per_cluster` | integer | `10` | Minimum cells to output a cluster |
+| `chunk_size` | integer | `10000` | Rows per chunk for memory efficiency |
 
-### Output
+### Returns
 
 ```r
 list(
-  tracking_matrix  = data.frame(), # Sample-by-cluster cell count matrix
-  cluster_summary  = data.frame(), # Per-cluster statistics
-  output_files     = character(),  # Paths to generated CSV files
-  markers_used     = character()   # Markers included in output
+  tracking_matrix  = data.frame(),  # Sample × cluster cell counts
+  cluster_summary  = data.frame(),
+  output_files     = character(),
+  markers_used     = character()
 )
 ```
 
-Generated files:
-- Per-cluster CSVs in `output_dir`
-- `cluster_tracking_matrix.csv` -- sample-by-cluster cell counts
+### Example Input
+
+CSVs with expression columns and binary cluster columns:
+
+```
+CD3;CD4;CD8;CD4+ (Clustering annotated);CD8+ (Clustering annotated)
+2.46;4.01;2.15;1;0
+3.89;2.12;4.56;0;1
+0.98;1.56;2.78;0;1
+```
+
+### Example Output
+
+**`cluster_tracking_matrix.csv`:**
+
+```
+file;CD4+;CD8+
+sample_001;20;15
+sample_002;20;15
+sample_003;20;15
+```
+
+**Per-cluster files:**
+
+```
+output_dir/
+├── cluster_tracking_matrix.csv
+├── sample_001_CD4+.csv         # Expression data for CD4+ cells from sample_001
+├── sample_001_CD8+.csv         # Expression data for CD8+ cells from sample_001
+├── sample_002_CD4+.csv
+└── ...
+```
 
 ### CLI Usage
 
@@ -52,7 +80,7 @@ Generated files:
 Rscript cluster_splitting.R <input_dir> <output_dir>
 ```
 
-### src/R_shared Dependencies
+### Dependencies
 
 `io_utils`, `gui_utils`, `cluster_utils`, `memory_utils`
 
@@ -60,9 +88,9 @@ Rscript cluster_splitting.R <input_dir> <output_dir>
 
 ## differential_abundance.R
 
-Tests for differential cell population abundance between experimental conditions using negative binomial GLMM.
+Tests for differential cell population abundance between experimental conditions using a negative binomial GLMM.
 
-### Main Function
+### Function
 
 ```r
 run_differential_abundance(data_dir, conditions_csv, output_dir,
@@ -77,29 +105,25 @@ run_differential_abundance(data_dir, conditions_csv, output_dir,
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `data_dir` | character | *required* | Directory containing per-cluster CSVs |
-| `conditions_csv` | character | *required* | Path to conditions file (see format below) |
-| `output_dir` | character | *required* | Directory for results |
-| `cluster_regex` | character | `"Clustering annotated"` | Regex to identify cluster columns |
-| `condition_levels` | character vector | `c("pCR", "npCR")` | Factor levels for the condition variable |
-| `markers_of_interest` | character vector | `NULL` | Markers to include |
+| `data_dir` | character | *required* | Directory with per-sample CSVs |
+| `conditions_csv` | character | *required* | Path to conditions mapping file |
+| `output_dir` | character | *required* | Output directory |
+| `cluster_regex` | character | `"Clustering annotated"` | Regex for cluster columns |
+| `condition_levels` | character vector | `c("pCR", "npCR")` | Condition factor levels |
 | `min_cluster_size` | integer | `10` | Minimum cells per cluster to test |
-| `p_adjust_method` | character | `"BH"` | Multiple testing correction method |
-| `max_cells_per_file` | integer | `100000` | Maximum cells to load per file |
+| `p_adjust_method` | character | `"BH"` | Multiple testing correction |
 | `seed` | integer | `123` | Random seed |
 
 ### Conditions CSV Format
 
-Semicolon-separated file with two columns:
-
 ```
 file_name;condition
-sample_001.csv;pCR
-sample_002.csv;npCR
-sample_003.csv;pCR
+sample_001;Control
+sample_002;Control
+sample_003;Treatment
 ```
 
-### Statistical Method
+### Statistical Model
 
 Negative binomial GLMM fitted via `lme4`:
 
@@ -107,26 +131,27 @@ Negative binomial GLMM fitted via `lme4`:
 count ~ condition + offset(log_total) + (1 | sample_id)
 ```
 
+Falls back to Poisson GLMM if negative binomial fails to converge.
+
 ### Output
 
-Results `data.frame`:
+**`glmm_results.csv`:**
+
+```
+cluster;estimate;std_error;z_value;p_value;log2fc;odds_ratio;method;p_adjusted;significant
+Cluster_1;-0.23;0.15;-1.53;0.126;-0.33;0.79;glmerMod;0.126;FALSE
+Cluster_2;0.87;0.21;4.14;0.00003;1.26;2.39;glmerMod;0.0001;TRUE
+```
 
 | Column | Description |
 |--------|-------------|
-| `cluster` | Cluster identifier |
-| `estimate` | Model coefficient |
-| `std_error` | Standard error of estimate |
-| `z_value` | Wald z-statistic |
-| `p_value` | Raw p-value |
-| `log2fc` | Log2 fold change |
+| `estimate` | Model coefficient for condition effect |
+| `log2fc` | Log2 fold change between conditions |
 | `odds_ratio` | Exponentiated estimate |
-| `method` | `"NB-GLMM"` |
-| `p_adjusted` | Adjusted p-value |
-| `significant` | Logical, `TRUE` if `p_adjusted < 0.05` |
+| `p_adjusted` | BH-adjusted p-value |
+| `significant` | `TRUE` if `p_adjusted < 0.05` |
 
-Generated files:
-- `glmm_results.csv`
-- `volcano_plot.png`
+**`volcano_plot.png`:** Scatter plot of log2FC vs -log10(adjusted p-value).
 
 ### CLI Usage
 
@@ -134,7 +159,7 @@ Generated files:
 Rscript differential_abundance.R <data_dir> <conditions_csv> <output_dir>
 ```
 
-### src/R_shared Dependencies
+### Dependencies
 
 `io_utils`, `cluster_utils`, `memory_utils`, `stats_utils` (`fit_nb_glmm`)
 
@@ -144,7 +169,7 @@ Rscript differential_abundance.R <data_dir> <conditions_csv> <output_dir>
 
 Tests whether cell clusters are enriched in one condition versus another using Fisher's exact test and optional mixed-effects logistic regression.
 
-### Main Function
+### Function
 
 ```r
 run_cluster_enrichment(data_dir, conditions_csv, output_dir,
@@ -161,36 +186,55 @@ run_cluster_enrichment(data_dir, conditions_csv, output_dir,
 | `data_dir` | character | *required* | Directory with cluster data |
 | `conditions_csv` | character | *required* | Conditions mapping file |
 | `output_dir` | character | *required* | Output directory |
-| `cluster_regex` | character | `"Clustering annotated"` | Regex for cluster columns |
-| `condition_levels` | character vector | `c("pCR", "npCR")` | Condition factor levels |
-| `stat_method` | character | `"mixed_effects"` | `"mixed_effects"` or `"fisher"` |
-| `min_cluster_frac` | numeric | `0.001` | Minimum cluster fraction to test |
-| `p_adjust_method` | character | `"BH"` | P-value adjustment method |
-| `resume` | logical | `FALSE` | Resume from checkpoint (`intermediate_results.rds`) |
-| `seed` | integer | `123` | Random seed |
+| `stat_method` | character | `"mixed_effects"` | `"mixed_effects"`, `"pooled"`, or `"fisher"` |
+| `resume` | logical | `FALSE` | Resume from `intermediate_results.rds` |
 
 ### Methods
 
-- **Fisher's exact test**: 2x2 contingency table (cluster membership x condition)
-- **Mixed-effects logistic regression**: Accounts for sample-level random effects
-- **Log2 enrichment**: `log2(fraction_condition1 / fraction_condition2)`
+- **`"pooled"` / `"fisher"`**: Pool all cells, build 2x2 contingency table, run Fisher's exact test
+- **`"mixed_effects"`**: Mixed-effects logistic regression with sample as random effect
 
 ### Output
 
-- `enrichment_results.csv`
-- `intermediate_results.rds` (checkpointing for long-running analyses)
+**`enrichment_results.csv`:**
 
-### src/R_shared Dependencies
+```
+cluster;in_A;not_in_A;in_B;not_in_B;odds_ratio;p_value;ci_lower;ci_upper;method;p_adjusted;significant;log2_enrichment
+CD4+;40;60;20;30;1.00;1.00;0.47;2.13;fisher;1.00;FALSE;0.00
+CD8+;30;70;15;35;1.00;1.00;0.45;2.27;fisher;1.00;FALSE;0.00
+```
 
-`io_utils`, `cluster_utils`, `memory_utils`, `stats_utils` (`calculate_enrichment`, `do_mixed_effects`)
+| Column | Description |
+|--------|-------------|
+| `in_A` / `not_in_A` | Cells in/out of cluster in condition A |
+| `in_B` / `not_in_B` | Cells in/out of cluster in condition B |
+| `odds_ratio` | Fisher's odds ratio |
+| `log2_enrichment` | log2(proportion_A / proportion_B) |
+
+### Example
+
+```r
+source("cluster_enrichment.R")
+results <- run_cluster_enrichment(
+  data_dir         = "/data/csvs_with_gating",
+  conditions_csv   = "/data/conditions.csv",
+  output_dir       = "/output/enrichment",
+  condition_levels = c("Control", "Treatment"),
+  stat_method      = "pooled"
+)
+```
+
+### Dependencies
+
+`io_utils`, `cluster_utils`, `memory_utils`, `stats_utils`
 
 ---
 
 ## marker_statistics.R
 
-Computes per-marker statistics within each population, including between- and within-sample variance via linear mixed-effects models.
+Computes per-marker statistics within each population using linear mixed-effects models.
 
-### Main Function
+### Function
 
 ```r
 run_marker_statistics(input_folder, output_folder,
@@ -201,14 +245,13 @@ run_marker_statistics(input_folder, output_folder,
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `input_folder` | character | *required* | Directory with per-cluster CSVs |
+| `input_folder` | character | *required* | Directory with per-population CSVs |
 | `output_folder` | character | *required* | Output directory |
-| `filename_regex` | character | `"^(.+)_(.+)\\.csv$"` | Pattern to extract sample and cluster from filenames |
-| `markers` | character vector | `NULL` | Markers to analyze; `NULL` uses all |
-| `test_type` | character | `"lmer"` | Statistical method (currently `"lmer"`) |
-| `n_workers` | integer | `NULL` | Number of parallel workers; `NULL` for sequential |
+| `filename_regex` | character | `"^(.+)_(.+)\\.csv$"` | Regex to extract sample + population |
+| `markers` | character vector | `NULL` | Markers to analyze |
+| `test_type` | character | `"lmer"` | Statistical method |
 
-### Statistical Method
+### Statistical Model
 
 Linear mixed-effects model via `lme4::lmer`:
 
@@ -216,31 +259,82 @@ Linear mixed-effects model via `lme4::lmer`:
 marker ~ 1 + (1 | sample_id)
 ```
 
-Extracts the intraclass correlation coefficient (ICC) to quantify between-sample vs within-sample variance.
+Decomposes variance into between-sample and within-sample components, computing the ICC.
 
 ### Output
 
-`marker_statistics.csv` with columns:
+**`marker_statistics.csv`:**
+
+```
+population;marker;mean;between_sample_var;within_sample_var;icc;n_cells;n_samples;method
+CD4_T_cells;CD3;3.02;0.00;0.97;0.00;150;3;lmer
+CD4_T_cells;CD4;3.08;0.003;1.10;0.003;150;3;lmer
+```
 
 | Column | Description |
 |--------|-------------|
-| `population` | Cluster/population name |
-| `marker` | Marker name |
-| `mean` | Grand mean expression |
-| `between_sample_var` | Between-sample variance component |
-| `within_sample_var` | Within-sample (residual) variance |
+| `between_sample_var` | Variance of sample random intercepts |
+| `within_sample_var` | Residual (cell-to-cell) variance |
 | `icc` | Intraclass correlation coefficient |
-| `n_cells` | Total number of cells |
-| `n_samples` | Number of samples |
-| `method` | `"lmer"` |
+| `method` | `"lmer"` or `"simple_mean"` (fallback) |
 
-### Packages
+### Dependencies
 
-`lme4`, `lmerTest`, `future`
+`io_utils`, `gui_utils`, `stats_utils`. Requires `lme4`, `lmerTest`.
 
-### src/R_shared Dependencies
+---
 
-`io_utils`, `gui_utils`, `stats_utils`
+## abundance_plotting.R
+
+Generates stacked, proportional, and heatmap abundance plots from cluster tracking matrices.
+
+### Functions
+
+```r
+build_tracking_matrix(input_dir, cluster_regex, exclude_patterns, output_dir)
+```
+
+Scans CSVs in `input_dir`, counts cells per cluster per sample, saves `cluster_tracking_matrix.csv`.
+
+```r
+plot_abundance(tracking_matrix_path = NULL, output_dir,
+               tracking_matrix = NULL, metadata_file = NULL)
+```
+
+Generates multiple abundance plots from a tracking matrix.
+
+### Generated Plots
+
+| File | Description |
+|------|-------------|
+| `abundance_stacked.png` | Stacked barplot sorted by total cells per sample |
+| `abundance_proportional.png` | Proportional barplot with Ward.D2 dendrogram |
+| `total_cells_per_cluster.png` | Bar chart of total cells per cluster |
+| `cluster_proportion_heatmap.png` | Biclustered heatmap (inferno palette) |
+
+If `metadata_file` is provided (Cytolution metadata sheet), additional grouped plots are generated based on metadata columns.
+
+### Example
+
+```r
+source("abundance_plotting.R")
+
+tm <- build_tracking_matrix(
+  input_dir        = "/data/csv_gating",
+  cluster_regex    = "Clustering annotated",
+  exclude_patterns = c("Clustering raw"),
+  output_dir       = "/output/abundance"
+)
+
+plot_abundance(
+  output_dir      = "/output/abundance",
+  tracking_matrix = tm
+)
+```
+
+### Dependencies
+
+`io_utils`, `plot_utils`
 
 ---
 
@@ -248,56 +342,21 @@ Extracts the intraclass correlation coefficient (ICC) to quantify between-sample
 
 Generates grouped expression matrices from per-cluster data.
 
-### Main Function
+### Function
 
 ```r
 create_expression_matrices(input_dir, output_dir, markers = NULL,
                            group_by_pattern = NULL)
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `input_dir` | character | *required* | Directory with per-cluster CSVs |
-| `output_dir` | character | *required* | Output directory |
-| `markers` | character vector | `NULL` | Markers to include; `NULL` uses all |
-| `group_by_pattern` | character | `NULL` | Regex pattern for grouping clusters |
-
 ### Output
 
-- `exprmat_<group>.csv` -- one expression matrix per cluster group
-- `group_matrices_summary.csv` -- summary of generated matrices
+- `exprmat_<group>.csv` — one matrix per cluster group
+- `group_matrices_summary.csv` — summary of generated matrices
 
-### src/R_shared Dependencies
+### Dependencies
 
 `io_utils`, `cluster_utils`, `stats_utils`
-
----
-
-## abundance_plotting.R
-
-Generates stacked, grouped, or proportional barplots from cluster abundance data.
-
-### Main Function
-
-```r
-plot_abundance(tracking_matrix_path, conditions_csv = NULL,
-               output_dir, plot_type = "stacked")
-```
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `tracking_matrix_path` | character | *required* | Path to `cluster_tracking_matrix.csv` |
-| `conditions_csv` | character | `NULL` | Path to conditions file for condition-level grouping |
-| `output_dir` | character | *required* | Output directory for plots |
-| `plot_type` | character | `"stacked"` | Plot style: `"stacked"`, `"grouped"`, or `"proportional"` |
-
-### Output
-
-`abundance_*.png` files in `output_dir`.
-
-### src/R_shared Dependencies
-
-`io_utils`, `plot_utils`
 
 ---
 
@@ -305,44 +364,40 @@ plot_abundance(tracking_matrix_path, conditions_csv = NULL,
 
 Calculates ratios between specified cluster populations per sample.
 
-### Main Function
+### Function
 
 ```r
 calculate_cell_ratios(abundance_csv, numerator_clusters,
                       denominator_clusters, output_path = NULL)
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `abundance_csv` | character | *required* | Path to abundance/tracking matrix CSV |
-| `numerator_clusters` | character vector | *required* | Cluster names for the numerator |
-| `denominator_clusters` | character vector | *required* | Cluster names for the denominator |
-| `output_path` | character | `NULL` | Path to save results CSV |
+### Returns
 
-### Output
-
-`data.frame`:
-
-| Column | Description |
-|--------|-------------|
-| `sample` | Sample identifier |
-| `numerator_sum` | Total cells in numerator clusters |
-| `denominator_sum` | Total cells in denominator clusters |
-| `ratio` | `numerator_sum / denominator_sum` |
-| `log2_ratio` | `log2(ratio)` |
+```r
+data.frame(sample, numerator_sum, denominator_sum, ratio, log2_ratio)
+```
 
 ### Example
 
 ```r
-# Calculate CD4/CD8 ratio
+source("cell_ratio.R")
 ratios <- calculate_cell_ratios(
-  abundance_csv        = "output/cluster_tracking_matrix.csv",
+  abundance_csv        = "/output/cluster_tracking_matrix.csv",
   numerator_clusters   = c("CD4+ T cells"),
   denominator_clusters = c("CD8+ T cells"),
-  output_path          = "output/cd4_cd8_ratio.csv"
+  output_path          = "/output/cd4_cd8_ratio.csv"
 )
 ```
 
-### src/R_shared Dependencies
+**Output — `cd4_cd8_ratio.csv`:**
+
+```
+sample;numerator_sum;denominator_sum;ratio;log2_ratio
+sample_001;1234;567;2.18;1.12
+sample_002;987;1234;0.80;-0.32
+sample_003;1456;432;3.37;1.75
+```
+
+### Dependencies
 
 `io_utils`

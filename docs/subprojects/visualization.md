@@ -1,8 +1,74 @@
 [< Back to Documentation Index](../README.md)
 
-# src/visualization/ -- Plotting
+# src/visualization/ — Plotting
 
-7 scripts for generating publication-quality visualizations of cytometry data, including composition barplots, density overlays, heatmaps, PCA, UMAP, UpSet plots, and Venn/Euler diagrams.
+Seven scripts for generating publication-quality visualizations: composition barplots, density overlays, clustered heatmaps, PCA scatter plots, UMAP embeddings, UpSet intersection plots, and Venn/Euler diagrams. All plots are saved in configurable formats (PDF, PNG, SVG) via `save_plot_formats()`.
+
+---
+
+## umap.R
+
+Computes UMAP embeddings from flowFrame objects and generates per-sample and per-marker overlay scatter plots. Used by Pipelines A and E.
+
+### Function
+
+```r
+plot_umap(flow_frames, sample_names, markers_of_interest = NULL,
+          output_dir, n_neighbors = 15, min_dist = 0.1,
+          marker_selection_mode = "all",
+          output_formats = list(pdf = FALSE, png = TRUE, svg = FALSE),
+          plot_width = 8, plot_height = 6, seed = 42)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `flow_frames` | list | *required* | Named list of flowFrame objects |
+| `sample_names` | character vector | *required* | Sample identifiers |
+| `markers_of_interest` | character vector | `NULL` | Markers for UMAP; `NULL` uses all |
+| `output_dir` | character | *required* | Output directory |
+| `n_neighbors` | integer | `15` | UMAP neighbors parameter |
+| `min_dist` | numeric | `0.1` | UMAP minimum distance |
+| `output_formats` | list | see above | Which formats to save |
+
+### Returns
+
+```r
+list(
+  umap_coords   = matrix(),    # N x 2 coordinates
+  sample_labels = character(),  # Sample per cell
+  plots         = list()        # Named list of ggplot objects
+)
+```
+
+### Generated Files
+
+```
+output_dir/
+├── umap_sample.png        # Points colored by sample identity (categorical)
+├── umap_CD3.png           # Points colored by CD3 expression (viridis)
+├── umap_CD4.png           # Points colored by CD4 expression
+├── umap_CD8.png
+└── ...                    # One plot per marker
+```
+
+### Example
+
+```r
+source("umap.R")
+result <- plot_umap(
+  flow_frames         = my_frames,
+  sample_names        = c("S1", "S2", "S3"),
+  markers_of_interest = c("CD3", "CD4", "CD8"),
+  output_dir          = "/output/umap",
+  n_neighbors         = 15,
+  seed                = 42
+)
+# Creates: umap_sample.png, umap_CD3.png, umap_CD4.png, umap_CD8.png
+```
+
+### Dependencies
+
+`io_utils`, `gui_utils`, `plot_utils`, `stats_utils` (`run_umap`), `flowframe_utils`
 
 ---
 
@@ -10,7 +76,7 @@
 
 Creates composition barplots showing cell distribution across clusters and samples.
 
-### Main Function
+### Function
 
 ```r
 plot_composition_barplot(data, output_dir, x_col = "cluster",
@@ -20,16 +86,40 @@ plot_composition_barplot(data, output_dir, x_col = "cluster",
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `data` | data.frame | *required* | Data with at least `x_col` and `fill_col` columns |
+| `data` | data.frame | *required* | Long-format data with category and count columns |
 | `output_dir` | character | *required* | Output directory |
 | `x_col` | character | `"cluster"` | Column for x-axis categories |
 | `fill_col` | character | `"sample"` | Column for fill (stacking) variable |
-| `position` | character | `"stack"` | ggplot2 position: `"stack"`, `"dodge"`, or `"fill"` |
+| `position` | character | `"stack"` | `"stack"`, `"dodge"`, or `"fill"` |
 | `title` | character | `"Cell Composition"` | Plot title |
 
-### Output
+### Example Input Data
 
-`barplot_{x_col}_{fill_col}.png`
+```r
+data <- data.frame(
+  cluster = c("CD4+", "CD4+", "CD8+", "CD8+"),
+  file    = c("sample_001", "sample_002", "sample_001", "sample_002"),
+  count   = c(1234, 987, 567, 1234)
+)
+```
+
+### Generated File
+
+`barplot_{x_col}_{fill_col}.png` — a stacked/dodged/proportional barplot.
+
+### Example
+
+```r
+source("barplots.R")
+plot_composition_barplot(
+  data       = long_data,
+  output_dir = "/output/plots",
+  x_col      = "cluster",
+  fill_col   = "file",
+  position   = "stack",
+  title      = "Cell Composition by Cluster"
+)
+```
 
 ---
 
@@ -37,7 +127,7 @@ plot_composition_barplot(data, output_dir, x_col = "cluster",
 
 Plots per-marker density overlays or ridge plots, grouped by sample or condition.
 
-### Main Function
+### Function
 
 ```r
 plot_density(flow_frames, sample_names, markers, output_dir,
@@ -52,10 +142,9 @@ plot_density(flow_frames, sample_names, markers, output_dir,
 | `markers` | character vector | *required* | Markers to plot |
 | `output_dir` | character | *required* | Output directory |
 | `plot_type` | character | `"density"` | `"density"`, `"ridge"`, or `"both"` |
-| `group_by` | character | `"sample"` | Grouping variable for overlays |
-| `group_labels` | character vector | `NULL` | Custom labels for groups |
+| `group_by` | character | `"sample"` | Grouping variable |
 
-### Output
+### Generated Files
 
 | Plot Type | Filename Pattern |
 |-----------|-----------------|
@@ -63,11 +152,23 @@ plot_density(flow_frames, sample_names, markers, output_dir,
 | `"ridge"` | `ridge_{marker}.png` |
 | `"both"` | Both of the above |
 
-Ridge plots use the `ggridges` package.
+### Example
 
-### src/R_shared Dependencies
+```r
+source("density_plots.R")
+plot_density(
+  flow_frames  = my_frames,
+  sample_names = c("S1", "S2", "S3"),
+  markers      = c("CD3", "CD4", "CD8"),
+  output_dir   = "/output/density",
+  plot_type    = "both"
+)
+# Creates: density_CD3.png, ridge_CD3.png, density_CD4.png, ridge_CD4.png, ...
+```
 
-`io_utils`, `flowframe_utils` (`explore_data`)
+### Dependencies
+
+`io_utils`, `flowframe_utils`. Ridge plots use `ggridges`.
 
 ---
 
@@ -89,15 +190,9 @@ plot_heatmap(expr_matrix, output_path,
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `expr_matrix` | matrix | *required* | Numeric matrix (rows = observations, columns = markers) |
-| `output_path` | character | *required* | Full path for the output image |
-| `title` | character | `"Expression Heatmap"` | Plot title |
-| `cluster_rows` | logical | `TRUE` | Hierarchically cluster rows |
-| `cluster_cols` | logical | `TRUE` | Hierarchically cluster columns |
-| `scale` | character | `"row"` | Scale data by `"row"`, `"column"`, or `"none"` |
-| `color_palette` | character vector | `NULL` | Custom color palette; `NULL` uses default |
-| `width` | numeric | `10` | Output width in inches |
-| `height` | numeric | `8` | Output height in inches |
+| `expr_matrix` | matrix | *required* | Numeric matrix (rows = features, columns = observations) |
+| `output_path` | character | *required* | Full path for output image |
+| `scale` | character | `"row"` | Scale by `"row"`, `"column"`, or `"none"` |
 
 #### plot_cluster_heatmap
 
@@ -106,15 +201,29 @@ plot_cluster_heatmap(expr_data, cluster_col, marker_cols,
                      output_path, title = "Cluster Expression")
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `expr_data` | data.frame | *required* | Expression data with a cluster column |
-| `cluster_col` | character | *required* | Name of the cluster column |
-| `marker_cols` | character vector | *required* | Names of marker columns |
-| `output_path` | character | *required* | Full path for the output image |
-| `title` | character | `"Cluster Expression"` | Plot title |
+Computes **median expression** per cluster for each marker, then calls `plot_heatmap()`.
 
-Calculates the **median expression** per cluster for each marker, then calls `plot_heatmap()`.
+### Example
+
+```r
+source("heatmaps.R")
+
+# Raw expression heatmap (sampled cells)
+plot_heatmap(
+  expr_matrix = t(expr_matrix[1:500, ]),
+  output_path = "/output/expression_heatmap.png",
+  title       = "Expression Heatmap",
+  scale       = "row"
+)
+
+# Cluster-level summary heatmap
+plot_cluster_heatmap(
+  expr_data   = clustered_df,
+  cluster_col = "cluster",
+  marker_cols = c("CD3", "CD4", "CD8", "CD19"),
+  output_path = "/output/cluster_heatmap.png"
+)
+```
 
 ### Packages
 
@@ -126,7 +235,7 @@ Calculates the **median expression** per cluster for each marker, then calls `pl
 
 Performs PCA and generates scatter plots of components plus loadings plots.
 
-### Main Function
+### Function
 
 ```r
 plot_pca(expr_matrix, sample_labels = NULL, output_dir,
@@ -135,119 +244,58 @@ plot_pca(expr_matrix, sample_labels = NULL, output_dir,
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `expr_matrix` | matrix | *required* | Cells-by-markers expression matrix |
-| `sample_labels` | character vector | `NULL` | Sample label per cell for coloring |
+| `expr_matrix` | matrix | *required* | Cells × markers matrix |
+| `sample_labels` | character vector | `NULL` | Sample label per cell |
 | `output_dir` | character | *required* | Output directory |
-| `n_components` | integer | `2` | Number of principal components |
-| `color_by` | character | `"sample"` | Variable to color points by |
-| `title` | character | `"PCA"` | Plot title |
+| `n_components` | integer | `2` | Number of PCs |
 
-### Output
-
-| File | Description |
-|------|-------------|
-| `pca_plot.{pdf,png,svg}` | PCA scatter plot (PC1 vs PC2) |
-| `pca_loadings.{pdf,png,svg}` | Variable loadings plot |
-
-### Return Value
+### Returns
 
 ```r
 list(
-  pca_result    = prcomp(),   # PCA result object
-  scatter_plot  = ggplot(),   # PCA scatter plot
-  loadings_plot = ggplot()    # Loadings plot
+  pca_result    = prcomp(),
+  scatter_plot  = ggplot(),
+  loadings_plot = ggplot()
 )
 ```
 
-### src/R_shared Dependencies
+### Generated Files
+
+| File | Description |
+|------|-------------|
+| `pca_plot.png` | PCA scatter plot (PC1 vs PC2) |
+| `pca_loadings.png` | Variable loadings plot |
+
+### Dependencies
 
 `io_utils`, `stats_utils` (`run_pca`), `plot_utils` (`save_plot_formats`)
 
 ---
 
-## umap.R
-
-Computes UMAP embeddings and generates per-sample and per-marker overlay plots.
-
-### Main Function
-
-```r
-plot_umap(flow_frames, sample_names, markers_of_interest = NULL,
-          output_dir, n_neighbors = 15, min_dist = 0.1,
-          marker_selection_mode = "all",
-          output_formats = list(pdf = FALSE, png = TRUE, svg = FALSE),
-          plot_width = 8, plot_height = 6, seed = 42)
-```
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `flow_frames` | list | *required* | Named list of flowFrame objects |
-| `sample_names` | character vector | *required* | Sample identifiers |
-| `markers_of_interest` | character vector | `NULL` | Markers for UMAP computation; `NULL` uses all |
-| `output_dir` | character | *required* | Output directory |
-| `n_neighbors` | integer | `15` | UMAP nearest neighbors parameter |
-| `min_dist` | numeric | `0.1` | UMAP minimum distance parameter |
-| `marker_selection_mode` | character | `"all"` | `"all"` or `"interactive"` |
-| `output_formats` | list | `list(pdf=FALSE, png=TRUE, svg=FALSE)` | Which formats to save |
-| `plot_width` | numeric | `8` | Plot width in inches |
-| `plot_height` | numeric | `6` | Plot height in inches |
-| `seed` | integer | `42` | Random seed for reproducibility |
-
-### Output
-
-| File | Description |
-|------|-------------|
-| `umap_sample.png` | UMAP colored by sample identity |
-| `umap_{marker}.png` | UMAP colored by marker expression (viridis scale), one per marker |
-
-### Return Value
-
-```r
-list(
-  umap_coords   = matrix(),  # N x 2 UMAP coordinates
-  sample_labels = character(), # Sample label per cell
-  plots         = list()      # Named list of ggplot objects
-)
-```
-
-### src/R_shared Dependencies
-
-`io_utils`, `gui_utils`, `plot_utils`, `stats_utils` (`run_umap`), `flowframe_utils` (`explore_data`)
-
----
-
 ## upset_plots.R
 
-Creates UpSet plots for visualizing intersections of multiple sets.
+Creates UpSet plots for visualizing intersections of multiple sets. Used by Pipeline D.
 
 ### Functions
-
-#### plot_upset
 
 ```r
 plot_upset(data, set_columns, output_path,
            title = "UpSet Plot", min_size = 1)
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `data` | data.frame | *required* | Binary matrix (rows = elements, columns = sets) |
-| `set_columns` | character vector | *required* | Column names representing sets |
-| `output_path` | character | *required* | Full path for the output image |
-| `title` | character | `"UpSet Plot"` | Plot title |
-| `min_size` | integer | `1` | Minimum intersection size to display |
-
-#### plot_upset_from_list
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `data` | data.frame | Binary matrix (rows = elements, columns = sets) |
+| `set_columns` | character vector | Column names representing sets |
+| `output_path` | character | Output image path |
 
 ```r
 plot_upset_from_list(sets, output_path, title = "UpSet Plot")
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `sets` | named list | *required* | Named list of character vectors (set elements) |
-| `output_path` | character | *required* | Full path for the output image |
-| `title` | character | `"UpSet Plot"` | Plot title |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `sets` | named list | Named list of character vectors (set elements) |
 
 ### Packages
 
@@ -257,56 +305,43 @@ plot_upset_from_list(sets, output_path, title = "UpSet Plot")
 
 ## venn_diagrams.R
 
-Creates Venn diagrams and area-proportional Euler diagrams for comparing sets.
+Creates Venn diagrams and area-proportional Euler diagrams for comparing sets. Used by Pipeline D.
 
 ### Functions
-
-#### plot_euler
 
 ```r
 plot_euler(sets, output_dir, filename, custom_name = NULL)
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `sets` | named list | *required* | Named list of character vectors |
-| `output_dir` | character | *required* | Output directory |
-| `filename` | character | *required* | Base filename (without extension) |
-| `custom_name` | character | `NULL` | Custom title; `NULL` uses `filename` |
-
-Generates an area-proportional Euler diagram using the `eulerr` package.
-
-#### plot_venn
+Area-proportional Euler diagram using `eulerr`.
 
 ```r
 plot_venn(sets, filename, output_dir)
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `sets` | named list | *required* | Named list of character vectors |
-| `filename` | character | *required* | Base filename |
-| `output_dir` | character | *required* | Output directory |
-
-Generates a non-proportional Venn diagram using the `venn` package.
-
-#### plot_and_save_venn
+Non-proportional Venn diagram using `venn`.
 
 ```r
 plot_and_save_venn(lists, population, filename, output_dir,
                    scale_size = FALSE, custom_name = NULL)
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `lists` | data.frame | *required* | Binary matrix (columns = sets, rows = elements) |
-| `population` | character | *required* | Population name to filter by |
-| `filename` | character | *required* | Base filename |
-| `output_dir` | character | *required* | Output directory |
-| `scale_size` | logical | `FALSE` | If `TRUE`, use Euler (proportional); if `FALSE`, use Venn |
-| `custom_name` | character | `NULL` | Custom plot title |
+Convenience wrapper: filters binary matrix by population, dispatches to `plot_euler()` or `plot_venn()` based on `scale_size`.
 
-Filters the binary matrix by the specified population, then dispatches to `plot_euler()` or `plot_venn()` based on `scale_size`.
+### Example
+
+```r
+source("venn_diagrams.R")
+
+sets <- list(
+  "Analyst A" = c("cell_1", "cell_2", "cell_3", "cell_4"),
+  "Analyst B" = c("cell_2", "cell_3", "cell_5", "cell_6"),
+  "Analyst C" = c("cell_1", "cell_3", "cell_5", "cell_7")
+)
+
+plot_euler(sets, output_dir = "/output/venn", filename = "CD4_overlap")
+# Creates: CD4_overlap.png — area-proportional Euler diagram
+```
 
 ### Packages
 
