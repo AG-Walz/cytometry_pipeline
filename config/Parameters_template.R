@@ -80,6 +80,31 @@ params <- list(
   exclude_patterns = c("^AI_Cluster_", "^Unlabeled_\\d+", "^Clustering raw$"),
   cytolution_metadata_file = NULL,  # Path to metadata CSV for grouped abundance plots
 
+  # ========================= Method Selection =================================
+  clustering_method   = "leiden",       # "leiden", "flowsom", "phenograph", "dbscan"
+  batch_method        = "none",         # "harmony", "cytonorm", "combat", "none"
+  dimred_method       = "umap",         # "umap", "tsne", "diffusion_map"
+
+  # Clustering-specific
+  n_clusters          = 20,             # FlowSOM meta-clusters
+  grid_xdim           = 10,             # FlowSOM SOM grid
+  grid_ydim           = 10,
+  dbscan_eps          = NULL,           # DBSCAN eps (NULL = auto)
+  dbscan_min_pts      = 5,
+
+  # Batch correction-specific
+  batch_do_pca        = FALSE,          # Harmony: run PCA before correction
+  cytonorm_train_indices = NULL,        # CytoNorm: NULL = use all frames
+  cytonorm_n_clusters = 10,
+  combat_method       = "parametric",   # ComBat: "parametric" or "nonparametric"
+
+  # DimRed-specific
+  umap_min_dist       = 0.1,
+  tsne_perplexity     = 30,
+  tsne_max_iter       = 1000,
+  dm_n_components     = 3,
+  dm_sigma            = "local",
+
   # ========================= Seed ============================================
   seed = 42
 )

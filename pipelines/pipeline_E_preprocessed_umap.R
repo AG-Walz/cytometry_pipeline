@@ -19,6 +19,7 @@ if (!is.null(config_file)) {
 
 base_dir <- dirname(getwd())
 shared_dir <- file.path(base_dir, "src", "R_shared")
+if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "flowframe_utils.R"))
 
@@ -53,35 +54,47 @@ downsampled <- downsample_flowframes(
   seed         = params$seed
 )
 
-# Step 4: Build combined expression matrix + Clustering + UMAP
-cat("\n--- Step 4: Leiden Clustering + UMAP ---\n")
+# Step 4: Build combined expression matrix + Clustering
+cat("\n--- Step 4: Clustering ---\n")
 source(file.path(base_dir, "src", "clustering", "leiden.R"))
+source(file.path(shared_dir, "clustering_dispatch.R"))
 
 expr_data <- build_combined_expr_matrix(
   downsampled, flow_data$sample_names, params$markers_of_interest
 )
-clusters <- run_leiden_with_umap(
-  expr_matrix   = expr_data$combined_matrix,
-  sample_labels = expr_data$sample_labels,
-  output_dir    = file.path(params$output_dir, "02_clustering"),
-  n_neighbors   = params$n_neighbors,
-  resolution    = params$resolution,
-  seed          = params$seed
+cluster_ids <- run_clustering(
+  expr_matrix = expr_data$combined_matrix,
+  method      = params$clustering_method %||% "leiden",
+  params      = list(
+    n_neighbors = params$n_neighbors, resolution = params$resolution,
+    n_clusters = params$n_clusters, grid_xdim = params$grid_xdim,
+    grid_ydim = params$grid_ydim, k = params$n_neighbors,
+    dbscan_eps = params$dbscan_eps, dbscan_min_pts = params$dbscan_min_pts,
+    seed = params$seed
+  )
 )
 
-# Step 5: UMAP visualization
-cat("\n--- Step 5: UMAP Visualization ---\n")
-source(file.path(base_dir, "src", "visualization", "umap.R"))
-plot_umap(
-  flow_frames         = downsampled,
-  sample_names        = flow_data$sample_names,
-  markers_of_interest = params$markers_of_interest,
-  output_dir          = file.path(params$output_dir, "03_visualization"),
-  n_neighbors         = params$n_neighbors,
-  output_formats      = params$output_formats,
-  plot_width          = params$plot_width,
-  plot_height         = params$plot_height,
-  seed                = params$seed
+# Step 5: Visualization
+cat("\n--- Step 5: Visualization ---\n")
+source(file.path(shared_dir, "dimred_dispatch.R"))
+dimred_result <- run_dimred(
+  expr_matrix    = expr_data$combined_matrix,
+  method         = params$dimred_method %||% "umap",
+  sample_labels  = expr_data$sample_labels,
+  cluster_labels = cluster_ids,
+  output_dir     = file.path(params$output_dir, "03_visualization"),
+  params         = list(
+    n_neighbors     = params$n_neighbors,
+    umap_min_dist   = params$umap_min_dist,
+    tsne_perplexity = params$tsne_perplexity,
+    tsne_max_iter   = params$tsne_max_iter,
+    dm_n_components = params$dm_n_components,
+    dm_sigma        = params$dm_sigma,
+    output_formats  = params$output_formats,
+    plot_width      = params$plot_width,
+    plot_height     = params$plot_height,
+    seed            = params$seed
+  )
 )
 
 elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))

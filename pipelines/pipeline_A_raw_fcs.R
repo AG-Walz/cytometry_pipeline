@@ -22,6 +22,7 @@ if (!is.null(config_file)) {
 # --- Source shared modules ---
 base_dir <- dirname(getwd())
 shared_dir <- file.path(base_dir, "src", "R_shared")
+if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "memory_utils.R"))
 source(file.path(shared_dir, "flowframe_utils.R"))
@@ -55,6 +56,31 @@ homogenized <- homogenize_flowframes(
   output_dir          = file.path(params$output_dir, "02_harmonization")
 )
 
+# Step 3b: Optional batch correction
+if ((params$batch_method %||% "none") != "none") {
+  cat("\n--- Step 3b: Batch Correction ---\n")
+  source(file.path(shared_dir, "batch_correction_dispatch.R"))
+  batch_result <- run_batch_correction_dispatch(
+    data                = homogenized,
+    method              = params$batch_method,
+    batch_labels        = params$batch_names,
+    markers_of_interest = params$markers_of_interest,
+    sample_names        = flow_data$sample_names,
+    params              = list(
+      batch_do_pca           = params$batch_do_pca,
+      combat_method          = params$combat_method,
+      cytonorm_train_indices = params$cytonorm_train_indices,
+      cytonorm_n_clusters    = params$cytonorm_n_clusters,
+      seed                   = params$seed
+    )
+  )
+  cat("Batch correction complete. Using corrected data.\n")
+  # If corrected frames are available (CytoNorm), use them for downsampling
+  if (!is.null(batch_result$corrected_frames)) {
+    homogenized <- batch_result$corrected_frames
+  }
+}
+
 # Step 4: Downsampling
 cat("\n--- Step 4: Downsampling ---\n")
 source(file.path(base_dir, "src", "preprocessing", "downsampling.R"))
@@ -69,18 +95,24 @@ downsampled <- downsample_flowframes(
 # Step 5: Build combined expression matrix + clustering
 cat("\n--- Step 5: Clustering ---\n")
 source(file.path(base_dir, "src", "clustering", "leiden.R"))
+source(file.path(shared_dir, "clustering_dispatch.R"))
 
 expr_data <- build_combined_expr_matrix(
   downsampled, flow_data$sample_names, params$markers_of_interest
 )
-clusters <- run_leiden_with_umap(
-  expr_matrix   = expr_data$combined_matrix,
-  sample_labels = expr_data$sample_labels,
-  output_dir    = file.path(params$output_dir, "03_clustering"),
-  n_neighbors   = params$n_neighbors,
-  resolution    = params$resolution,
-  seed          = params$seed
+cluster_ids <- run_clustering(
+  expr_matrix = expr_data$combined_matrix,
+  method      = params$clustering_method %||% "leiden",
+  params      = list(
+    n_neighbors = params$n_neighbors, resolution = params$resolution,
+    n_clusters = params$n_clusters, grid_xdim = params$grid_xdim,
+    grid_ydim = params$grid_ydim, k = params$n_neighbors,
+    dbscan_eps = params$dbscan_eps, dbscan_min_pts = params$dbscan_min_pts,
+    seed = params$seed
+  )
 )
+# Build a clusters data.frame for backward compatibility
+clusters <- data.frame(cluster = cluster_ids)
 
 # Step 6: Convert clusters to gating CSVs + statistical analysis
 cat("\n--- Step 6: Statistical Analysis ---\n")
@@ -118,17 +150,25 @@ tryCatch({
 
 # Step 7: Visualization
 cat("\n--- Step 7: Visualization ---\n")
-source(file.path(base_dir, "src", "visualization", "umap.R"))
-plot_umap(
-  flow_frames         = downsampled,
-  sample_names        = flow_data$sample_names,
-  markers_of_interest = params$markers_of_interest,
-  output_dir          = file.path(params$output_dir, "05_visualization"),
-  n_neighbors         = params$n_neighbors,
-  output_formats      = params$output_formats,
-  plot_width          = params$plot_width,
-  plot_height         = params$plot_height,
-  seed                = params$seed
+source(file.path(shared_dir, "dimred_dispatch.R"))
+dimred_result <- run_dimred(
+  expr_matrix      = expr_data$combined_matrix,
+  method           = params$dimred_method %||% "umap",
+  sample_labels    = expr_data$sample_labels,
+  cluster_labels   = cluster_ids,
+  output_dir       = file.path(params$output_dir, "05_visualization"),
+  params           = list(
+    n_neighbors     = params$n_neighbors,
+    umap_min_dist   = params$umap_min_dist,
+    tsne_perplexity = params$tsne_perplexity,
+    tsne_max_iter   = params$tsne_max_iter,
+    dm_n_components = params$dm_n_components,
+    dm_sigma        = params$dm_sigma,
+    output_formats  = params$output_formats,
+    plot_width      = params$plot_width,
+    plot_height     = params$plot_height,
+    seed            = params$seed
+  )
 )
 
 elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))

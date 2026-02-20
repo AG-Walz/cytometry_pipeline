@@ -36,6 +36,11 @@ params <- list(
   downsample_method = "Consistent",
   downsample_n      = 100,
 
+  # ========================= Method Selection =================================
+  clustering_method = "leiden",         # "leiden", "flowsom", "phenograph", "dbscan"
+  batch_method      = "none",           # "harmony", "cytonorm", "combat", "none"
+  dimred_method     = "umap",           # "umap", "tsne", "diffusion_map"
+
   # ========================= Clustering (Leiden) =============================
   n_neighbors = 15,
   resolution  = 0.5,
