@@ -19,41 +19,15 @@ If your FCS files have already been QC'd and transformed, use [Pipeline E](pipel
 
 ---
 
-## Pipeline Flow
+## Pipeline Steps
 
-```
-  .fcs files (one per sample)
-       │
-       ▼
-  ┌─────────────────────────┐
-  │ 1. load_fcs_raw()       │  Read FCS files into flowFrame objects
-  └─────────┬───────────────┘
-            ▼
-  ┌─────────────────────────┐
-  │ 2. run_preprocessing()  │  QC (PeacoQC/flowAI) + arcsinh/logicle transform
-  └─────────┬───────────────┘
-            ▼
-  ┌──────────────────────────────┐
-  │ 3. homogenize_flowframes()   │  Rename markers, reorder to common panel
-  └─────────┬────────────────────┘
-            ▼
-  ┌──────────────────────────────┐
-  │ 4. downsample_flowframes()   │  Reduce to N cells per sample
-  └─────────┬────────────────────┘
-            ▼
-  ┌──────────────────────────────┐
-  │ 5. run_leiden_with_umap()    │  KNN graph → Leiden communities + UMAP embedding
-  └─────────┬────────────────────┘
-            ▼
-  ┌───────────────────────────────────────────┐
-  │ 6. split_by_cluster()                     │  Per-cluster CSVs + tracking matrix
-  │    run_differential_abundance()           │  NB-GLMM between conditions
-  └─────────┬─────────────────────────────────┘
-            ▼
-  ┌─────────────────────────┐
-  │ 7. plot_umap()          │  UMAP plots per sample + per marker
-  └─────────────────────────┘
-```
+1. **`load_fcs_raw()`** — Read FCS files into flowFrame objects
+2. **`run_preprocessing()`** — QC (PeacoQC/flowAI) + arcsinh/logicle transform
+3. **`homogenize_flowframes()`** — Rename markers, reorder to common panel
+4. **`downsample_flowframes()`** — Reduce to N cells per sample
+5. **`run_leiden_with_umap()`** — KNN graph, Leiden communities, UMAP embedding
+6. **`split_by_cluster()`** + **`run_differential_abundance()`** — Per-cluster CSVs, tracking matrix, NB-GLMM between conditions
+7. **`plot_umap()`** — UMAP plots per sample + per marker
 
 ---
 

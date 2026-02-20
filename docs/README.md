@@ -27,6 +27,9 @@ If you are **looking for a specific utility function** (CSV I/O, memory manageme
 | Document | What You'll Learn |
 |----------|-------------------|
 | [Getting Started](getting-started.md) | How to install the environment, understand the project layout, write your first config, and run a pipeline end-to-end |
+| [Configuration Guide](configuration.md) | How to create config files, key parameters for each pipeline, standalone script configs |
+| [File Formats](file-formats.md) | Input and output format specifications for all pipelines (FCS, CSV, WSP, plots) |
+| [Standalone Scripts](standalone-scripts.md) | Using individual module functions outside of pipelines, with signatures and examples |
 | [R_shared API Reference](r-shared-reference.md) | Complete function reference for all 8 shared utility modules (io, gui, memory, cluster, plot, flowframe, fcs, stats) |
 
 ### Pipeline Guides
@@ -43,24 +46,13 @@ Each pipeline guide is a self-contained walkthrough. It shows you what input the
 
 ### Deciding Which Pipeline to Use
 
-```
-What is your input data?
-│
-├─ Raw .fcs files (unprocessed, straight from the cytometer)
-│  └─> Pipeline A — full analysis from scratch
-│
-├─ Preprocessed .fcs files (already QC'd and transformed)
-│  └─> Pipeline E — skip preprocessing, go straight to clustering
-│
-├─ CSV files with expression columns only (no gating)
-│  └─> Pipeline B — marker statistics + visualization
-│
-├─ CSV files with binary gating/clustering columns (Cytolution export)
-│  └─> Pipeline C — cluster splitting + differential abundance
-│
-└─ FlowJo .wsp workspace files (multiple analysts)
-   └─> Pipeline D — inter-rater gating comparison
-```
+| Your Input Data | Pipeline |
+|-----------------|----------|
+| Raw `.fcs` files (unprocessed, straight from the cytometer) | **Pipeline A** — full analysis from scratch |
+| Preprocessed `.fcs` files (already QC'd and transformed) | **Pipeline E** — skip preprocessing, go straight to clustering |
+| CSV files with expression columns only (no gating) | **Pipeline B** — marker statistics + visualization |
+| CSV files with binary gating/clustering columns (Cytolution export) | **Pipeline C** — cluster splitting + differential abundance |
+| FlowJo `.wsp` workspace files (multiple analysts) | **Pipeline D** — inter-rater gating comparison |
 
 ### Subproject References
 
@@ -99,6 +91,9 @@ cytometry/
 ├── docs/                     Documentation (you are here)
 │   ├── README.md                 This index page
 │   ├── getting-started.md        First-time setup and walkthrough
+│   ├── configuration.md          Config creation and parameter reference
+│   ├── file-formats.md           Input/output format specifications
+│   ├── standalone-scripts.md     Using modules outside of pipelines
 │   ├── r-shared-reference.md     Shared utility API (8 modules, 50+ functions)
 │   ├── pipelines/                Per-pipeline deep-dive guides
 │   │   ├── pipeline-A-raw-fcs.md

@@ -452,15 +452,7 @@ For function signatures and parameter documentation, see the relevant [subprojec
 
 Standard FCS 3.0/3.1 files from any flow cytometer. The pipeline reads marker names from the `$PnS` keywords in the FCS header.
 
-```
-                    ┌──────────────────────────────────────┐
-                    │         FCS File Structure           │
-                    ├──────────────────────────────────────┤
-                    │ HEADER  ($BEGINDATA, $ENDDATA, ...)  │
-                    │ TEXT    ($PnN, $PnS, $TOT, $DATE)    │
-                    │ DATA    (expression matrix)          │
-                    └──────────────────────────────────────┘
-```
+An FCS file contains three segments: `HEADER` (byte offsets like `$BEGINDATA`, `$ENDDATA`), `TEXT` (keyword-value pairs like `$PnN`, `$PnS`, `$TOT`, `$DATE`), and `DATA` (the expression matrix).
 
 Key keywords the pipeline uses:
 

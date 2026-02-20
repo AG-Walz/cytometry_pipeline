@@ -21,24 +21,11 @@ If your CSVs also contain binary gating columns (0/1), use [Pipeline C](pipeline
 
 ---
 
-## Pipeline Flow
+## Pipeline Steps
 
-```
-  CSV files (one per sample × population)
-       │
-       ▼
-  ┌────────────────────────────┐
-  │ 1. load_csv_expression()   │  Read CSVs, auto-detect separator
-  └─────────┬──────────────────┘
-            ▼
-  ┌────────────────────────────┐
-  │ 2. run_marker_statistics() │  Per-marker lmer: mean, variance, ICC
-  └─────────┬──────────────────┘
-            ▼
-  ┌────────────────────────────┐
-  │ 3. plot_heatmap()          │  Clustered expression heatmap (pheatmap)
-  └────────────────────────────┘
-```
+1. **`load_csv_expression()`** — Read CSVs, auto-detect separator
+2. **`run_marker_statistics()`** — Per-marker lmer: mean, variance, ICC
+3. **`plot_heatmap()`** — Clustered expression heatmap (pheatmap)
 
 ---
 

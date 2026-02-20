@@ -21,26 +21,11 @@ Pipeline D requires **real FlowJo workspace files** and matching FCS data. It ca
 
 ---
 
-## Pipeline Flow
+## Pipeline Steps
 
-```
-  .wsp files (one per analyst)  +  shared .fcs files
-       │
-       ▼
-  ┌────────────────────────────────────────┐
-  │ 1. Loop: load_flowjo_wsp()            │  Extract gating sets from each WSP
-  │         get_population_strings_list()  │  Get per-event population labels
-  └─────────┬──────────────────────────────┘
-            ▼
-  ┌────────────────────────────┐
-  │ 2. compare_gatings()       │  Align populations across workspaces
-  │                            │  Generate Venn/Euler per population
-  └─────────┬──────────────────┘
-            ▼
-  ┌────────────────────────────┐
-  │ 3. compute_fleiss_kappa()  │  Inter-rater agreement statistics
-  └────────────────────────────┘
-```
+1. **`load_flowjo_wsp()`** + **`get_population_strings_list()`** — Extract gating sets from each WSP, get per-event population labels
+2. **`compare_gatings()`** — Align populations across workspaces, generate Venn/Euler per population
+3. **`compute_fleiss_kappa()`** — Inter-rater agreement statistics
 
 ---
 

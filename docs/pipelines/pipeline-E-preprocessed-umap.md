@@ -19,32 +19,13 @@ If your FCS files are raw and unprocessed, use [Pipeline A](pipeline-A-raw-fcs.m
 
 ---
 
-## Pipeline Flow
+## Pipeline Steps
 
-```
-  Preprocessed .fcs files
-       │
-       ▼
-  ┌─────────────────────────┐
-  │ 1. load_fcs_raw()       │  Load FCS (truncation=FALSE, no QC)
-  └─────────┬───────────────┘
-            ▼
-  ┌──────────────────────────────┐
-  │ 2. homogenize_flowframes()   │  Unify marker panels across files
-  └─────────┬────────────────────┘
-            ▼
-  ┌──────────────────────────────┐
-  │ 3. downsample_flowframes()   │  Reduce cell count for tractability
-  └─────────┬────────────────────┘
-            ▼
-  ┌──────────────────────────────┐
-  │ 4. run_leiden_with_umap()    │  KNN graph → Leiden clusters + UMAP
-  └─────────┬────────────────────┘
-            ▼
-  ┌─────────────────────────┐
-  │ 5. plot_umap()          │  UMAP per sample + per marker
-  └─────────────────────────┘
-```
+1. **`load_fcs_raw()`** — Load FCS files (truncation=FALSE, no QC applied)
+2. **`homogenize_flowframes()`** — Unify marker panels across files
+3. **`downsample_flowframes()`** — Reduce cell count for tractability
+4. **`run_leiden_with_umap()`** — KNN graph, Leiden clusters, UMAP embedding
+5. **`plot_umap()`** — UMAP per sample + per marker
 
 ---
 

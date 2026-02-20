@@ -19,33 +19,13 @@ If your CSVs contain only expression columns (no gating), use [Pipeline B](pipel
 
 ---
 
-## Pipeline Flow
+## Pipeline Steps
 
-```
-  CSV + FCS file pairs (from Cytolution / manual gating)
-       │
-       ▼
-  ┌──────────────────────────────┐
-  │ 1. load_csv_gating()         │  Classify columns, split per population
-  └─────────┬────────────────────┘
-            ▼
-  ┌──────────────────────────────┐
-  │ 2. split_by_cluster()        │  Count cells per cluster per sample
-  └─────────┬────────────────────┘
-            ▼
-  ┌──────────────────────────────┐
-  │ 3. run_cluster_enrichment()  │  Fisher's exact / mixed-effects between conditions
-  └─────────┬────────────────────┘
-            ▼
-  ┌──────────────────────────────┐
-  │ 4. plot_composition_barplot()│  Cluster composition barplot
-  └─────────┬────────────────────┘
-            ▼
-  ┌──────────────────────────────┐
-  │ 5. build_tracking_matrix()   │  Abundance stacked / proportional / heatmap
-  │    plot_abundance()          │
-  └──────────────────────────────┘
-```
+1. **`load_csv_gating()`** — Classify columns, split per population
+2. **`split_by_cluster()`** — Count cells per cluster per sample
+3. **`run_cluster_enrichment()`** — Fisher's exact / mixed-effects between conditions
+4. **`plot_composition_barplot()`** — Cluster composition barplot
+5. **`build_tracking_matrix()`** + **`plot_abundance()`** — Abundance stacked, proportional, and heatmap plots
 
 ---
 
