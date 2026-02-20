@@ -22,8 +22,8 @@
 
 # ========================= EDIT THESE ========================================
 
-input_dir  <- "/path/to/expression/csvs"   # Directory with combined expression CSVs
-output_dir <- "/path/to/output/clusters"    # Per-cluster CSVs saved here
+input_dir <- "/path/to/expression/csvs" # Directory with combined expression CSVs
+output_dir <- "/path/to/output/clusters" # Per-cluster CSVs saved here
 
 # ========================= OPTIONAL ==========================================
 

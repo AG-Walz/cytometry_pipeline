@@ -26,12 +26,10 @@ source(file.path(shared_dir, "cluster_utils.R"))
 cat("\n--- Step 1: Loading FlowJo workspaces ---\n")
 source(file.path(base_dir, "src", "loading", "load_flowjo_wsp.R"))
 
-pop_strings_list <- list()
-for (i in seq_along(wsp_paths)) {
-  cat("Loading workspace:", wsp_paths[i], "\n")
-  wsp_data <- load_flowjo_wsp(wsp_path = wsp_paths[i])
-  pop_strings_list[[custom_name[i]]] <- get_population_strings_list(wsp_data)
-}
+pop_strings_list <- load_multiple_workspaces(
+  wsp_paths = wsp_paths,
+  names     = custom_name
+)
 
 # Step 2: Compare gatings
 cat("\n--- Step 2: Comparing gating strategies ---\n")
@@ -42,7 +40,7 @@ label_lists <- compare_gatings(
   label_dict = label_dict,
   custom_name = custom_name,
   output_dir = file.path(params$output_dir, "01_gating_comparison"),
-  idx_labels = if (exists("idx_labels")) idx_labels else NULL,
+  idx_labels = if (exists("idx_labels", inherits = FALSE)) idx_labels else NULL,
   scale_size = TRUE
 )
 

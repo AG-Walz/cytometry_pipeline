@@ -12,12 +12,8 @@
 #   source("src/loading/load_flowjo_wsp.R")
 #   source("src/metadata_qc/compare_gatings.R")
 #
-#   # Load each workspace
-#   pop_strings_list <- list()
-#   for (i in seq_along(wsp_paths)) {
-#     wsp <- load_flowjo_wsp(wsp_path = wsp_paths[i])
-#     pop_strings_list[[custom_name[i]]] <- get_population_strings_list(wsp)
-#   }
+#   # Load all workspaces
+#   pop_strings_list <- load_multiple_workspaces(wsp_paths, names = custom_name)
 #
 #   # Compare
 #   label_lists <- compare_gatings(

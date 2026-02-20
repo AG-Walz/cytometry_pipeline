@@ -41,27 +41,19 @@ stats_result <- run_marker_statistics(
 
 # Step 3: Visualization
 cat("\n--- Step 3: Visualization ---\n")
+source(file.path(base_dir, "src", "analysis", "expression_matrices.R"))
 source(file.path(base_dir, "src", "visualization", "heatmaps.R"))
 
-# Build a combined expression matrix for heatmap
-combined_list <- lapply(names(expr_data), function(nm) {
-  dt <- expr_data[[nm]]
-  marker_cols <- intersect(params$markers, names(dt))
-  if (length(marker_cols) > 0) {
-    as.matrix(dt[, ..marker_cols])
-  } else {
-    NULL
-  }
-})
-combined_list <- Filter(Negate(is.null), combined_list)
-if (length(combined_list) > 0) {
-  combined_matrix <- do.call(rbind, combined_list)
-
-  # Mean expression per marker for a summary heatmap
+combined_matrix <- combine_expression_matrices(
+  expr_data_list = expr_data,
+  markers        = params$markers,
+  max_cells      = 500
+)
+if (!is.null(combined_matrix)) {
   viz_dir <- file.path(params$output_dir, "02_visualization")
   make_outdir(viz_dir)
   plot_heatmap(
-    expr_matrix = t(combined_matrix[sample(nrow(combined_matrix), min(500, nrow(combined_matrix))), ]),
+    expr_matrix = t(combined_matrix),
     output_path = file.path(viz_dir, "expression_heatmap.png"),
     title       = "Expression Heatmap (sampled cells)"
   )

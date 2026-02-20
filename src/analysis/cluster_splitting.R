@@ -15,6 +15,13 @@ source(file.path(shared_dir, "memory_utils.R"))
 
 #' Split cells by cluster assignment into separate CSV files
 #'
+#' Input from: clusters_to_gating_csv() (clustering/leiden.R),
+#'             load_csv_gating() (loading/load_csv_gating.R)
+#' Output to:  tracking_matrix_to_long() (this file),
+#'             run_cluster_enrichment() (analysis/cluster_enrichment.R),
+#'             run_differential_abundance() (analysis/differential_abundance.R),
+#'             create_expression_matrices() (analysis/expression_matrices.R)
+#'
 #' @param input_dir Directory with per-cell CSV files
 #' @param output_dir Directory for cluster-split output files
 #' @param cluster_regex Regex to identify cluster columns
@@ -141,6 +148,32 @@ split_by_cluster <- function(input_dir,
     output_files = output_files,
     markers_used = markers_of_interest
   )
+}
+
+#' Convert a wide tracking matrix to long format for plotting
+#'
+#' Pivots a sample-by-cluster tracking matrix from wide format (one column
+#' per cluster) to long format (one row per sample-cluster combination).
+#'
+#' Input from: split_by_cluster() (this file),
+#'             build_tracking_matrix() (analysis/abundance_plotting.R)
+#' Output to:  plot_composition_barplot() (visualization/barplots.R)
+#'
+#' @param tracking_matrix Data frame with an ID column and one numeric column per cluster
+#' @param id_col Name of the ID column (default "file")
+#' @param names_to Name for the cluster column in output (default "cluster")
+#' @param values_to Name for the count column in output (default "count")
+#' @return Data frame in long format with columns: id_col, names_to, values_to
+tracking_matrix_to_long <- function(tracking_matrix, id_col = "file",
+                                     names_to = "cluster", values_to = "count") {
+  require(tidyr)
+  long_data <- tidyr::pivot_longer(
+    tracking_matrix,
+    cols = -dplyr::all_of(id_col),
+    names_to = names_to,
+    values_to = values_to
+  )
+  as.data.frame(long_data)
 }
 
 # --- CLI execution ---

@@ -11,6 +11,9 @@ source(file.path(shared_dir, "plot_utils.R"))
 
 #' Create expression heatmap from a matrix
 #'
+#' Input from: combine_expression_matrices() (analysis/expression_matrices.R),
+#'             create_expression_matrices() (analysis/expression_matrices.R)
+#'
 #' @param expr_matrix Numeric matrix (rows = clusters/samples, cols = markers)
 #' @param output_path Output file path
 #' @param title Heatmap title
@@ -38,6 +41,9 @@ plot_heatmap <- function(expr_matrix, output_path,
   # Handle Inf/NaN
   expr_matrix[is.infinite(expr_matrix)] <- NA
   expr_matrix[is.nan(expr_matrix)] <- NA
+
+  # Ensure output directory exists
+  make_outdir(dirname(output_path))
 
   # Strip extension from output_path to get base name
   filename_base <- sub("\\.[^.]+$", "", output_path)

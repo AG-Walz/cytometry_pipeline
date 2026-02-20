@@ -12,6 +12,17 @@ source(file.path(shared_dir, "flowframe_utils.R"))
 
 #' Create flowFrames from expression matrices
 #'
+#' Bridge function: converts matrix/data.frame data into flowFrame objects,
+#' enabling CSV expression data to flow into flowFrame-based scripts
+#' (e.g., plot_umap(), plot_density(), preprocessing).
+#'
+#' Input from: load_csv_expression() (loading/load_csv_expression.R),
+#'             combine_expression_matrices() (analysis/expression_matrices.R)
+#' Output to:  plot_umap() (visualization/umap.R),
+#'             plot_density() (visualization/density_plots.R),
+#'             homogenize_flowframes() (harmonization/panel_homogenization.R),
+#'             downsample_flowframes() (preprocessing/downsampling.R)
+#'
 #' @param expr_list Named list of expression matrices (or data.frames)
 #' @param markers_of_interest Character vector of marker names
 #' @param save_fcs Logical: save as FCS files

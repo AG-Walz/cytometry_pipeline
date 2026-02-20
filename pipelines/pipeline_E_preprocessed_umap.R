@@ -57,13 +57,12 @@ downsampled <- downsample_flowframes(
 cat("\n--- Step 4: Leiden Clustering + UMAP ---\n")
 source(file.path(base_dir, "src", "clustering", "leiden.R"))
 
-expr_list <- extract_exprmtx_list(downsampled, flow_data$sample_names, params$markers_of_interest)
-combined_matrix <- do.call(rbind, expr_list)
-sample_labels <- rep(names(expr_list), sapply(expr_list, nrow))
-
+expr_data <- build_combined_expr_matrix(
+  downsampled, flow_data$sample_names, params$markers_of_interest
+)
 clusters <- run_leiden_with_umap(
-  expr_matrix   = combined_matrix,
-  sample_labels = sample_labels,
+  expr_matrix   = expr_data$combined_matrix,
+  sample_labels = expr_data$sample_labels,
   output_dir    = file.path(params$output_dir, "02_clustering"),
   n_neighbors   = params$n_neighbors,
   resolution    = params$resolution,

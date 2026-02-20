@@ -75,6 +75,9 @@ get_population_stats <- function(gating_set, type = NULL) {
 
 #' Extract population string assignments for each cell
 #'
+#' Output to: load_multiple_workspaces() (this file),
+#'            compare_gatings() (metadata_qc/compare_gatings.R)
+#'
 #' @param gating_set A GatingSet object
 #' @param sample_names Character vector of sample names
 #' @return Named list of character vectors (one per sample)
@@ -116,4 +119,37 @@ save_population_strings <- function(population_strings_list, out_dir) {
   out_file <- file.path(out_dir, "population_strings_list.rds")
   saveRDS(population_strings_list, file = out_file)
   cat("Population strings saved to:", out_file, "\n")
+}
+
+#' Load population strings from multiple FlowJo workspaces
+#'
+#' Iterates over workspace paths, loads each with load_flowjo_wsp(), and
+#' extracts population string assignments using get_population_strings_list().
+#'
+#' Input from: .wsp files on disk
+#' Output to:  compare_gatings() (metadata_qc/compare_gatings.R),
+#'             compute_fleiss_kappa() (metadata_qc/overlap_statistics.R)
+#'
+#' @param wsp_paths Character vector of paths to .wsp files
+#' @param names Character vector of labels for each workspace (same length as wsp_paths)
+#' @param fcs_dirs Character vector of FCS directories (default: dirname of each wsp_path).
+#'   If length 1, recycled for all workspaces.
+#' @return Named list where each element is the population_strings_list for one workspace
+load_multiple_workspaces <- function(wsp_paths, names, fcs_dirs = NULL) {
+  stopifnot(length(wsp_paths) == length(names))
+  if (is.null(fcs_dirs)) fcs_dirs <- dirname(wsp_paths)
+  if (length(fcs_dirs) == 1) fcs_dirs <- rep(fcs_dirs, length(wsp_paths))
+
+  pop_strings_list <- list()
+  for (i in seq_along(wsp_paths)) {
+    cat("Loading workspace", i, "of", length(wsp_paths), ":", wsp_paths[i], "\n")
+    wsp_data <- load_flowjo_wsp(wsp_path = wsp_paths[i], fcs_dir = fcs_dirs[i])
+    pop_strings_list[[names[i]]] <- get_population_strings_list(
+      wsp_data$gating_set, wsp_data$sample_names
+    )
+  }
+
+  cat("Loaded", length(pop_strings_list), "workspaces:",
+      paste(names, collapse = ", "), "\n")
+  pop_strings_list
 }

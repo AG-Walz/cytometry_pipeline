@@ -12,6 +12,11 @@ source(file.path(shared_dir, "plot_utils.R"))
 
 #' Create PCA plots from expression data
 #'
+#' Input from: build_combined_expr_matrix() (R_shared/flowframe_utils.R),
+#'             combine_expression_matrices() (analysis/expression_matrices.R),
+#'             load_csv_expression() (loading/load_csv_expression.R)
+#' Output to:  standalone visualization output
+#'
 #' @param expr_matrix Numeric matrix (rows = cells, cols = markers)
 #' @param sample_labels Character vector of sample labels
 #' @param output_dir Output directory

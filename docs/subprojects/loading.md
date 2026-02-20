@@ -282,6 +282,38 @@ cat("Populations:", paste(ws$population_names, collapse = ", "), "\n")
 
 `io_utils`, `flowframe_utils`. Requires `flowWorkspace` and `CytoML` packages.
 
+### load_multiple_workspaces
+
+Batch-loads multiple FlowJo workspaces and extracts population strings from each. Wraps `load_flowjo_wsp()` and `get_population_strings_list()` in a loop, returning a named list ready for `compare_gatings()`.
+
+```r
+load_multiple_workspaces(wsp_paths, names, fcs_dirs = NULL)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `wsp_paths` | character vector | *required* | Paths to `.wsp` files |
+| `names` | character vector | *required* | Labels for each workspace (same length as `wsp_paths`) |
+| `fcs_dirs` | character vector | `NULL` | FCS directories per workspace; `NULL` uses `dirname()` of each `.wsp` |
+
+**Returns:** Named list of population string lists, one entry per workspace (keyed by `names`).
+
+#### Example
+
+```r
+source("load_flowjo_wsp.R")
+
+wsp_paths <- c("/data/analyst_A.wsp", "/data/analyst_B.wsp")
+names     <- c("AnalystA", "AnalystB")
+
+pop_strings_list <- load_multiple_workspaces(wsp_paths, names = names)
+# Loading workspace 1 of 2 : /data/analyst_A.wsp
+# Loading workspace 2 of 2 : /data/analyst_B.wsp
+# Loaded 2 workspaces: AnalystA, AnalystB
+```
+
+**Input from:** `.wsp` files. **Output to:** `compare_gatings()`
+
 ---
 
 ## load_manual_gating.R

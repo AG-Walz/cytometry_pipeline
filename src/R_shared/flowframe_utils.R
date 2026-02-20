@@ -48,10 +48,13 @@ compare_panels <- function(flowframes_list) {
 }
 
 #' Extract expression matrices from a list of flowFrames
+#'
+#' Output to: build_combined_expr_matrix() (this file)
+#'
 #' @param flow_frames_list List of flowFrame objects
 #' @param sample_names Character vector of sample names
 #' @param markers_of_interest Character vector of marker names to extract
-#' @return List of expression matrices
+#' @return Named list of expression matrices (one per sample)
 extract_exprmtx_list <- function(flow_frames_list, sample_names, markers_of_interest) {
   exprmtx_list <- list()
   for (i in seq_along(flow_frames_list)) {
@@ -70,6 +73,34 @@ extract_exprmtx_list <- function(flow_frames_list, sample_names, markers_of_inte
     }
   }
   exprmtx_list
+}
+
+#' Build a combined expression matrix with sample labels from flowFrames
+#'
+#' Calls extract_exprmtx_list() to get per-sample matrices, row-binds them,
+#' and creates a parallel sample-label vector tracking which sample each row
+#' belongs to.
+#'
+#' Input from: load_fcs_raw() (loading/load_fcs_raw.R),
+#'             downsample_flowframes() (preprocessing/downsampling.R),
+#'             homogenize_flowframes() (harmonization/panel_homogenization.R)
+#' Output to:  run_leiden_with_umap() (clustering/leiden.R),
+#'             clusters_to_gating_csv() (clustering/leiden.R),
+#'             plot_umap() (visualization/umap.R)
+#'
+#' @param flow_frames_list List of flowFrame objects
+#' @param sample_names Character vector of sample names
+#' @param markers_of_interest Character vector of marker names to extract
+#' @return List with components:
+#'   \item{combined_matrix}{Numeric matrix (cells x markers)}
+#'   \item{sample_labels}{Character vector of sample labels, one per row}
+build_combined_expr_matrix <- function(flow_frames_list, sample_names, markers_of_interest) {
+  expr_list <- extract_exprmtx_list(flow_frames_list, sample_names, markers_of_interest)
+  combined_matrix <- do.call(rbind, expr_list)
+  sample_labels <- rep(names(expr_list), sapply(expr_list, nrow))
+  cat("Combined matrix:", nrow(combined_matrix), "cells x",
+      ncol(combined_matrix), "markers from", length(expr_list), "samples\n")
+  list(combined_matrix = combined_matrix, sample_labels = sample_labels)
 }
 
 #' Generate cell IDs for a flowFrame

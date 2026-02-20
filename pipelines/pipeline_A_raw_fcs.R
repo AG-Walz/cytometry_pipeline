@@ -66,45 +66,31 @@ downsampled <- downsample_flowframes(
   seed         = params$seed
 )
 
-# Step 5: Build combined expression matrix for clustering
+# Step 5: Build combined expression matrix + clustering
 cat("\n--- Step 5: Clustering ---\n")
 source(file.path(base_dir, "src", "clustering", "leiden.R"))
 
-# Build combined matrix + sample labels from downsampled flowFrames
-expr_list <- extract_exprmtx_list(downsampled, flow_data$sample_names, params$markers_of_interest)
-combined_matrix <- do.call(rbind, expr_list)
-sample_labels <- rep(names(expr_list), sapply(expr_list, nrow))
-
+expr_data <- build_combined_expr_matrix(
+  downsampled, flow_data$sample_names, params$markers_of_interest
+)
 clusters <- run_leiden_with_umap(
-  expr_matrix   = combined_matrix,
-  sample_labels = sample_labels,
+  expr_matrix   = expr_data$combined_matrix,
+  sample_labels = expr_data$sample_labels,
   output_dir    = file.path(params$output_dir, "03_clustering"),
   n_neighbors   = params$n_neighbors,
   resolution    = params$resolution,
   seed          = params$seed
 )
 
-# Step 6: Save clustered data as CSVs for split_by_cluster (reads from directory)
+# Step 6: Convert clusters to gating CSVs + statistical analysis
 cat("\n--- Step 6: Statistical Analysis ---\n")
 cluster_data_dir <- file.path(params$output_dir, "04_analysis", "cluster_data")
-make_outdir(cluster_data_dir)
-
-clustered_df <- as.data.frame(combined_matrix)
-clustered_df$sample <- sample_labels
-clustered_df$cluster <- clusters$cluster
-
-# Write per-sample CSVs with gating-style binary columns
-for (sname in unique(sample_labels)) {
-  sdata <- clustered_df[clustered_df$sample == sname, ]
-  # Create binary cluster columns in "Clustering annotated" format
-  for (cl in unique(clusters$cluster)) {
-    col_name <- paste0("Cluster_", cl, " (Clustering annotated)")
-    sdata[[col_name]] <- as.integer(sdata$cluster == cl)
-  }
-  sdata$cluster <- NULL
-  sdata$sample <- NULL
-  data.table::fwrite(sdata, file.path(cluster_data_dir, paste0(sname, ".csv")), sep = ";")
-}
+clusters_to_gating_csv(
+  combined_matrix = expr_data$combined_matrix,
+  sample_labels   = expr_data$sample_labels,
+  cluster_ids     = clusters$cluster,
+  output_dir      = cluster_data_dir
+)
 
 source(file.path(base_dir, "src", "analysis", "cluster_splitting.R"))
 split_data <- split_by_cluster(

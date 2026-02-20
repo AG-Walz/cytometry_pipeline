@@ -270,6 +270,7 @@ FlowFrame and FlowSet manipulation utilities for working with flow cytometry dat
 | `explore_data` | `explore_data(flowframe)` | Extract marker metadata (dye names, marker names, marker-channel mapping) from a flowFrame object. | `list(dyes, markers, mcols)` |
 | `compare_panels` | `compare_panels(flowframes_list)` | Compare marker panels across a list of flowFrames to identify unique panel compositions. | `List of unique marker sets` |
 | `extract_exprmtx_list` | `extract_exprmtx_list(flow_frames_list, sample_names, markers_of_interest)` | Extract expression matrices from a list of flowFrames, subsetting to specified markers. | `Named list of expression matrices` |
+| `build_combined_expr_matrix` | `build_combined_expr_matrix(flow_frames_list, sample_names, markers_of_interest)` | Extract expression matrices from flowFrames, row-bind into a single combined matrix, and generate matching sample labels. | `list(combined_matrix, sample_labels)` |
 | `generate_cellID` | `generate_cellID(flowframe, sample_name)` | Generate unique cell identifiers by combining a sample name with sequential cell indices. | `Character vector` (e.g. `"sample_name_cell_1"`) |
 | `from_mtx_to_ffr` | `from_mtx_to_ffr(mtx, marker_names = NULL)` | Convert a numeric matrix into a flowFrame object. Optionally set marker names in the parameter description. | `flowFrame` |
 | `from_ffl_to_fSet` | `from_ffl_to_fSet(flow_frame_list, sample_names = NULL)` | Convert a list of flowFrame objects into a single flowSet. | `flowSet` |

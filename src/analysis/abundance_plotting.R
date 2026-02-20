@@ -20,6 +20,10 @@ source(file.path(shared_dir, "plot_utils.R"))
 
 #' Build a sample-by-cluster tracking matrix from CSVs
 #'
+#' Input from: clusters_to_gating_csv() (clustering/leiden.R),
+#'             load_csv_gating() (loading/load_csv_gating.R)
+#' Output to:  plot_abundance() (this file)
+#'
 #' @param input_dir Directory containing per-sample CSVs
 #' @param cluster_regex Regex to identify cluster columns
 #' @param exclude_patterns Character vector of regex patterns to exclude
@@ -266,6 +270,8 @@ plot_abundance_heatmap <- function(tracking_matrix, output_dir) {
 }
 
 #' Generate all abundance plots
+#'
+#' Input from: build_tracking_matrix() (this file)
 #'
 #' @param tracking_matrix_path Path to cluster_tracking_matrix.csv (semicolon-separated)
 #' @param output_dir Output directory

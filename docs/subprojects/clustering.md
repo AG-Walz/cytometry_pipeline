@@ -128,6 +128,49 @@ If reticulate uses the wrong Python: `export RETICULATE_PYTHON=/path/to/python`
 
 `io_utils`, `stats_utils` (`run_umap`)
 
+### clusters_to_gating_csv
+
+Converts cluster IDs to per-sample CSVs with binary gating columns. Each output CSV contains the original expression columns plus one `Cluster_N (Clustering annotated)` column per cluster, matching the format expected by downstream analysis scripts.
+
+```r
+clusters_to_gating_csv(combined_matrix, sample_labels, cluster_ids,
+                       output_dir, sep = ";")
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `combined_matrix` | matrix | *required* | Cells-by-markers expression matrix |
+| `sample_labels` | character vector | *required* | Sample label per cell (same length as rows in `combined_matrix`) |
+| `cluster_ids` | integer vector | *required* | Cluster assignment per cell |
+| `output_dir` | character | *required* | Directory for output CSVs |
+| `sep` | character | `";"` | CSV separator |
+
+**Returns:** Character vector of output file paths (invisible).
+
+#### Example
+
+```r
+source("leiden.R")
+
+# Full flow: build matrix, cluster, then export gating CSVs
+result <- build_combined_expr_matrix(flow_frames, sample_names, markers)
+leiden_result <- run_leiden_with_umap(
+  expr_matrix   = result$combined_matrix,
+  sample_labels = result$sample_labels,
+  output_dir    = "/output/clustering"
+)
+
+clusters_to_gating_csv(
+  combined_matrix = result$combined_matrix,
+  sample_labels   = result$sample_labels,
+  cluster_ids     = leiden_result$cluster,
+  output_dir      = "/output/gating_csvs"
+)
+# Wrote 3 cluster CSV files to: /output/gating_csvs
+```
+
+**Input from:** `run_leiden_with_umap()`. **Output to:** `split_by_cluster()`, `run_differential_abundance()`
+
 ---
 
 ## flowjo_import.R

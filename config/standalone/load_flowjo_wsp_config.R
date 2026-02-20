@@ -26,3 +26,9 @@ wsp_path <- "/path/to/workspace.wsp"
 
 fcs_dir <- NULL   # Directory with FCS files (NULL = same directory as WSP)
 name    <- NULL   # Custom name for this workspace (NULL = derived from filename)
+
+# --- Multi-workspace usage ---
+# For loading multiple workspaces at once (e.g. for compare_gatings):
+#   wsp_paths <- c("/path/to/analyst1.wsp", "/path/to/analyst2.wsp")
+#   names <- c("Analyst1", "Analyst2")
+#   pop_strings_list <- load_multiple_workspaces(wsp_paths, names = names)

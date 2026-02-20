@@ -84,6 +84,38 @@ Rscript cluster_splitting.R <input_dir> <output_dir>
 
 `io_utils`, `gui_utils`, `cluster_utils`, `memory_utils`
 
+### tracking_matrix_to_long
+
+Pivots a wide tracking matrix (samples as rows, clusters as columns) into long format with one row per sample-cluster combination.
+
+```r
+tracking_matrix_to_long(tracking_matrix, id_col = "file",
+                        names_to = "cluster", values_to = "count")
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tracking_matrix` | data.frame | *required* | Wide tracking matrix from `split_by_cluster()` |
+| `id_col` | character | `"file"` | Column identifying each sample |
+| `names_to` | character | `"cluster"` | Name for the cluster column in long output |
+| `values_to` | character | `"count"` | Name for the count column in long output |
+
+**Returns:** `data.frame` in long format with columns `file`, `cluster`, `count`.
+
+#### Example
+
+```r
+source("cluster_splitting.R")
+
+result <- split_by_cluster(input_dir = "/data/csvs", output_dir = "/output/split")
+long_df <- tracking_matrix_to_long(result$tracking_matrix)
+head(long_df)
+#        file cluster count
+# 1 sample_001    CD4+    20
+# 2 sample_001    CD8+    15
+# 3 sample_002    CD4+    22
+```
+
 ---
 
 ## differential_abundance.R
@@ -353,6 +385,41 @@ create_expression_matrices(input_dir, output_dir, markers = NULL,
 
 - `exprmat_<group>.csv` — one matrix per cluster group
 - `group_matrices_summary.csv` — summary of generated matrices
+
+### combine_expression_matrices
+
+Combines a named list of data.tables into a single expression matrix, filtering to the specified markers. Optionally subsamples to a maximum cell count.
+
+```r
+combine_expression_matrices(expr_data_list, markers,
+                            max_cells = NULL, seed = 42)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `expr_data_list` | named list | *required* | List of data.tables (one per sample/file) |
+| `markers` | character vector | *required* | Marker columns to retain |
+| `max_cells` | integer | `NULL` | Maximum cells in output; `NULL` keeps all |
+| `seed` | integer | `42` | Random seed for subsampling |
+
+**Returns:** Numeric matrix (cells x markers), or `NULL` if no matching markers are found.
+
+#### Example
+
+```r
+source("expression_matrices.R")
+
+expr_data <- load_csv_expression(input_dir = "/data/csv_expression")
+combined <- combine_expression_matrices(
+  expr_data_list = expr_data,
+  markers        = c("CD3", "CD4", "CD8", "CD19"),
+  max_cells      = 50000
+)
+# Combined matrix: 120000 cells x 4 markers from 10 files
+# Subsampled to 50000 cells
+dim(combined)
+# [1] 50000     4
+```
 
 ### Dependencies
 

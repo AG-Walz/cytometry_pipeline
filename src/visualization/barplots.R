@@ -11,6 +11,8 @@ source(file.path(shared_dir, "plot_utils.R"))
 
 #' Create composition barplots from cluster data
 #'
+#' Input from: tracking_matrix_to_long() (analysis/cluster_splitting.R)
+#'
 #' @param data Data frame with sample, cluster, and optionally condition columns
 #' @param output_dir Output directory
 #' @param x_col Column for x-axis (default "cluster")

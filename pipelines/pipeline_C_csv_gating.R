@@ -81,10 +81,7 @@ if (params$analysis_method == "enrichment") {
 cat("\n--- Step 4: Visualization ---\n")
 source(file.path(base_dir, "src", "visualization", "barplots.R"))
 if (!is.null(split_result$tracking_matrix) && nrow(split_result$tracking_matrix) > 0) {
-  tm <- split_result$tracking_matrix
-  long_data <- tidyr::pivot_longer(tm, cols = -file,
-                                    names_to = "cluster", values_to = "count")
-  long_data <- as.data.frame(long_data)
+  long_data <- tracking_matrix_to_long(split_result$tracking_matrix)
   plot_composition_barplot(
     data       = long_data,
     output_dir = file.path(params$output_dir, "04_visualization"),

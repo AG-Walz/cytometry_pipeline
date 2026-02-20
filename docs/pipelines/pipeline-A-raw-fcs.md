@@ -25,8 +25,8 @@ If your FCS files have already been QC'd and transformed, use [Pipeline E](pipel
 2. **`run_preprocessing()`** — QC (PeacoQC/flowAI) + arcsinh/logicle transform
 3. **`homogenize_flowframes()`** — Rename markers, reorder to common panel
 4. **`downsample_flowframes()`** — Reduce to N cells per sample
-5. **`run_leiden_with_umap()`** — KNN graph, Leiden communities, UMAP embedding
-6. **`split_by_cluster()`** + **`run_differential_abundance()`** — Per-cluster CSVs, tracking matrix, NB-GLMM between conditions
+5. **`build_combined_expr_matrix()`** + **`run_leiden_with_umap()`** — Combined expression matrix, KNN graph, Leiden communities, UMAP embedding
+6. **`clusters_to_gating_csv()`** + **`split_by_cluster()`** + **`run_differential_abundance()`** — Per-sample gating CSVs, tracking matrix, NB-GLMM between conditions
 7. **`plot_umap()`** — UMAP plots per sample + per marker
 
 ---
@@ -316,14 +316,13 @@ downsample_flowframes(flow_frames, sample_names, target_cells = 10000,
 ```r
 source(file.path(base_dir, "src", "clustering", "leiden.R"))
 
-# Build combined matrix from all samples
-expr_list <- extract_exprmtx_list(downsampled, flow_data$sample_names, params$markers_of_interest)
-combined_matrix <- do.call(rbind, expr_list)
-sample_labels <- rep(names(expr_list), sapply(expr_list, nrow))
-
+# Build combined expression matrix from all samples
+expr_data <- build_combined_expr_matrix(
+  downsampled, flow_data$sample_names, params$markers_of_interest
+)
 clusters <- run_leiden_with_umap(
-  expr_matrix   = combined_matrix,
-  sample_labels = sample_labels,
+  expr_matrix   = expr_data$combined_matrix,
+  sample_labels = expr_data$sample_labels,
   output_dir    = file.path(params$output_dir, "03_clustering"),
   n_neighbors   = params$n_neighbors,
   resolution    = params$resolution,
@@ -333,11 +332,19 @@ clusters <- run_leiden_with_umap(
 
 **What it does:**
 
-1. Combines all downsampled samples into a single expression matrix (cells x markers)
+1. `build_combined_expr_matrix()` extracts expression matrices from all downsampled flowFrames and combines them into a single cells x markers matrix with matching sample labels
 2. Builds a K-nearest-neighbor graph (using `uwot`)
 3. Converts to a sparse adjacency matrix
 4. Runs Leiden community detection to assign clusters
 5. Computes a 2D UMAP embedding for visualization
+
+**`build_combined_expr_matrix()` signature:**
+
+```r
+build_combined_expr_matrix(flow_frames, sample_names, markers_of_interest)
+```
+
+Returns a list with `combined_matrix` (cells x markers matrix) and `sample_labels` (character vector identifying the source sample for each row).
 
 The `resolution` parameter controls cluster granularity: lower values produce fewer, larger clusters; higher values produce more, smaller clusters. Typical range: 0.1–2.0.
 
@@ -386,13 +393,23 @@ This step has two parts. First, the Leiden cluster assignments are converted to 
 
 ```r
 cluster_data_dir <- file.path(params$output_dir, "04_analysis", "cluster_data")
-# Creates per-sample CSVs like:
-#   CD3;CD4;CD8;...;Cluster_1 (Clustering annotated);Cluster_2 (Clustering annotated)
-#   2.46;4.01;2.15;...;1;0
-#   3.89;2.12;4.56;...;0;1
+clusters_to_gating_csv(
+  combined_matrix = expr_data$combined_matrix,
+  sample_labels   = expr_data$sample_labels,
+  cluster_ids     = clusters$cluster,
+  output_dir      = cluster_data_dir
+)
 ```
 
 Each sample gets a CSV with expression columns plus binary cluster membership columns (1 = cell belongs to this cluster, 0 = does not).
+
+**`clusters_to_gating_csv()` signature:**
+
+```r
+clusters_to_gating_csv(combined_matrix, sample_labels, cluster_ids, output_dir)
+```
+
+Splits the combined matrix back into per-sample data.frames, appends binary gating columns for each cluster (e.g. `Cluster_1 (Clustering annotated)`), and writes one semicolon-separated CSV per sample.
 
 **Part B: Split by cluster**
 

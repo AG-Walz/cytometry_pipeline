@@ -346,6 +346,8 @@ Output: `glmm_results.csv` with columns `cluster`, `estimate`, `std_error`, `z_v
 
 ```r
 source(file.path(base_dir, "src", "visualization", "barplots.R"))
+
+long_data <- tracking_matrix_to_long(split_result$tracking_matrix)
 plot_composition_barplot(
   data       = long_data,
   output_dir = file.path(params$output_dir, "04_visualization"),
@@ -355,7 +357,15 @@ plot_composition_barplot(
 )
 ```
 
-**What it does:** Converts the tracking matrix to long format and generates a stacked barplot showing how many cells from each sample belong to each cluster.
+**What it does:** `tracking_matrix_to_long()` converts the wide tracking matrix (samples as rows, clusters as columns) into a long-format data.frame suitable for ggplot2. The result is then passed to `plot_composition_barplot()` to generate a stacked barplot showing how many cells from each sample belong to each cluster.
+
+**`tracking_matrix_to_long()` signature:**
+
+```r
+tracking_matrix_to_long(tracking_matrix)
+```
+
+Takes a wide data.frame with a `file` column and cluster count columns; returns a long data.frame with columns `file`, `cluster`, and `count`.
 
 **Function signature:**
 
