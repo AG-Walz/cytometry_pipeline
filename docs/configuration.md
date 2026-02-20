@@ -28,7 +28,7 @@ Config files automatically compute `base_dir` from their own file location, so a
 | `csv_folder` | B, C | Directory containing CSV files |
 | `output_dir` | All | Root output directory (subdirs created automatically) |
 | `markers_of_interest` | A, E | Character vector of marker names to analyze |
-| `markers` | B, C | Character vector of marker column names |
+| `markers` | B | Character vector of marker column names |
 | `conditions_csv` | A, C | Path to file_name -> condition mapping CSV |
 | `condition_levels` | A, C | Two-element vector: `c("Control", "Treatment")` |
 | `truncation` | A, E | Truncate FCS values to `$PnR` max range |

@@ -132,7 +132,7 @@ test_data/
 
 ## 3. Project Structure Overview
 
-The project is organized into **9 subprojects** under `src/`, with pipeline orchestrators in `pipelines/` and configuration templates in `config/`:
+The project is organized into **8 subprojects** under `src/`, with pipeline orchestrators in `pipelines/` and configuration templates in `config/`:
 
 ```
 cytometry/
@@ -147,15 +147,15 @@ cytometry/
 │   │   ├── fcs_utils.R               FCS parsing, CSV-FCS mapping, batch loading
 │   │   └── stats_utils.R             Enrichment, GLMM, PCA, UMAP, summary stats
 │   ├── loading/                  Data loaders
-│   │   ├── load_fcs_raw.R            Raw FCS file loading with truncation
-│   │   ├── load_fcs_preprocessed.R   Preprocessed FCS loading
+│   │   ├── load_fcs_raw.R            FCS file loading (raw and preprocessed)
 │   │   ├── load_csv_expression.R     Expression CSV loading
 │   │   ├── load_csv_gating.R         Gating CSV loading with column classification
 │   │   ├── load_flowjo_wsp.R         FlowJo workspace parsing
-│   │   └── load_manual_gating.R      Manual gating label import
+│   │   ├── load_manual_gating.R      Manual gating label import
+│   │   └── create_flowframes.R       Create flowFrames from expression matrices
 │   ├── preprocessing/            QC and transformation
-│   │   ├── preprocessing.R           Orchestrator (dispatches to QC + transform)
-│   │   ├── qc.R                      Quality control (PeacoQC, flowAI)
+│   │   ├── preprocess_pipeline.R     Orchestrator (dispatches to QC + transform)
+│   │   ├── quality_control.R         Quality control (PeacoQC, flowAI)
 │   │   ├── transformation.R          arcsinh, logicle, biexponential transforms
 │   │   ├── downsampling.R            Maximal/consistent downsampling
 │   │   └── normalization.R           Quantile normalization
@@ -270,8 +270,8 @@ params$pp_order       <- "QT"                       # "QT" = QC first, "TQ" = Tr
 params$truncation     <- TRUE                       # Truncate expression to max range
 
 # ─── Downsampling ───────────────────────────────────
-params$target_ncell_subsampling <- 10000            # Target cells per sample
-params$subsampling_method       <- "Maximal"        # "Maximal" or "Consistent"
+params$downsample_n      <- 10000                    # Target cells per sample
+params$downsample_method <- "Maximal"                # "Maximal" or "Consistent"
 
 # ─── Clustering ─────────────────────────────────────
 params$n_neighbors <- 15                            # KNN graph neighbors
@@ -647,7 +647,7 @@ params$max_memory_gb    <- 4        # Memory limit for chunked reading
 For very large datasets, also consider downsampling more aggressively:
 
 ```r
-params$target_ncell_subsampling <- 5000  # Fewer cells per sample
+params$downsample_n <- 5000  # Fewer cells per sample
 ```
 
 ### tcltk / GUI Errors

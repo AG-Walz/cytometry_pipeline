@@ -14,6 +14,7 @@ Every script in `src/` can be used independently outside of a pipeline. Each scr
 | `load_csv_expression.R` | `load_csv_expression()` | `(input_dir, sep=NULL, max_memory_gb=4)` | Named list of data.tables |
 | `load_csv_gating.R` | `load_csv_gating()` | `(input_fcs_path, input_csv_path, output_path, gating_pattern, csv_label_dict=NULL, gating_tree=NULL, processing_mode="automatic", output_format="wide", chunk_size=100000)` | `list(output_dir, results, n_processed, n_total)` |
 | `load_flowjo_wsp.R` | `load_flowjo_wsp()` | `(wsp_path, fcs_dir, ...)` | GatingSet objects |
+| `load_flowjo_wsp.R` | `load_multiple_workspaces()` | `(wsp_paths, names, fcs_dirs=NULL)` | Named list of population_strings_lists |
 | `load_manual_gating.R` | `load_manual_gating()` | `(csv_dir, fcs_dir, ...)` | Labelled data.tables |
 | `create_flowframes.R` | `create_flowframes_from_matrices()` | `(expr_list, ...)` | List of flowFrames |
 
@@ -90,6 +91,7 @@ homogenized <- homogenize_flowframes(
 |--------|----------|-----------|---------|
 | `leiden.R` | `run_leiden()` | `(expr_matrix, n_neighbors=30, resolution=1.0, seed=42)` | Integer vector of cluster IDs |
 | `leiden.R` | `run_leiden_with_umap()` | `(expr_matrix, sample_labels=NULL, output_dir=NULL, n_neighbors=30, resolution=1.0, seed=42)` | data.frame(UMAP1, UMAP2, cluster, sample) |
+| `leiden.R` | `clusters_to_gating_csv()` | `(combined_matrix, sample_labels, cluster_ids, output_dir, sep=";")` | Character vector of written file paths (invisibly) |
 
 **Example — Leiden clustering standalone:**
 
@@ -114,11 +116,21 @@ result <- run_leiden_with_umap(
 | Script | Function | Signature | Returns |
 |--------|----------|-----------|---------|
 | `cluster_splitting.R` | `split_by_cluster()` | `(input_dir, output_dir, cluster_regex="Clustering annotated", markers_of_interest=NULL, min_cells_per_cluster=10)` | `list(tracking_matrix, cluster_summary, output_files, markers_used)` |
+| `cluster_splitting.R` | `tracking_matrix_to_long()` | `(tracking_matrix, id_col="file", names_to="cluster", values_to="count")` | data.frame with columns: file, cluster, count |
 | `differential_abundance.R` | `run_differential_abundance()` | `(data_dir, conditions_csv, output_dir, cluster_regex, condition_levels, markers_of_interest=NULL, min_cluster_size=10, p_adjust_method="BH", seed=123)` | data.frame of GLMM results |
 | `cluster_enrichment.R` | `run_cluster_enrichment()` | `(data_dir, conditions_csv, output_dir, cluster_regex, condition_levels, stat_method="mixed_effects", min_cluster_frac=0.001, p_adjust_method="BH", seed=123)` | data.frame of enrichment results |
 | `marker_statistics.R` | `run_marker_statistics()` | `(input_folder, output_folder, filename_regex="^(.+)_(.+)\\.csv$", markers=NULL, test_type="lmer", n_workers=NULL)` | data.frame of per-marker stats |
 | `abundance_plotting.R` | `build_tracking_matrix()` | `(input_dir, cluster_regex, exclude_patterns, output_dir)` | data.frame (tracking matrix) |
 | `abundance_plotting.R` | `plot_abundance()` | `(tracking_matrix_path=NULL, output_dir, tracking_matrix=NULL, metadata_file=NULL)` | invisible(NULL) |
+| `abundance_plotting.R` | `plot_abundance_stacked()` | `(tracking_matrix, output_dir)` | invisible(NULL) |
+| `abundance_plotting.R` | `plot_abundance_proportional()` | `(tracking_matrix, output_dir)` | invisible(NULL) |
+| `abundance_plotting.R` | `plot_abundance_totals()` | `(tracking_matrix, output_dir)` | invisible(NULL) |
+| `abundance_plotting.R` | `plot_abundance_heatmap()` | `(tracking_matrix, output_dir)` | invisible(NULL) |
+| `abundance_plotting.R` | `plot_abundance_by_metadata()` | `(tracking_matrix, metadata_file, output_dir, ...)` | invisible(NULL) |
+| `expression_matrices.R` | `create_expression_matrices()` | `(input_dir, output_dir, markers_of_interest=NULL, cluster_regex, conditions_csv=NULL, ...)` | list(expression_matrices, summary) |
+| `expression_matrices.R` | `combine_expression_matrices()` | `(expr_data_list, markers, max_cells=NULL, seed=42)` | Numeric matrix (cells x markers) |
+| `differential_abundance.R` | `build_abundance_matrix()` | `(data_dir, cluster_regex, conditions_csv, condition_levels, min_cluster_size=10)` | list(counts, metadata, clusters) |
+| `differential_abundance.R` | `plot_volcano()` | `(results_df, output_dir, title="Volcano Plot", p_col="padj", fc_col="log2fc", label_col="cluster")` | invisible(NULL) |
 
 **Example — Cluster enrichment standalone:**
 
@@ -142,9 +154,11 @@ results <- run_cluster_enrichment(
 | Script | Function | Signature | Returns |
 |--------|----------|-----------|---------|
 | `umap.R` | `plot_umap()` | `(flow_frames, sample_names, markers_of_interest=NULL, output_dir, n_neighbors=15, min_dist=0.1, output_formats=list(pdf=F, png=T, svg=T), seed=42)` | list(umap_coords, sample_labels, plots) |
+| `umap.R` | `plot_umap_from_matrix()` | `(expr_matrix, sample_labels=NULL, cluster_labels=NULL, output_dir, n_neighbors=15, min_dist=0.1, seed=42, output_formats=list(pdf=F, png=T, svg=T))` | list(umap_coords, sample_labels, plots) |
 | `heatmaps.R` | `plot_heatmap()` | `(expr_matrix, output_path, title, scale="row", width=10, height=8)` | invisible(NULL) |
 | `heatmaps.R` | `plot_cluster_heatmap()` | `(expr_data, cluster_col, marker_cols, output_path, title)` | invisible(NULL) |
 | `density_plots.R` | `plot_density()` | `(flow_frames, sample_names, markers, output_dir, plot_type="density", group_by="sample")` | invisible(NULL) |
+| `density_plots.R` | `plot_density_from_matrix()` | `(expr_matrix, sample_labels=NULL, markers=NULL, output_dir, plot_type="density", group_by="sample")` | invisible(NULL) |
 | `barplots.R` | `plot_composition_barplot()` | `(data, output_dir, x_col="cluster", fill_col="sample", position="stack", title)` | invisible(ggplot) |
 
 ---

@@ -220,7 +220,8 @@ Plotting utilities for multi-format saving, barplots, and filename sanitization.
 
 | Name | Signature | Description | Return |
 |------|-----------|-------------|--------|
-| `save_plot_formats` | `save_plot_formats(plot, filename_base, width = 10, height = 8, formats = list(pdf = TRUE, png = TRUE, svg = FALSE), png_dpi = 300)` | Save a ggplot object in multiple formats (PDF, PNG, SVG) based on the `formats` toggle list. | `Character vector` of formats saved |
+| `save_plot_formats` | `save_plot_formats(plot, filename_base, width = 14, height = 10, formats = list(pdf = TRUE, png = TRUE, svg = TRUE), png_dpi = 200)` | Save a ggplot object in multiple formats (PDF, PNG, SVG) based on the `formats` toggle list. | `Character vector` of formats saved |
+| `save_base_plot_formats` | `save_base_plot_formats(filename_base, plot_fn, width = 14, height = 10, png_dpi = 200)` | Save a base R plot (passed as a callable `plot_fn`) in PNG and SVG formats. Use instead of `save_plot_formats` when the plot is not a ggplot object. | `Invisible NULL` |
 | `population_barplot` | `population_barplot(population_counts, out_file, title, y_label)` | Create and save a grouped barplot showing population counts across samples or conditions. | `Invisible NULL` |
 | `plot_per_sample` | `plot_per_sample(df, value_col, out_dir, out_prefix, y_label, title)` | Generate faceted barplots, one panel per sample, and save to `out_dir`. | `Invisible NULL` |
 | `create_safe_filename` | `create_safe_filename(name, max_length = 100)` | Sanitize a string for use as a filename by removing or replacing special characters. | `Character` |
