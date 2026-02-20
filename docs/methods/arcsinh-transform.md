@@ -22,7 +22,7 @@ The arcsinh transform maps a raw measurement *x* to a transformed value *y*
 using:
 
 $$
-y = \operatorname{arcsinh}\!\left(\frac{x}{c}\right) = \ln\!\left(\frac{x}{c} + \sqrt{\frac{x^2}{c^2} + 1}\right)
+y = \text{arcsinh}\!\left(\frac{x}{c}\right) = \ln\!\left(\frac{x}{c} + \sqrt{\frac{x^2}{c^2} + 1}\right)
 $$
 
 where *c* is the cofactor. This function is defined for all real numbers,
@@ -35,7 +35,7 @@ For values small relative to the cofactor (|*x*| << *c*), the Taylor expansion
 gives:
 
 $$
-\operatorname{arcsinh}\!\left(\frac{x}{c}\right) \approx \frac{x}{c}
+\text{arcsinh}\!\left(\frac{x}{c}\right) \approx \frac{x}{c}
 $$
 
 In this regime the transform is approximately linear, preserving the
@@ -50,7 +50,7 @@ of these small signals.
 For values large relative to the cofactor (*x* >> *c*):
 
 $$
-\operatorname{arcsinh}\!\left(\frac{x}{c}\right) \approx \ln\!\left(\frac{2x}{c}\right) = \ln(2) + \ln(x) - \ln(c)
+\text{arcsinh}\!\left(\frac{x}{c}\right) \approx \ln\!\left(\frac{2x}{c}\right) = \ln(2) + \ln(x) - \ln(c)
 $$
 
 The transform behaves logarithmically, compressing the wide dynamic range of
@@ -522,7 +522,7 @@ to satisfy the approximate normality assumptions of linear models.
 The `flowCore::arcsinhTransform()` function uses the formula:
 
 $$
-y = \operatorname{arcsinh}(a + b \cdot x)
+y = \text{arcsinh}(a + b \cdot x)
 $$
 
 This pipeline maps to the standard cytometry formula `arcsinh(x / cofactor)`
