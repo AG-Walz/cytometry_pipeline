@@ -16,7 +16,9 @@ source(file.path(shared_dir, "stats_utils.R"))
 #' @param output_folder Output directory
 #' @param filename_regex Regex to parse sample/population from filenames
 #' @param markers Character vector of marker columns (NULL = interactive)
-#' @param test_type "lmer" (mixed-effects), "wilcox", or "both"
+#' @param test_type "lmer" (mixed-effects), "wilcox", "kruskal", or "both" (lmer + wilcox)
+#' @param conditions_csv Optional path to CSV with sample_id and condition columns
+#'   for group comparisons (required for "wilcox", "kruskal", and "both")
 #' @param n_workers Number of parallel workers
 #' @return Data frame with per-marker per-population statistics
 run_marker_statistics <- function(input_folder,
@@ -24,6 +26,7 @@ run_marker_statistics <- function(input_folder,
                                    filename_regex = "^(.+)_(.+)\\.csv$",
                                    markers = NULL,
                                    test_type = "lmer",
+                                   conditions_csv = NULL,
                                    n_workers = NULL) {
   require(data.table)
   require(lme4)
@@ -37,6 +40,19 @@ run_marker_statistics <- function(input_folder,
 
   # Setup parallel
   future::plan(future::multisession, workers = n_workers)
+
+  # Load conditions mapping if provided
+  conditions_map <- NULL
+  if (!is.null(conditions_csv)) {
+    conditions_map <- fread(conditions_csv)
+    if (!all(c("sample_id", "condition") %in% names(conditions_map))) {
+      stop("conditions_csv must have 'sample_id' and 'condition' columns.")
+    }
+    cat("Loaded condition mapping:", nlevels(factor(conditions_map$condition)),
+        "groups\n")
+  } else if (test_type %in% c("wilcox", "kruskal", "both")) {
+    stop("conditions_csv is required for test_type '", test_type, "'.")
+  }
 
   # Discover files
   files <- list.files(input_folder, pattern = "\\.csv$", full.names = TRUE)
@@ -79,13 +95,22 @@ run_marker_statistics <- function(input_folder,
     pop_data <- rbindlist(pop_data_list)
     cat("  Loaded", nrow(pop_data), "cells from", nrow(pop_files), "files\n")
 
+    # Merge condition labels if available
+    if (!is.null(conditions_map)) {
+      pop_data <- merge(pop_data, conditions_map, by = "sample_id", all.x = TRUE)
+      n_conditions <- length(unique(pop_data$condition[!is.na(pop_data$condition)]))
+      cat("  Conditions:", paste(unique(na.omit(pop_data$condition)), collapse = ", "), "\n")
+    }
+
     # Per-marker analysis
     for (marker in markers) {
       if (!marker %in% names(pop_data)) next
 
-      marker_stats <- tryCatch({
-        if (test_type %in% c("lmer", "both")) {
-          # Mixed-effects model
+      result_key <- paste0(pop, "_", marker)
+
+      # --- lmer branch ---
+      if (test_type %in% c("lmer", "both")) {
+        marker_stats <- tryCatch({
           model <- lmerTest::lmer(
             as.formula(paste0("`", marker, "` ~ 1 + (1|sample_id)")),
             data = pop_data
@@ -99,23 +124,95 @@ run_marker_statistics <- function(input_folder,
             between_sample_var = var_comp$vcov[1],
             within_sample_var = var_comp$vcov[2],
             icc = var_comp$vcov[1] / sum(var_comp$vcov),
+            pvalue = NA, statistic = NA,
             n_cells = nrow(pop_data),
             n_samples = length(unique(pop_data$sample_id)),
             method = "lmer"
           )
-        }
-      }, error = function(e) {
-        # Fallback to simple summary
-        data.frame(
-          population = pop, marker = marker,
-          mean = mean(pop_data[[marker]], na.rm = TRUE),
-          between_sample_var = NA, within_sample_var = NA, icc = NA,
-          n_cells = nrow(pop_data),
-          n_samples = length(unique(pop_data$sample_id)),
-          method = "simple_mean"
-        )
-      })
-      all_results[[paste0(pop, "_", marker)]] <- marker_stats
+        }, error = function(e) {
+          data.frame(
+            population = pop, marker = marker,
+            mean = mean(pop_data[[marker]], na.rm = TRUE),
+            between_sample_var = NA, within_sample_var = NA, icc = NA,
+            pvalue = NA, statistic = NA,
+            n_cells = nrow(pop_data),
+            n_samples = length(unique(pop_data$sample_id)),
+            method = "simple_mean"
+          )
+        })
+        all_results[[paste0(result_key, "_lmer")]] <- marker_stats
+      }
+
+      # --- wilcox branch ---
+      if (test_type %in% c("wilcox", "both")) {
+        marker_stats <- tryCatch({
+          # Pseudobulk: median per sample
+          sample_medians <- pop_data[, .(median_val = median(get(marker), na.rm = TRUE)),
+                                     by = .(sample_id, condition)]
+          conditions <- unique(sample_medians$condition)
+          if (length(conditions) != 2) {
+            stop("Wilcoxon requires exactly 2 conditions, found ", length(conditions))
+          }
+
+          g1 <- sample_medians[condition == conditions[1]]$median_val
+          g2 <- sample_medians[condition == conditions[2]]$median_val
+          wt <- wilcox.test(g1, g2)
+
+          data.frame(
+            population = pop, marker = marker,
+            mean = mean(pop_data[[marker]], na.rm = TRUE),
+            between_sample_var = NA, within_sample_var = NA, icc = NA,
+            pvalue = wt$p.value, statistic = wt$statistic,
+            n_cells = nrow(pop_data),
+            n_samples = length(unique(pop_data$sample_id)),
+            method = "wilcox"
+          )
+        }, error = function(e) {
+          warning("Wilcoxon test failed for ", marker, " in ", pop, ": ", e$message)
+          data.frame(
+            population = pop, marker = marker,
+            mean = mean(pop_data[[marker]], na.rm = TRUE),
+            between_sample_var = NA, within_sample_var = NA, icc = NA,
+            pvalue = NA, statistic = NA,
+            n_cells = nrow(pop_data),
+            n_samples = length(unique(pop_data$sample_id)),
+            method = "wilcox_failed"
+          )
+        })
+        all_results[[paste0(result_key, "_wilcox")]] <- marker_stats
+      }
+
+      # --- kruskal branch ---
+      if (test_type == "kruskal") {
+        marker_stats <- tryCatch({
+          # Pseudobulk: median per sample
+          sample_medians <- pop_data[, .(median_val = median(get(marker), na.rm = TRUE)),
+                                     by = .(sample_id, condition)]
+          kt <- kruskal.test(median_val ~ condition, data = sample_medians)
+
+          data.frame(
+            population = pop, marker = marker,
+            mean = mean(pop_data[[marker]], na.rm = TRUE),
+            between_sample_var = NA, within_sample_var = NA, icc = NA,
+            pvalue = kt$p.value, statistic = kt$statistic,
+            n_cells = nrow(pop_data),
+            n_samples = length(unique(pop_data$sample_id)),
+            method = "kruskal"
+          )
+        }, error = function(e) {
+          warning("Kruskal-Wallis test failed for ", marker, " in ", pop, ": ", e$message)
+          data.frame(
+            population = pop, marker = marker,
+            mean = mean(pop_data[[marker]], na.rm = TRUE),
+            between_sample_var = NA, within_sample_var = NA, icc = NA,
+            pvalue = NA, statistic = NA,
+            n_cells = nrow(pop_data),
+            n_samples = length(unique(pop_data$sample_id)),
+            method = "kruskal_failed"
+          )
+        })
+        all_results[[paste0(result_key, "_kruskal")]] <- marker_stats
+      }
     }
   }
 

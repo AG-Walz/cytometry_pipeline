@@ -1,42 +1,24 @@
 # =============================================================================
-# config/pipeline_B_config.R — Pipeline B: CSV Expression -> Statistics
+# Pipeline B: CSV Expression -> Quick Statistics
 # =============================================================================
-# Flow: Load CSV expression matrices -> Marker statistics -> Density/Heatmap
-#
-# Usage:
-#   cd pipelines && Rscript pipeline_B_csv_expression.R --config ../config/pipeline_B_config.R
+# Edit the values below, then run:
+#   cd pipelines
+#   Rscript pipeline_B_csv_expression.R --config ../config/pipeline_B_config.R
 # =============================================================================
 
-# Compute project root relative to this config file
-.config_path <- tryCatch(
-  normalizePath(sys.frame(1)$ofile),
-  error = function(e) {
-    for (i in rev(seq_len(sys.nframe()))) {
-      f <- sys.frame(i)$ofile
-      if (!is.null(f)) return(normalizePath(f))
-    }
-    stop("Cannot determine config file path")
-  }
-)
-base_dir <- dirname(dirname(.config_path))
+source(file.path(dirname(normalizePath(sys.frame(1)$ofile %||%
+  Filter(Negate(is.null), lapply(rev(seq_len(sys.nframe())),
+    function(i) sys.frame(i)$ofile))[[1]])), "defaults.R"))
 
-params <- list(
+params <- pipeline_defaults(
 
-  # ========================= Input / Output ==================================
-  csv_folder = file.path(base_dir, "test_data", "csv_expression"),
-  output_dir = file.path(base_dir, "output", "pipeline_B_results"),
+  # === EDIT THESE ============================================================
+  input_dir           = "../test_data/csv_expression",
+  output_dir          = "../output/pipeline_B_results",
+  markers_of_interest = c("CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR"),
 
-  # -- Markers --
-  markers = c("CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR"),
+  # === STATISTICS ============================================================
+  test_type           = "lmer"          # "lmer", "wilcox", "kruskal"
 
-  # -- Statistics --
-  test_type = "lmer",
-
-  # ========================= Output ==========================================
-  output_formats = list(pdf = FALSE, png = TRUE, svg = FALSE),
-  plot_width     = 10,
-  plot_height    = 8,
-
-  # ========================= Reproducibility =================================
-  seed = 42
+  # All other parameters use sensible defaults. See config/defaults.R.
 )

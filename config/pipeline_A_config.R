@@ -1,80 +1,33 @@
 # =============================================================================
-# config/pipeline_A_config.R — Pipeline A: Raw FCS -> Full Analysis
+# Pipeline A: Raw FCS -> Full Analysis
 # =============================================================================
-# Flow: Load FCS -> QC -> Transform -> Homogenize -> Downsample -> Cluster -> Analyze -> Visualize
-#
-# Usage:
-#   cd pipelines && Rscript pipeline_A_raw_fcs.R --config ../config/pipeline_A_config.R
+# Edit the values below, then run:
+#   cd pipelines
+#   Rscript pipeline_A_raw_fcs.R --config ../config/pipeline_A_config.R
 # =============================================================================
 
-# Compute project root relative to this config file
-.config_path <- tryCatch(
-  normalizePath(sys.frame(1)$ofile),
-  error = function(e) {
-    # Fallback: search the call stack for source()'d file path
-    for (i in rev(seq_len(sys.nframe()))) {
-      f <- sys.frame(i)$ofile
-      if (!is.null(f)) return(normalizePath(f))
-    }
-    stop("Cannot determine config file path")
-  }
-)
-base_dir <- dirname(dirname(.config_path))  # config/ -> project root
+# Load defaults (provides sensible values for everything not listed here)
+source(file.path(dirname(normalizePath(sys.frame(1)$ofile %||%
+  Filter(Negate(is.null), lapply(rev(seq_len(sys.nframe())),
+    function(i) sys.frame(i)$ofile))[[1]])), "defaults.R"))
 
-params <- list(
+params <- pipeline_defaults(
 
-  # ========================= Input / Output ==================================
-  fcs_folder  = file.path(base_dir, "test_data", "fcs_samples"),
-  output_dir  = file.path(base_dir, "output", "pipeline_A_results"),
-
-  # -- Markers --
+  # === EDIT THESE ============================================================
+  input_dir           = "../test_data/fcs_samples",
+  output_dir          = "../output/pipeline_A_results",
   markers_of_interest = c("CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR"),
 
-  # -- Conditions --
-  conditions_csv   = file.path(base_dir, "test_data", "fcs_samples", "conditions.csv"),
-  condition_levels = c("Control", "Treatment"),
+  # === CONDITIONS (for differential abundance) ===============================
+  conditions_csv      = "../test_data/fcs_samples/conditions.csv",
+  condition_levels    = c("Control", "Treatment"),
 
-  # ========================= Loading =========================================
-  truncation = FALSE,
+  # === METHODS (change these to swap algorithms) =============================
+  clustering_method   = "leiden",       # "leiden", "flowsom", "phenograph", "dbscan"
+  batch_method        = "none",         # "harmony", "cytonorm", "combat", "none"
+  dimred_method       = "umap",         # "umap", "tsne", "diffusion_map"
+  transform_type      = "arcsinh"       # "arcsinh", "logicle", "biexponential"
 
-  # ========================= Preprocessing ===================================
-  pp_order       = "QT",
-  qc_type        = "None",
-  transform_type = "arcsinh",
-  offset_list    = rep(0, 6),   # one per marker (default: no offset)
-  width_list     = rep(5, 6),   # cofactor per marker (5 = mass cytometry default)
-  quant_norm     = FALSE,
-  scaling        = FALSE,
-  save_pp_fcs    = FALSE,
-  save_pp_csv    = FALSE,
-
-  # ========================= Homogenization ==================================
-  markername_replacing = list(),
-
-  # ========================= Downsampling ====================================
-  downsample_method = "Consistent",
-  downsample_n      = 100,
-
-  # ========================= Method Selection =================================
-  clustering_method = "leiden",         # "leiden", "flowsom", "phenograph", "dbscan"
-  batch_method      = "none",           # "harmony", "cytonorm", "combat", "none"
-  dimred_method     = "umap",           # "umap", "tsne", "diffusion_map"
-
-  # ========================= Clustering (Leiden) =============================
-  n_neighbors = 15,
-  resolution  = 0.5,
-
-  # ========================= Analysis ========================================
-  cluster_regex    = "Clustering annotated",
-  min_cluster_size = 5,
-  p_adjust_method  = "BH",
-  stat_method      = "pooled",
-
-  # ========================= Output ==========================================
-  output_formats = list(pdf = FALSE, png = TRUE, svg = FALSE),
-  plot_width     = 10,
-  plot_height    = 8,
-
-  # ========================= Reproducibility =================================
-  seed = 42
+  # All other parameters (clustering resolution, downsample count, output
+  # formats, etc.) use sensible defaults. See config/defaults.R to override.
 )

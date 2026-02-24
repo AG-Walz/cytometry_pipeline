@@ -1,31 +1,21 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# pipelines/pipeline_E_preprocessed_umap.R — Preprocessed -> UMAP/Clustering
+# Pipeline E: Preprocessed FCS -> UMAP/Clustering
 # =============================================================================
 # Flow: Load FCS (no QC) -> Homogenize -> Downsample -> Cluster -> UMAP
 # =============================================================================
 
-cat("=== Pipeline E: Preprocessed FCS -> UMAP/Clustering ===\n")
-start_time <- Sys.time()
-
-# --- Configuration ---
-args <- commandArgs(trailingOnly = TRUE)
-config_file <- if (length(args) > 0 && args[1] == "--config") args[2] else NULL
-if (!is.null(config_file)) {
-  source(config_file)
-} else {
-  source(file.path(dirname(getwd()), "config", "pipeline_E_config.R"))
-}
-
-base_dir <- dirname(getwd())
+# --- Init (config + shared modules) ---
+base_dir   <- dirname(getwd())
 shared_dir <- file.path(base_dir, "src", "R_shared")
-if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
-source(file.path(shared_dir, "io_utils.R"))
-source(file.path(shared_dir, "flowframe_utils.R"))
+source(file.path(shared_dir, "pipeline_utils.R"))
+env <- init_pipeline("Pipeline E: Preprocessed FCS -> UMAP/Clustering",
+                     "config/pipeline_E_config.R")
+source(file.path(env$shared_dir, "flowframe_utils.R"))
 
 # Step 1: Load preprocessed FCS (skip QC)
 cat("\n--- Step 1: Loading preprocessed FCS files ---\n")
-source(file.path(base_dir, "src", "loading", "load_fcs_raw.R"))
+source(file.path(env$base_dir, "src", "loading", "load_fcs_raw.R"))
 flow_data <- load_fcs_raw(
   input_dir  = params$fcs_folder,
   truncation = FALSE
@@ -34,7 +24,7 @@ cat("Loaded", length(flow_data$flow_frames), "samples\n")
 
 # Step 2: Homogenize panels
 cat("\n--- Step 2: Panel Homogenization ---\n")
-source(file.path(base_dir, "src", "harmonization", "panel_homogenization.R"))
+source(file.path(env$base_dir, "src", "harmonization", "panel_homogenization.R"))
 homogenized <- homogenize_flowframes(
   flow_frames         = flow_data$flow_frames,
   sample_names        = flow_data$sample_names,
@@ -45,7 +35,7 @@ homogenized <- homogenize_flowframes(
 
 # Step 3: Downsample
 cat("\n--- Step 3: Downsampling ---\n")
-source(file.path(base_dir, "src", "preprocessing", "downsampling.R"))
+source(file.path(env$base_dir, "src", "preprocessing", "downsampling.R"))
 downsampled <- downsample_flowframes(
   flow_frames  = homogenized,
   sample_names = flow_data$sample_names,
@@ -54,48 +44,29 @@ downsampled <- downsample_flowframes(
   seed         = params$seed
 )
 
-# Step 4: Build combined expression matrix + Clustering
+# Step 4: Clustering
 cat("\n--- Step 4: Clustering ---\n")
-source(file.path(base_dir, "src", "clustering", "leiden.R"))
-source(file.path(shared_dir, "clustering_dispatch.R"))
-
+source(file.path(env$base_dir, "src", "clustering", "leiden.R"))
+source(file.path(env$shared_dir, "clustering_dispatch.R"))
 expr_data <- build_combined_expr_matrix(
   downsampled, flow_data$sample_names, params$markers_of_interest
 )
 cluster_ids <- run_clustering(
   expr_matrix = expr_data$combined_matrix,
   method      = params$clustering_method %||% "leiden",
-  params      = list(
-    n_neighbors = params$n_neighbors, resolution = params$resolution,
-    n_clusters = params$n_clusters, grid_xdim = params$grid_xdim,
-    grid_ydim = params$grid_ydim, k = params$n_neighbors,
-    dbscan_eps = params$dbscan_eps, dbscan_min_pts = params$dbscan_min_pts,
-    seed = params$seed
-  )
+  params      = clustering_params(params)
 )
 
 # Step 5: Visualization
 cat("\n--- Step 5: Visualization ---\n")
-source(file.path(shared_dir, "dimred_dispatch.R"))
-dimred_result <- run_dimred(
+source(file.path(env$shared_dir, "dimred_dispatch.R"))
+run_dimred(
   expr_matrix    = expr_data$combined_matrix,
   method         = params$dimred_method %||% "umap",
   sample_labels  = expr_data$sample_labels,
   cluster_labels = cluster_ids,
   output_dir     = file.path(params$output_dir, "03_visualization"),
-  params         = list(
-    n_neighbors     = params$n_neighbors,
-    umap_min_dist   = params$umap_min_dist,
-    tsne_perplexity = params$tsne_perplexity,
-    tsne_max_iter   = params$tsne_max_iter,
-    dm_n_components = params$dm_n_components,
-    dm_sigma        = params$dm_sigma,
-    output_formats  = params$output_formats,
-    plot_width      = params$plot_width,
-    plot_height     = params$plot_height,
-    seed            = params$seed
-  )
+  params         = dimred_params(params)
 )
 
-elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
-cat(sprintf("\n=== Pipeline E complete (%.1f minutes) ===\n", elapsed))
+finish_pipeline("Pipeline E", env$start_time)

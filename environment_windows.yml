@@ -1,0 +1,91 @@
+# =============================================================================
+# environment_windows.yml — Conda environment for Windows
+# =============================================================================
+# Usage:
+#   conda env create -f environment_windows.yml
+#   conda activate cytometry_env
+#   Rscript install_extra_packages.R
+#
+# PREREQUISITES (install BEFORE running this):
+#   1. Miniconda or Anaconda (Windows x64)
+#   2. Rtools 4.3+ from https://cran.r-project.org/bin/windows/Rtools/
+#      (needed to compile R packages from source)
+# =============================================================================
+name: cytometry_env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - r-base>=4.3
+  - r-devtools
+  - r-remotes
+  - r-biocmanager
+  # r-cairo  # Skip on Windows; uses default graphics device instead
+  - r-mclust
+  - r-scales
+  - r-tibble
+  - r-ggplot2
+  - r-openxlsx
+  - r-viridis
+  - r-plotly
+  - r-data.table
+  - r-ggrepel
+  - r-janitor
+  - r-rmarkdown
+  - r-rcolorbrewer
+  - r-dplyr
+  - r-reshape2
+  - r-rtsne
+  - r-diptest
+  - r-laplacesdemon
+  - r-ggpubr
+  - r-units
+  - r-mousetrap
+  - r-readxl
+  - r-magrittr
+  - r-ggridges
+  - r-emdist
+  - r-plyr
+  - r-matrix
+  - r-irlba
+  - r-rspectra
+  - r-bigstatsr
+  - r-multimode
+  - r-tidyverse
+  - r-lme4
+  - r-lmertest
+  - r-emmeans
+  - r-future
+  - r-future.apply
+  - r-progress
+  - r-uwot
+  - r-pheatmap
+
+  # Bioconductor packages — install via BiocManager inside R if conda
+  # resolution fails (see install_extra_packages_windows.R)
+  # The following are often available as pre-built on conda-forge:
+  - bioconductor-flowcore
+  - bioconductor-flowai
+  - bioconductor-peacoqc
+  - bioconductor-biobase
+  - bioconductor-biocgenerics
+  - bioconductor-biocparallel
+  - bioconductor-flowsom
+  - bioconductor-flowtrans
+  - bioconductor-flowvs
+  - bioconductor-preprocesscore
+
+  # NOTE: The following packages are EXCLUDED on Windows because they have
+  # unreliable Windows builds. Install via BiocManager if you need them:
+  #   bioconductor-flowworkspace  (C++ cytolib dependency; often fails)
+  #   bioconductor-opencyto       (depends on flowworkspace)
+  #   bioconductor-cytolib        (C++ backend; unreliable pre-built)
+  #   bioconductor-flowworkspacedata
+
+  # NOTE: System build tools (gcc, gxx, make, pkg-config) are NOT included.
+  # On Windows, install Rtools instead:
+  #   https://cran.r-project.org/bin/windows/Rtools/
+
+  # System libraries provided by Rtools on Windows:
+  # libxml2, libpng, libjpeg-turbo are bundled with Rtools

@@ -67,11 +67,12 @@ dependencies:
   - bioconductor-cytolib
   - bioconductor-flowsom
 
-  # System dependencies handy for R
-  - pkg-config
-  - make
-  - gcc
-  - gxx
-  - libxml2
-  - libpng
-  - libjpeg-turbo
+  # System dependencies (Linux/macOS only — Windows users need Rtools instead)
+  - pkg-config    # [linux,osx]
+  - make          # [linux,osx]
+  - gcc           # [linux,osx]
+  - gxx           # [linux,osx]
+  - libxml2       # [linux,osx]
+  - libpng        # [linux,osx]
+  - libjpeg-turbo # [linux,osx]
+  # Windows users: install Rtools from https://cran.r-project.org/bin/windows/Rtools/

@@ -125,6 +125,8 @@ plot_umap <- function(flow_frames, sample_names,
 #' @param sample_labels Character vector of sample labels (one per row)
 #' @param markers_of_interest Character vector of markers to plot (NULL = all columns)
 #' @param cluster_labels Optional integer/character vector of cluster assignments
+#' @param condition_labels Optional character vector of condition/group labels (one per row).
+#'                          When non-NULL, generates a faceted UMAP plot split by condition.
 #' @param output_dir Output directory for plots
 #' @param n_neighbors UMAP n_neighbors parameter
 #' @param min_dist UMAP min_dist parameter
@@ -138,6 +140,7 @@ plot_umap <- function(flow_frames, sample_names,
 plot_umap_from_matrix <- function(expr_matrix, sample_labels = NULL,
                                    markers_of_interest = NULL,
                                    cluster_labels = NULL,
+                                   condition_labels = NULL,
                                    output_dir,
                                    n_neighbors = 15,
                                    min_dist = 0.1,
@@ -200,6 +203,19 @@ plot_umap_from_matrix <- function(expr_matrix, sample_labels = NULL,
                       width = plot_width, height = plot_height,
                       formats = output_formats)
     plots[["cluster"]] <- p_cluster
+  }
+
+  # Plot faceted by condition if provided
+  if (!is.null(condition_labels)) {
+    umap_df$condition <- condition_labels
+    p_condition <- ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = sample)) +
+      geom_point(size = 0.3, alpha = 0.5) +
+      facet_wrap(~ condition) +
+      theme_minimal() + labs(title = "UMAP by Condition")
+    save_plot_formats(p_condition, file.path(output_dir, "umap_condition"),
+                      width = plot_width, height = plot_height,
+                      formats = output_formats)
+    plots[["condition"]] <- p_condition
   }
 
   # Plot per marker

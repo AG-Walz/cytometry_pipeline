@@ -12,7 +12,7 @@
 #' @param markers_of_interest Character vector of marker names to transform
 #' @param offset_list Numeric vector of offsets (one per marker)
 #' @param width_list Numeric vector of widths (one per marker)
-#' @param transform_type "arcsinh", "logicle", "biexponential", or "None"
+#' @param transform_type "arcsinh", "logicle", "biexponential", "log", or "None"
 #' @return Transformed flowFrame
 transform_flowframe <- function(flowframe, sample_name,
                                 markers_of_interest,
@@ -38,10 +38,12 @@ transform_flowframe <- function(flowframe, sample_name,
       next
     }
 
+    log_offset <- offset  # capture for closure
     trans <- switch(transform_type,
       "arcsinh"        = flowCore::arcsinhTransform(a = -offset, b = 1 / width),
       "logicle"        = flowCore::logicleTransform(),
       "biexponential"  = flowCore::biexponentialTransform(),
+      "log"            = function(x) log10(pmax(x + log_offset, 1e-10)),
       "None"           = NULL,
       stop("Invalid transform_type: '", transform_type, "'.")
     )

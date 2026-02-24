@@ -1,29 +1,20 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# pipelines/pipeline_C_csv_gating.R — CSV Gating -> Cluster Analysis Pipeline
+# Pipeline C: CSV Gating -> Cluster Analysis Pipeline
 # =============================================================================
 # Flow: Load gating CSV -> Split clusters -> Enrichment -> Barplots/Abundance
 # =============================================================================
 
-cat("=== Pipeline C: CSV Gating -> Cluster Analysis ===\n")
-start_time <- Sys.time()
-
-# --- Configuration ---
-args <- commandArgs(trailingOnly = TRUE)
-config_file <- if (length(args) > 0 && args[1] == "--config") args[2] else NULL
-if (!is.null(config_file)) {
-  source(config_file)
-} else {
-  source(file.path(dirname(getwd()), "config", "pipeline_C_config.R"))
-}
-
-base_dir <- dirname(getwd())
+# --- Init (config + shared modules) ---
+base_dir   <- dirname(getwd())
 shared_dir <- file.path(base_dir, "src", "R_shared")
-source(file.path(shared_dir, "io_utils.R"))
+source(file.path(shared_dir, "pipeline_utils.R"))
+env <- init_pipeline("Pipeline C: CSV Gating -> Cluster Analysis",
+                     "config/pipeline_C_config.R")
 
 # Step 1: Load CSV with gating data (also splits per population)
 cat("\n--- Step 1: Loading CSV gating data ---\n")
-source(file.path(base_dir, "src", "loading", "load_csv_gating.R"))
+source(file.path(env$base_dir, "src", "loading", "load_csv_gating.R"))
 gating_data <- load_csv_gating(
   input_fcs_path  = params$csv_folder,
   input_csv_path  = params$csv_folder,
@@ -34,7 +25,7 @@ gating_data <- load_csv_gating(
 
 # Step 2: Cluster splitting from *original* input CSVs (which have gating columns)
 cat("\n--- Step 2: Splitting by cluster ---\n")
-source(file.path(base_dir, "src", "analysis", "cluster_splitting.R"))
+source(file.path(env$base_dir, "src", "analysis", "cluster_splitting.R"))
 split_result <- split_by_cluster(
   input_dir     = params$csv_folder,
   output_dir    = file.path(params$output_dir, "02_clusters"),
@@ -44,7 +35,7 @@ split_result <- split_by_cluster(
 # Step 3: Statistical analysis (enrichment or GLMM)
 cat("\n--- Step 3: Statistical Analysis ---\n")
 if (params$analysis_method == "enrichment") {
-  source(file.path(base_dir, "src", "analysis", "cluster_enrichment.R"))
+  source(file.path(env$base_dir, "src", "analysis", "cluster_enrichment.R"))
   tryCatch({
     enrichment <- run_cluster_enrichment(
       data_dir         = params$csv_folder,
@@ -60,7 +51,7 @@ if (params$analysis_method == "enrichment") {
     cat("  Enrichment analysis skipped:", e$message, "\n")
   })
 } else {
-  source(file.path(base_dir, "src", "analysis", "differential_abundance.R"))
+  source(file.path(env$base_dir, "src", "analysis", "differential_abundance.R"))
   tryCatch({
     abundance <- run_differential_abundance(
       data_dir         = params$csv_folder,
@@ -77,9 +68,9 @@ if (params$analysis_method == "enrichment") {
   })
 }
 
-# Step 4: Visualization — composition barplot from tracking matrix
+# Step 4: Visualization -- composition barplot from tracking matrix
 cat("\n--- Step 4: Visualization ---\n")
-source(file.path(base_dir, "src", "visualization", "barplots.R"))
+source(file.path(env$base_dir, "src", "visualization", "barplots.R"))
 if (!is.null(split_result$tracking_matrix) && nrow(split_result$tracking_matrix) > 0) {
   long_data <- tracking_matrix_to_long(split_result$tracking_matrix)
   plot_composition_barplot(
@@ -93,7 +84,7 @@ if (!is.null(split_result$tracking_matrix) && nrow(split_result$tracking_matrix)
 
 # Step 5: Abundance analysis
 cat("\n--- Step 5: Abundance Analysis ---\n")
-source(file.path(base_dir, "src", "analysis", "abundance_plotting.R"))
+source(file.path(env$base_dir, "src", "analysis", "abundance_plotting.R"))
 tryCatch({
   tracking_matrix <- build_tracking_matrix(
     input_dir        = params$csv_folder,
@@ -110,5 +101,4 @@ tryCatch({
   cat("  Abundance plotting skipped:", e$message, "\n")
 })
 
-elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
-cat(sprintf("\n=== Pipeline C complete (%.1f minutes) ===\n", elapsed))
+finish_pipeline("Pipeline C", env$start_time)

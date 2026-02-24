@@ -3,6 +3,15 @@
 
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 
+# --- Ensure R_LIBS_USER is in .libPaths() so packages install there ---
+user_lib <- Sys.getenv("R_LIBS_USER")
+if (nzchar(user_lib)) {
+  user_lib <- normalizePath(user_lib, mustWork = FALSE)
+  if (!dir.exists(user_lib)) dir.create(user_lib, recursive = TRUE)
+  .libPaths(c(user_lib, .libPaths()))
+  cat("Installing packages to:", user_lib, "\n")
+}
+
 # 1. Install packages missing from Conda/CRAN
 # (Certain packages like sBIC might be on CRAN but tricky in Conda)
 pkg_cran <- c("sBIC")

@@ -92,11 +92,11 @@ check_acquisition_dates <- function(parent_folder, output_dir) {
   cat("Found", length(all_fcs), "FCS files\n")
 
   # Relative paths
-  parent_norm <- normalizePath(parent_folder)
-  if (!endsWith(parent_norm, "/") && !endsWith(parent_norm, "\\")) {
+  parent_norm <- normalizePath(parent_folder, winslash = "/")
+  if (!endsWith(parent_norm, "/")) {
     parent_norm <- paste0(parent_norm, "/")
   }
-  rel_paths <- substring(normalizePath(all_fcs), nchar(parent_norm) + 1)
+  rel_paths <- substring(normalizePath(all_fcs, winslash = "/"), nchar(parent_norm) + 1)
 
   # Extract metadata
   cat("Extracting metadata...\n")
