@@ -1,0 +1,7 @@
+pipeline: E
+input_dir: /path/to/preprocessed_fcs_files
+output_dir: ./results/pipeline_E
+markers_of_interest: "CD3,CD4,CD8,CD19,CD56,HLA-DR"
+clustering_method: leiden
+dimred_method: umap
+downsample_n: 10000

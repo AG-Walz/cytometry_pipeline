@@ -1,0 +1,5 @@
+pipeline: B
+input_dir: /path/to/csv_expression_files
+output_dir: ./results/pipeline_B
+markers_of_interest: "CD3,CD4,CD8,CD19,CD56,HLA-DR"
+test_type: lmer

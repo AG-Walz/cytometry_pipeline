@@ -1,0 +1,11 @@
+pipeline: A
+input_dir: /path/to/fcs_files
+output_dir: ./results/pipeline_A
+markers_of_interest: "CD3,CD4,CD8,CD19,CD56,HLA-DR"
+conditions_csv: /path/to/conditions.csv
+condition_levels: "Control,Treatment"
+clustering_method: leiden
+batch_method: none
+dimred_method: umap
+transform_type: arcsinh
+downsample_n: 10000
