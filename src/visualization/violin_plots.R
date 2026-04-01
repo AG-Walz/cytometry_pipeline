@@ -52,6 +52,14 @@ plot_violin <- function(expr_data, markers,
     cat("Warning: markers not found in data:", paste(missing, collapse = ", "), "\n")
   }
 
+  group_sizes <- table(expr_data[[group_col]])
+  if (any(group_sizes < 2)) {
+    small_groups <- names(group_sizes[group_sizes < 2])
+    warning("Groups with fewer than 2 observations will be excluded from violin plots: ",
+            paste(small_groups, collapse = ", "))
+    expr_data <- expr_data[!expr_data[[group_col]] %in% small_groups, ]
+  }
+
   expr_data[[group_col]] <- as.factor(expr_data[[group_col]])
 
   cat("Generating", plot_type, "plots for", length(available_markers),

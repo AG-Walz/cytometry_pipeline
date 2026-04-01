@@ -31,6 +31,10 @@ run_marker_statistics <- function(input_folder,
   require(data.table)
   require(lme4)
   require(lmerTest)
+  if (!requireNamespace("stringr", quietly = TRUE)) {
+    stop("Package 'stringr' is required for run_marker_statistics(). ",
+         "Install with: install.packages('stringr')")
+  }
 
   make_outdir(output_folder)
 

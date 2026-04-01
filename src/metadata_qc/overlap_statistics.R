@@ -26,6 +26,15 @@ compute_fleiss_kappa <- function(label_lists, output_dir,
                                   row_range = NULL) {
   require(irr)
   require(data.table)
+
+  # Validate label_lists input
+  if (!is.data.frame(label_lists)) {
+    stop("label_lists must be a data frame with one column per rater")
+  }
+  if (ncol(label_lists) < 2) {
+    stop("At least 2 raters (columns) required for Fleiss' kappa")
+  }
+
   make_outdir(output_dir)
 
   if (!is.null(row_range)) {

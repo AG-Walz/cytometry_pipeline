@@ -40,6 +40,10 @@ plot_contour <- function(coords, group_labels = NULL,
                           output_dir,
                           output_formats = list(pdf = FALSE, png = TRUE, svg = TRUE),
                           plot_width = 10, plot_height = 8) {
+  if (!all(c("x", "y") %in% colnames(coords))) {
+    stop("coords must have 'x' and 'y' columns")
+  }
+
   require(ggplot2)
   make_outdir(output_dir)
 

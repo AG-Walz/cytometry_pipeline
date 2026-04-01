@@ -80,6 +80,15 @@ check_metadata <- function(metadata_file, output_dir,
   # --- Column selection ---
   all_cols <- colnames(md)
   analyzable <- if (!is.null(skip_columns)) setdiff(all_cols, skip_columns) else all_cols
+
+  # Warn about missing columns before filtering
+  if (!is.null(only_cols)) {
+    missing_cols <- setdiff(only_cols, colnames(md))
+    if (length(missing_cols) > 0) {
+      warning("Columns not found in metadata: ", paste(missing_cols, collapse = ", "))
+    }
+  }
+
   analyze_cols <- if (!is.null(only_cols)) intersect(only_cols, analyzable) else analyzable
   if (!length(analyze_cols)) stop("No columns selected to analyze.")
 

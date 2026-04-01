@@ -12,6 +12,18 @@ source(file.path(shared_dir, "pipeline_utils.R"))
 env <- init_pipeline("Pipeline B: CSV Expression -> Statistics",
                      "config/pipeline_B_config.R")
 
+# Validate required parameters
+if (is.null(params$input_dir) && is.null(params$fcs_folder)) {
+  stop("input_dir (or fcs_folder) is required in config")
+}
+if (is.null(params$output_dir)) {
+  stop("output_dir is required in config")
+}
+# Validate output directory can be created
+tryCatch(make_outdir(params$output_dir),
+  error = function(e) stop("Cannot create output directory: ", params$output_dir, " (", e$message, ")")
+)
+
 # Step 1: Load CSV expression data
 cat("\n--- Step 1: Loading CSV expression data ---\n")
 source(file.path(env$base_dir, "src", "loading", "load_csv_expression.R"))
@@ -38,7 +50,7 @@ source(file.path(env$base_dir, "src", "visualization", "heatmaps.R"))
 combined_matrix <- combine_expression_matrices(
   expr_data_list = expr_data,
   markers        = params$markers,
-  max_cells      = 500
+  max_cells      = params$max_cells_per_file %||% 500
 )
 if (!is.null(combined_matrix)) {
   viz_dir <- file.path(params$output_dir, "02_visualization")

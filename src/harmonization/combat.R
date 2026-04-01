@@ -70,6 +70,13 @@ run_combat <- function(expr_matrix, batch_vector, covariates = NULL,
       stop("covariates nrow (", nrow(covariates),
            ") must equal nrow(expr_matrix) (", nrow(expr_matrix), ")")
     }
+    # Check for NA values in covariates
+    na_cols <- names(covariates)[sapply(covariates, function(col) any(is.na(col)))]
+    if (length(na_cols) > 0) {
+      stop("Covariates contain NA values in columns: ",
+           paste(na_cols, collapse = ", "),
+           ". Remove or impute NAs before running ComBat.")
+    }
     cat("  Preserving biological covariates:", paste(names(covariates), collapse = ", "), "\n")
     mod_formula <- as.formula(
       paste("~", paste(names(covariates), collapse = " + "))

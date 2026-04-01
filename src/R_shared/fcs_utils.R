@@ -2,6 +2,10 @@
 # R_shared/fcs_utils.R — FCS File Handling Utilities
 # =============================================================================
 # Deduplicated from: Functions.R, data_loading_functions.R
+#
+# DEPENDENCY: This file requires io_utils.R to be sourced first
+# (for detect_csv_sep()). Ensure io_utils.R is loaded before using
+# functions that call detect_csv_sep().
 # =============================================================================
 
 #' Read the text segment of an FCS file

@@ -159,7 +159,8 @@ fit_nb_glmm <- function(count_data, formula = count ~ condition + (1 | sample_id
       )
     )
   }, error = function(e) {
-    message("NB GLMM failed: ", e$message)
+    warning("NB GLMM failed: ", e$message, ". Falling back to Poisson GLMM. ",
+            "Poisson assumes mean=variance; p-values may be anti-conservative.")
     tryCatch({
       message("Falling back to Poisson GLMM...")
       lme4::glmer(

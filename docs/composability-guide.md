@@ -1,163 +1,129 @@
 # Composability Guide
 
-How to mix and match scripts from different pipeline stages to build custom
-analysis workflows. Every script in this project is designed as a standalone
-function that accepts well-defined inputs and produces well-defined outputs.
-You are not limited to the five predefined pipelines (A through E); any
-script can connect to any other script as long as the data formats match.
-
-This guide covers:
-
-1. [Data Flow Diagram](#1-data-flow-diagram)
-2. [Format Contracts](#2-format-contracts)
-3. [Bridge Functions](#3-bridge-functions)
-4. [Example Workflows](#4-example-workflows)
-5. [Decision Tree](#5-decision-tree)
-6. [Quick Reference Table](#6-quick-reference-table)
-7. [Method Swapping](#7-method-swapping)
+This guide explains how to combine scripts from `src/` into custom workflows outside of the five built-in pipelines. It covers the data flow between pipeline stages, the bridge functions that convert between data types, the contracts each stage expects, and complete example workflows you can adapt.
 
 ---
 
-## 1. Data Flow Diagram
+## Table of Contents
 
-The diagram below shows every script group, the data formats they produce
-and consume, and the bridge functions that convert between formats.
-
-```
-INPUT FILES
-============
-
-  .fcs files          .csv expression       .csv gating + .fcs      .wsp + .fcs
-       |                    |                       |                     |
-       v                    v                       v                     v
-  load_fcs_raw()     load_csv_expression()   load_csv_gating()    load_flowjo_wsp()
-       |                    |                       |               load_multiple_workspaces()
-       v                    v                       v                     |
-  [flowFrame list]   [data.table list]       [gating CSVs on disk]       v
-       |                    |                       |              [GatingSet / pop strings]
-       |                    |                       |                     |
-       |                    |                       |                     |
-  PREPROCESSING             |                       |               METADATA QC
-  =============             |                       |               ==========
-       |                    |                       |                     |
-       v                    |                       |                     v
-  run_preprocessing()       |                       |             compare_gatings()
-  downsample_flowframes()   |                       |             compute_fleiss_kappa()
-  transform_flowframe()     |                       |                     |
-  quality_control()         |                       |                     v
-       |                    |                       |             [Venn/Euler/UpSet]
-       v                    |                       |               plot_euler()
-  [flowFrame list]          |                       |               plot_upset()
-       |                    |                       |
-       |                    |                       |
-  HARMONIZATION             |                       |
-  =============             |                       |
-       |                    |                       |
-       v                    |                       |
-  homogenize_flowframes()   |                       |
-  run_batch_correction()    |                       |
-       |                    |                       |
-       v                    |                       |
-  [flowFrame list]          |                       |
-       |                    |                       |
-       |                    |                       |
-       |   BRIDGE FUNCTIONS |                       |
-       |   =====================================    |
-       |         |                    |              |
-       v         v                    v              |
-  build_combined_expr_matrix()   create_flowframes_from_matrices()
-  (flowFrames --> matrix)        (matrix/data.table --> flowFrames)
-       |                              |              |
-       v                              v              |
-  [numeric matrix +            [flowFrame list]      |
-   sample_labels]                     |              |
-       |                              |              |
-       |  .............................|              |
-       |  :                                          |
-       v  v                                          |
-  CLUSTERING (via run_clustering() dispatcher)        |
-  ===============================================    |
-       |                                             |
-       v                                             |
-  run_leiden()        run_flowsom()                   |
-  run_phenograph()    run_dbscan()                   |
-       |                                             |
-       v                                             |
-  [cluster labels]                                   |
-       |                                             |
-       v                                             |
-  clusters_to_gating_csv() ----> [gating CSVs] <-----+
-       |                              |
-       |                              |
-       +------------------------------+
-                      |
-                      v
-  ANALYSIS (all operate on gating CSVs or matrices)
-  =================================================
-       |
-       +---> split_by_cluster()         --> [per-cluster CSVs] + [tracking matrix]
-       |          |
-       |          +--> tracking_matrix_to_long()  --> [long data.frame]
-       |          +--> create_expression_matrices()--> [expression matrices]
-       |
-       +---> build_abundance_matrix()   --> [abundance data.frame]
-       +---> build_tracking_matrix()    --> [tracking matrix]
-       |
-       +---> run_differential_abundance() --> [GLMM results] + volcano plot
-       +---> run_cluster_enrichment()     --> [enrichment results]
-       +---> run_marker_statistics()      --> [per-marker stats]
-       +---> calculate_cell_ratios()      --> [ratio data.frame]
-       |
-       v
-  VISUALIZATION (accept flowFrames, matrices, or data.frames)
-  ===========================================================
-
-  flowFrame input:                Matrix input:
-    plot_umap()                     plot_umap_from_matrix()
-    plot_density()                  plot_density_from_matrix()
-                                    plot_pca()
-                                    plot_heatmap()
-                                    plot_cluster_heatmap()
-
-  Data.frame input:
-    plot_composition_barplot()    (long data.frame)
-    plot_abundance()              (tracking matrix)
-    plot_volcano()                (results data.frame)
-    plot_upset() / plot_euler()   (binary matrix or set lists)
-    plot_venn()                   (set lists)
-```
-
-### Key connection paths at a glance
-
-| From | To | Via |
-|------|----|-----|
-| flowFrame list | numeric matrix | `build_combined_expr_matrix()` |
-| data.table list | flowFrame list | `create_flowframes_from_matrices()` |
-| data.table list | numeric matrix | `combine_expression_matrices()` |
-| cluster labels + matrix | gating CSVs on disk | `clusters_to_gating_csv()` |
-| expression matrix | supercell matrix | `run_supercell()` |
-| expression matrix | cluster labels (FlowSOM) | `run_flowsom()` |
-| expression matrix | cluster labels (PhenoGraph) | `run_phenograph()` |
-| expression matrix | cluster labels (DBSCAN) | `run_dbscan()` |
-| clusters + expression | cell type annotations | `annotate_clusters()` |
-| clusters + expression | validation metrics | `validate_clusters()` |
-| expression matrix | batch-corrected matrix | `run_combat()` |
-| flowFrame list + batch labels | corrected flowFrames | `run_cytonorm()` |
-| gating CSVs | tracking matrix | `split_by_cluster()` or `build_tracking_matrix()` |
-| tracking matrix (wide) | long data.frame | `tracking_matrix_to_long()` |
-| gating CSVs | expression matrices | `split_by_cluster()` then `create_expression_matrices()` |
+1. [Architecture Overview](#1-architecture-overview)
+2. [Data Flow Diagram](#2-data-flow-diagram)
+3. [Data Type Contracts](#3-data-type-contracts)
+4. [Bridge Functions](#4-bridge-functions)
+5. [Method Dispatchers](#5-method-dispatchers)
+6. [Example Workflows](#6-example-workflows)
+7. [Common Pitfalls](#7-common-pitfalls)
 
 ---
 
-## 2. Format Contracts
+## 1. Architecture Overview
 
-Every script in the pipeline reads and writes one of the five core formats
-below. When two scripts share a format, they can be chained directly.
+The pipeline has six processing stages. Each stage is a directory under `src/` containing standalone scripts. Every script documents its upstream ("Input from") and downstream ("Output to") connections in its roxygen headers.
 
-### 2.1 flowFrame list
+The five built-in pipelines (`pipelines/pipeline_A_raw_fcs.R` through `pipeline_E_preprocessed_umap.R`) are thin orchestrators that chain these scripts in a fixed order. You are not limited to those orderings. Any script can be called independently, and data can flow between scripts from different pipelines, as long as you match the expected data types at each boundary.
 
-**What it is.** A named R list where each element is a `flowCore::flowFrame`
-object. Names are sample identifiers.
+**Bridge functions** handle the type conversions between stages. For example, `build_combined_expr_matrix()` converts a list of flowFrame objects into the numeric matrix that clustering and visualization functions expect.
+
+---
+
+## 2. Data Flow Diagram
+
+```
+                         INPUT FORMATS
+           +-------------+-------------+-------------+
+           |             |             |             |
+       Raw FCS     Preprocessed   CSV Expression  FlowJo WSP
+       files       FCS files      matrices        workspaces
+           |             |             |             |
+           v             v             v             v
+  +--------+------+ +----+----+ +-----+------+ +----+-----+
+  | load_fcs_raw  | | load_   | | load_csv_  | | load_    |
+  |               | | fcs_raw | | expression | | flowjo_  |
+  +-------+-------+ +----+----+ +-----+------+ | wsp      |
+          |              |             |        +----+-----+
+          |              |             |             |
+          v              |             |             v
+  +-------+-------+     |             |      +------+------+
+  | PREPROCESSING |     |             |      | METADATA_QC |
+  | qc, transform,|     |             |      | fleiss_kappa|
+  | doublets,     |     |             |      | gating_comp |
+  | live/dead,    |     |             |      +------+------+
+  | normalization |     |             |             |
+  +-------+-------+     |             |             v
+          |              |             |      Venn/Euler/UpSet
+          v              v             |
+  +-------+--------------+---+        |
+  |     HARMONIZATION        |        |
+  | compare_panels           |        |
+  | homogenize_flowframes    |        |
+  | batch correction         |        |
+  | (Harmony/CytoNorm/ComBat)|       |
+  +-------+------------------+        |
+          |                           |
+          v                           |
+  +-------+-------+                   |
+  | build_combined| <----- BRIDGE --- + create_flowframes
+  | _expr_matrix  |       FUNCTIONS     _from_matrices
+  +-------+-------+                       (reverse)
+          |
+          +------- run_supercell() -------> compressed matrix
+          |        (optional)                     |
+          v                                       v
+  +-------+----------------------------+---------+
+  |              CLUSTERING                       |
+  | run_leiden / run_flowsom / run_phenograph /    |
+  | run_dbscan / run_clustering (dispatcher)      |
+  | run_resolution_sweep / consensus_clusters     |
+  +---+---+-----------+-----------+-------+-------+
+      |   |           |           |       |
+      |   |           v           |       |
+      |   |   validate_clusters   |       |
+      |   |           |           |       |
+      |   |           v           |       |
+      |   |   annotate_clusters   |       |
+      |   |                       |       |
+      v   v                       v       v
+  +---+---+--------+    +--------+-------+-------+
+  | clusters_to_   |    |     VISUALIZATION       |
+  | gating_csv     |    | plot_umap_from_matrix   |
+  +-------+--------+    | plot_tsne_from_matrix   |
+          |              | plot_diffusion_map      |
+          v              | plot_density_from_matrix|
+  +-------+--------+    | plot_heatmap            |
+  |    ANALYSIS    |    | plot_biaxial            |
+  | cluster_split  |    | plot_violin / radar     |
+  | diff_abundance |    | plot_contour / barplots |
+  | enrichment     |    | plot_pca / upset / venn |
+  | marker_stats   |    +-------------------------+
+  | diff_expression|
+  | effect_sizes   |
+  | correlations   |
+  | diffcyt        |
+  | survival       |
+  +----------------+
+```
+
+### Key data type boundaries
+
+| Boundary | Upstream type | Bridge function | Downstream type |
+|----------|--------------|-----------------|-----------------|
+| Loading to Clustering | `list(flowFrame)` | `build_combined_expr_matrix()` | `numeric matrix` + `character vector` (labels) |
+| CSV to flowFrame path | `list(matrix)` | `create_flowframes_from_matrices()` | `list(flowFrame)` |
+| Clustering to Analysis | `integer vector` + `numeric matrix` | `clusters_to_gating_csv()` | Per-sample CSV files |
+| Any to Visualization | `numeric matrix` | `plot_umap_from_matrix()`, etc. | Plot files |
+| Full-size to Compressed | `numeric matrix` | `run_supercell()` | Smaller `numeric matrix` |
+| Clustering to Validation | `integer vector` + `numeric matrix` | `validate_clusters()` | `data.frame` of metrics |
+| Clustering to Annotation | `integer vector` + `numeric matrix` | `annotate_clusters()` | `data.frame` with labels |
+
+---
+
+## 3. Data Type Contracts
+
+Every script in the pipeline expects and produces one of a small number of standard data types. Matching these types at each boundary is the key to composability.
+
+### 3.1 flowFrame list
+
+**What it is.** A named R list where each element is a `flowCore::flowFrame` object. Names are sample identifiers.
 
 **Structure:**
 
@@ -183,13 +149,13 @@ flow_frames <- list(
 **Consumed by:**
 `run_preprocessing()`, `downsample_flowframes()`,
 `homogenize_flowframes()`, `run_batch_correction()`,
-`build_combined_expr_matrix()`, `plot_umap()`, `plot_density()`
+`build_combined_expr_matrix()`, `plot_umap()`, `plot_tsne()`,
+`plot_density()`, `run_flowsom_flowframes()`, `run_cytonorm()`,
+`run_diffcyt()`
 
-### 2.2 Numeric matrix
+### 3.2 Numeric expression matrix
 
-**What it is.** A standard R numeric matrix with rows as cells and columns as
-markers. Often accompanied by a parallel `sample_labels` character vector of
-the same length as `nrow(matrix)`.
+**What it is.** A standard R numeric matrix with rows as cells and columns as markers. Often accompanied by a parallel `sample_labels` character vector of the same length as `nrow(matrix)`.
 
 **Structure:**
 
@@ -213,18 +179,54 @@ sample_labels <- c("Sample_01", "Sample_01", ..., "Sample_02", ...)
   vectors or in the return list.
 
 **Produced by:**
-`build_combined_expr_matrix()` (returns `$combined_matrix` + `$sample_labels`),
-`combine_expression_matrices()`, `run_batch_correction()` (returns `$corrected_matrix`)
+`build_combined_expr_matrix()$combined_matrix`,
+`run_supercell()$supercell_matrix`,
+`run_batch_correction_dispatch()$corrected_matrix`,
+`run_combat()`, `flowCore::exprs(ff)`
 
 **Consumed by:**
-`run_leiden()`, `run_leiden_with_umap()`, `clusters_to_gating_csv()`,
-`plot_umap_from_matrix()`, `plot_density_from_matrix()`, `plot_pca()`,
-`plot_heatmap()`, `harmony_normalize()`
+`run_leiden()`, `run_flowsom()`, `run_phenograph()`, `run_dbscan()`,
+`run_clustering()` (dispatcher),
+`plot_umap_from_matrix()`, `plot_tsne_from_matrix()`,
+`plot_density_from_matrix()`, `plot_diffusion_map()`,
+`plot_heatmap()`, `plot_pca()`,
+`validate_clusters()`, `annotate_clusters()`,
+`run_supercell()`, `clusters_to_gating_csv()`
 
-### 2.3 Gating CSV (per-sample CSV with binary cluster columns)
+### 3.3 Cluster ID vector
 
-**What it is.** One CSV file per sample on disk. Each row is a cell. Columns
-are expression markers plus binary (0/1) cluster indicator columns.
+**What it is.** An integer vector of cluster assignments, one per cell.
+
+**Shape:** `integer(n_cells)` where values are 1-based cluster IDs. DBSCAN uses 0 for noise points. Length must equal `nrow(expr_matrix)`.
+
+**Produced by:** `run_leiden()`, `run_flowsom()`, `run_phenograph()`,
+`run_dbscan()$cluster_ids`, `run_clustering()` (dispatcher),
+`consensus_clusters()`, `run_resolution_sweep()$best_clusters`
+
+**Consumed by:** `clusters_to_gating_csv()`, `validate_clusters()`,
+`annotate_clusters()`,
+`plot_umap_from_matrix(cluster_labels = ...)`,
+`plot_tsne_from_matrix(cluster_labels = ...)`,
+`run_supercell_per_cluster()`
+
+**Important:** Leiden returns `numeric`, not `integer`. The `run_clustering()` dispatcher coerces to `integer` automatically. If calling `run_leiden()` directly, wrap with `as.integer()`.
+
+### 3.4 Sample labels vector
+
+**What it is.** A character vector mapping each cell row to its source sample.
+
+**Shape:** `character(n_cells)` where `length(sample_labels) == nrow(expr_matrix)`.
+
+**Produced by:** `build_combined_expr_matrix()$sample_labels`,
+`run_batch_correction_dispatch()$sample_labels`,
+`run_supercell()$supercell_labels`
+
+**Consumed by:** `clusters_to_gating_csv()`, visualization functions,
+`run_supercell()`
+
+### 3.5 Per-sample gating CSVs
+
+**What it is.** Semicolon-separated CSV files, one per sample, with expression columns plus binary indicator columns for each cluster (named `Cluster_X (Clustering annotated)`).
 
 **Structure (semicolon-separated):**
 
@@ -234,774 +236,813 @@ CD3;CD4;CD8;CD19;CD56;Cluster_1 (Clustering annotated);Cluster_2 (Clustering ann
 3.15;0.08;2.91;0.03;0.22;0;1
 ```
 
-**Required properties:**
+**Produced by:** `clusters_to_gating_csv()`, `load_csv_gating()`
 
-- Separator: semicolon (`;`) by default, auto-detected by `detect_csv_sep()`.
-- Expression columns: numeric, named by marker.
-- Cluster columns: binary integer (`0` or `1`). Column names match the
-  regex `"Clustering annotated"` (configurable via `cluster_regex`).
-- One file per sample, named `<sample_name>.csv`.
+**Consumed by:** `split_by_cluster()`, `run_differential_abundance()`,
+`run_cluster_enrichment()`, `build_abundance_matrix()`,
+`build_tracking_matrix()`
 
-**Produced by:**
-`clusters_to_gating_csv()`, `load_csv_gating()`
+### 3.6 Validation metrics data frame
 
-**Consumed by:**
-`split_by_cluster()`, `build_abundance_matrix()`, `build_tracking_matrix()`,
-`run_differential_abundance()`, `run_cluster_enrichment()`
+**What it is.** Data frame of cluster quality metrics.
 
-### 2.4 Tracking matrix (wide format)
+**Shape:** `data.frame(metric, value, description)` with one row per computed metric.
 
-**What it is.** A data.frame with one row per sample and one column per
-cluster. Cell values are integer cell counts.
+**Produced by:** `validate_clusters()`
 
-**Structure:**
+**Consumed by:** User inspection, reporting scripts. Can be saved with `data.table::fwrite()`.
 
-```r
-#   file         Cluster_1  Cluster_2  Cluster_3
-#   Sample_01        1250        870        430
-#   Sample_02        1100        920        510
-```
+### 3.7 Annotation data frame
 
-**Required properties:**
+**What it is.** Data frame mapping clusters to cell type labels.
 
-- First column is named `file` (sample identifier).
-- Remaining columns are cluster names (character).
-- Values are non-negative integers.
+**Shape:** `data.frame(cluster, annotation, confidence, median_marker1, median_marker2, ...)` with one row per cluster.
 
-**Produced by:**
-`split_by_cluster()` (returns `$tracking_matrix`), `build_tracking_matrix()`
+**Produced by:** `annotate_clusters()`
 
-**Consumed by:**
-`tracking_matrix_to_long()`, `plot_abundance()`, `plot_abundance_stacked()`,
-`plot_abundance_proportional()`, `plot_abundance_heatmap()`,
-`plot_abundance_totals()`, `calculate_cell_ratios()` (via CSV on disk)
-
-### 2.5 Long data.frame
-
-**What it is.** A tidy data.frame with one row per sample-cluster combination.
-Used for barplots and ggplot-based visualizations.
-
-**Structure:**
-
-```r
-#   file         cluster      count
-#   Sample_01    Cluster_1     1250
-#   Sample_01    Cluster_2      870
-#   Sample_02    Cluster_1     1100
-#   Sample_02    Cluster_2      920
-```
-
-**Required properties:**
-
-- Column names are configurable via `id_col`, `names_to`, `values_to` in
-  `tracking_matrix_to_long()`, but default to `file`, `cluster`, `count`.
-
-**Produced by:**
-`tracking_matrix_to_long()`
-
-**Consumed by:**
-`plot_composition_barplot()`
+**Consumed by:** Can be joined to cluster ID vectors for labeled plots, or used to rename clusters before `clusters_to_gating_csv()`.
 
 ---
 
-## 3. Bridge Functions
+## 4. Bridge Functions
 
-Bridge functions are the key to cross-pipeline composability. They convert
-data between formats so that scripts designed for one input type can accept
-data from a different source.
-
-### 3.1 `build_combined_expr_matrix()` -- flowFrame list to matrix
+### 4.1 `build_combined_expr_matrix()`
 
 **Location:** `src/R_shared/flowframe_utils.R`
 
-**Purpose:** Concatenates expression data from multiple flowFrames into a
-single numeric matrix with a parallel sample-labels vector. This is the
-standard way to move from FCS-originated data into matrix-based scripts
-(clustering, PCA, matrix-based UMAP).
+**Purpose:** Converts a list of flowFrame objects into a single numeric matrix with parallel sample labels. This is the primary bridge from the flowFrame world (loading, preprocessing, harmonization) into the matrix world (clustering, visualization, analysis).
+
+**Signature:**
 
 ```r
-result <- build_combined_expr_matrix(flow_frames, sample_names, markers_of_interest)
-# result$combined_matrix  -- numeric matrix (cells x markers)
-# result$sample_labels    -- character vector (length = nrow)
+build_combined_expr_matrix(flow_frames_list, sample_names, markers_of_interest)
+# Returns: list(combined_matrix, sample_labels)
 ```
 
-### 3.2 `create_flowframes_from_matrices()` -- matrix/data.table to flowFrame list
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `flow_frames_list` | `list(flowFrame)` | Named list of flowFrame objects |
+| `sample_names` | `character` | One name per flowFrame |
+| `markers_of_interest` | `character` | Marker names to extract (must match `markernames()` in the flowFrames) |
+
+**Returns:** A list with two elements:
+- `combined_matrix`: Numeric matrix (cells x markers), all samples row-bound
+- `sample_labels`: Character vector (length = `nrow(combined_matrix)`) tracking which sample each row came from
+
+**Example:**
+
+```r
+source("src/R_shared/flowframe_utils.R")
+result <- build_combined_expr_matrix(flow_frames, sample_names, markers)
+# result$combined_matrix: 50000 x 12 numeric matrix
+# result$sample_labels:   character vector of length 50000
+```
+
+---
+
+### 4.2 `create_flowframes_from_matrices()`
 
 **Location:** `src/loading/create_flowframes.R`
 
-**Purpose:** Wraps expression matrices (or data.tables) into flowFrame
-objects. This lets CSV-loaded data flow into flowFrame-based scripts like
-`plot_umap()`, `plot_density()`, `downsample_flowframes()`, and
-`homogenize_flowframes()`.
+**Purpose:** The reverse of `build_combined_expr_matrix()`. Converts expression matrices (or data.frames) into flowFrame objects, enabling CSV-loaded data to enter the flowFrame-based path (preprocessing, harmonization, flowFrame-based visualization).
+
+**Signature:**
 
 ```r
-flow_frames <- create_flowframes_from_matrices(expr_list, markers_of_interest)
-# expr_list: named list of matrices or data.frames
-# Returns: named list of flowFrame objects
+create_flowframes_from_matrices(expr_list, markers_of_interest = NULL,
+                                save_fcs = FALSE, output_dir = NULL)
+# Returns: list(flowFrame)
 ```
 
-### 3.3 `combine_expression_matrices()` -- data.table list to matrix
+**Parameters:**
 
-**Location:** `src/analysis/expression_matrices.R`
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `expr_list` | `named list(matrix)` | Named list of expression matrices or data.frames |
+| `markers_of_interest` | `character` or `NULL` | Subset columns to these markers (NULL = keep all) |
+| `save_fcs` | `logical` | If TRUE, also write FCS files to disk |
+| `output_dir` | `character` or `NULL` | Directory for FCS output (required if `save_fcs = TRUE`) |
 
-**Purpose:** Row-binds multiple data.tables into a single numeric matrix,
-subsetting to shared markers. A lighter-weight alternative to
-`build_combined_expr_matrix()` when you already have data.tables (not
-flowFrames).
+**Returns:** Named list of flowFrame objects.
+
+**Example:**
 
 ```r
-matrix <- combine_expression_matrices(expr_data_list, markers, max_cells = 50000)
+source("src/loading/create_flowframes.R")
+# Load CSVs, then convert to flowFrames
+expr_list <- list(
+  sample_A = as.matrix(data.table::fread("sample_A.csv")),
+  sample_B = as.matrix(data.table::fread("sample_B.csv"))
+)
+flow_frames <- create_flowframes_from_matrices(expr_list, markers_of_interest = markers)
+# Now these can go into homogenize_flowframes(), plot_umap(), etc.
 ```
 
-### 3.4 `clusters_to_gating_csv()` -- cluster labels to per-sample gating CSVs
+---
+
+### 4.3 `clusters_to_gating_csv()`
 
 **Location:** `src/clustering/leiden.R`
 
-**Purpose:** Takes a combined expression matrix, sample labels, and cluster
-assignments, then writes one CSV per sample with expression columns plus
-binary cluster indicator columns. This converts in-memory clustering results
-into the on-disk gating CSV format consumed by all analysis scripts.
+**Purpose:** Takes a combined expression matrix, sample labels, and cluster IDs, and writes one CSV per sample with binary indicator columns for each cluster (format: `Cluster_X (Clustering annotated)`). This converts clustering output into the CSV gating format that Pipeline C analysis scripts expect.
+
+**Signature:**
 
 ```r
-clusters_to_gating_csv(combined_matrix, sample_labels, cluster_ids, output_dir)
-# Writes: output_dir/Sample_01.csv, output_dir/Sample_02.csv, ...
+clusters_to_gating_csv(combined_matrix, sample_labels, cluster_ids,
+                       output_dir, sep = ";")
+# Returns: character vector of file paths (invisibly)
 ```
 
-### 3.5 `plot_umap_from_matrix()` / `plot_density_from_matrix()` -- direct matrix visualization
+**Parameters:**
 
-**Location:** `src/visualization/umap.R`, `src/visualization/density_plots.R`
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `combined_matrix` | `numeric matrix` | Cells x markers |
+| `sample_labels` | `character` | One per row, identifies source sample |
+| `cluster_ids` | `integer` or `character` | One per row, cluster assignment |
+| `output_dir` | `character` | Directory for output CSVs |
+| `sep` | `character` | CSV separator (default `";"`) |
 
-**Purpose:** Accept a numeric matrix directly, bypassing any need for
-flowFrame conversion. If you have matrix data and only need a plot, use
-these instead of converting to flowFrame first.
+**Returns:** Character vector of written file paths (invisibly).
 
-```r
-plot_umap_from_matrix(expr_matrix, sample_labels, output_dir = "out/")
-plot_density_from_matrix(expr_matrix, sample_labels, markers, output_dir = "out/")
-```
+**Output format:** Each CSV contains all original expression columns plus one binary column per cluster. For example, if Leiden found 8 clusters, each CSV will have 8 additional columns named `Cluster_1 (Clustering annotated)` through `Cluster_8 (Clustering annotated)`, where each cell has a `1` in exactly one cluster column and `0` in all others.
 
----
-
-## 4. Example Workflows
-
-Each workflow below shows the exact function call chain with the data
-format at each step. Copy these as templates and modify parameters for
-your study.
-
-### 4.1 FCS to preprocess to cluster to abundance analysis to volcano plot
-
-The full Pipeline A path: raw FCS files through preprocessing,
-harmonization, Leiden clustering, and differential abundance with
-volcano plot output.
+**Example:**
 
 ```r
-# Step 1: Load raw FCS files
-#   Input:  .fcs files on disk
-#   Output: flowFrame list
-loaded <- load_fcs_raw(input_dir = "data/fcs/")
-flow_frames <- loaded$flow_frames
-sample_names <- loaded$sample_names
-
-# Step 2: Preprocess (QC + transform)
-#   Input:  flowFrame list
-#   Output: flowFrame list
-pp_frames <- run_preprocessing(flow_frames, params, output_dir = "out/preprocessing/")
-
-# Step 3: Downsample
-#   Input:  flowFrame list
-#   Output: flowFrame list
-ds_frames <- downsample_flowframes(pp_frames, sample_names, target_cells = 50000)
-
-# Step 4: Harmonize panels
-#   Input:  flowFrame list
-#   Output: flowFrame list (unified markers)
-hg_frames <- homogenize_flowframes(ds_frames, sample_names, markers_of_interest)
-
-# Step 5: BRIDGE -- flowFrames to matrix
-#   Input:  flowFrame list
-#   Output: numeric matrix + sample labels
-expr_data <- build_combined_expr_matrix(hg_frames, sample_names, markers_of_interest)
-
-# Step 6: Leiden clustering + UMAP
-#   Input:  numeric matrix
-#   Output: data.frame with UMAP1, UMAP2, cluster, sample
-leiden_result <- run_leiden_with_umap(
-  expr_data$combined_matrix, expr_data$sample_labels,
-  output_dir = "out/clustering/"
-)
-
-# Step 7: BRIDGE -- cluster labels to gating CSVs
-#   Input:  matrix + labels + clusters
-#   Output: per-sample CSVs on disk
+source("src/clustering/leiden.R")
 clusters_to_gating_csv(
-  expr_data$combined_matrix, expr_data$sample_labels,
-  leiden_result$cluster, output_dir = "out/gating_csvs/"
+  combined_matrix = expr_data$combined_matrix,
+  sample_labels   = expr_data$sample_labels,
+  cluster_ids     = cluster_ids,
+  output_dir      = "output/gating_csvs/"
 )
-
-# Step 8: Differential abundance (GLMM) + volcano
-#   Input:  gating CSVs on disk + conditions mapping
-#   Output: results data.frame + volcano plot
-results <- run_differential_abundance(
-  data_dir = "out/gating_csvs/",
-  conditions_csv = "config/conditions.csv",
-  output_dir = "out/abundance/"
-)
-```
-
-### 4.2 CSV expression to UMAP + density + PCA
-
-Lightweight exploration of CSV expression data with three visualizations,
-no preprocessing or clustering needed.
-
-```r
-# Step 1: Load CSVs
-#   Input:  .csv files on disk
-#   Output: named list of data.tables
-expr_list <- load_csv_expression(input_dir = "data/csv_expr/")
-
-# Step 2: BRIDGE -- data.tables to matrix
-markers <- c("CD3", "CD4", "CD8", "CD19", "CD56")
-expr_matrix <- combine_expression_matrices(expr_list, markers, max_cells = 100000)
-sample_labels <- rep(names(expr_list), sapply(expr_list, function(dt) {
-  min(nrow(dt), 100000 / length(expr_list))
-}))
-
-# Step 3: UMAP (matrix path, no flowFrame needed)
-plot_umap_from_matrix(expr_matrix, sample_labels, output_dir = "out/umap/")
-
-# Step 4: Density (matrix path)
-plot_density_from_matrix(expr_matrix, sample_labels, markers, output_dir = "out/density/")
-
-# Step 5: PCA
-plot_pca(expr_matrix, sample_labels, output_dir = "out/pca/")
-```
-
-### 4.3 CSV expression to clustering to gating CSV to enrichment analysis
-
-Start from CSV expression data, cluster it, convert to gating CSVs, then
-run enrichment statistics.
-
-```r
-# Step 1: Load CSVs
-expr_list <- load_csv_expression(input_dir = "data/csv_expr/")
-
-# Step 2: BRIDGE -- data.tables to matrix
-markers <- c("CD3", "CD4", "CD8", "CD19", "CD56")
-expr_matrix <- combine_expression_matrices(expr_list, markers)
-sample_labels <- rep(names(expr_list), sapply(expr_list, nrow))
-
-# Step 3: Leiden clustering
-clusters <- run_leiden(expr_matrix, resolution = 0.8)
-
-# Step 4: BRIDGE -- cluster labels to gating CSVs
-clusters_to_gating_csv(expr_matrix, sample_labels, clusters,
-                        output_dir = "out/gating_csvs/")
-
-# Step 5: Enrichment analysis
-enrichment <- run_cluster_enrichment(
-  data_dir = "out/gating_csvs/",
-  conditions_csv = "config/conditions.csv",
-  output_dir = "out/enrichment/"
-)
-
-# Optional: volcano plot from enrichment results
-plot_volcano(enrichment, output_dir = "out/enrichment/",
-             fc_col = "log2_enrichment", title = "Cluster Enrichment")
-```
-
-### 4.4 FCS to matrix to heatmap + PCA (skip clustering)
-
-Quick quality check of FCS data: load, harmonize, extract a matrix, and
-visualize directly. No clustering required.
-
-```r
-# Step 1: Load
-loaded <- load_fcs_raw(input_dir = "data/fcs/")
-
-# Step 2: Harmonize
-hg_frames <- homogenize_flowframes(
-  loaded$flow_frames, loaded$sample_names, markers_of_interest
-)
-
-# Step 3: BRIDGE -- flowFrames to matrix
-expr_data <- build_combined_expr_matrix(
-  hg_frames, loaded$sample_names, markers_of_interest
-)
-
-# Step 4: Heatmap (median expression per sample)
-# Build a sample-level summary matrix first
-sample_medians <- do.call(rbind, lapply(split(
-  as.data.frame(expr_data$combined_matrix),
-  expr_data$sample_labels
-), function(df) apply(df, 2, median)))
-
-plot_heatmap(sample_medians, output_path = "out/heatmap/median_expr.png",
-             title = "Median Expression per Sample")
-
-# Step 5: PCA
-plot_pca(expr_data$combined_matrix, expr_data$sample_labels,
-         output_dir = "out/pca/")
-```
-
-### 4.5 CSV gating to abundance + enrichment to volcano
-
-When you already have gating CSVs (from FlowJo export or a previous
-pipeline run), go directly to statistical analysis.
-
-```r
-# Step 1: Load gating CSVs (produces processed CSVs on disk)
-result <- load_csv_gating(
-  input_fcs_path = "data/fcs/",
-  input_csv_path = "data/csv_gating/",
-  output_path = "out/loaded_gating/",
-  processing_mode = "manual"
-)
-
-# Step 2a: Differential abundance
-da_results <- run_differential_abundance(
-  data_dir = "out/loaded_gating/",
-  conditions_csv = "config/conditions.csv",
-  output_dir = "out/abundance/"
-)
-
-# Step 2b: Cluster enrichment (can run in parallel with 2a)
-enrich_results <- run_cluster_enrichment(
-  data_dir = "out/loaded_gating/",
-  conditions_csv = "config/conditions.csv",
-  output_dir = "out/enrichment/"
-)
-
-# Step 3: Volcano plots for both
-plot_volcano(da_results, output_dir = "out/abundance/",
-             title = "Differential Abundance (GLMM)")
-plot_volcano(enrich_results, output_dir = "out/enrichment/",
-             fc_col = "log2_enrichment", title = "Cluster Enrichment (Fisher)")
-```
-
-### 4.6 FCS to cluster to gating CSV to split to expression matrices to heatmap
-
-Full pipeline from raw FCS files through to per-cluster expression heatmaps.
-
-```r
-# Step 1: Load and preprocess
-loaded <- load_fcs_raw(input_dir = "data/fcs/")
-pp_frames <- run_preprocessing(loaded$flow_frames, params)
-hg_frames <- homogenize_flowframes(pp_frames, loaded$sample_names, markers_of_interest)
-
-# Step 2: BRIDGE -- flowFrames to matrix
-expr_data <- build_combined_expr_matrix(hg_frames, loaded$sample_names, markers_of_interest)
-
-# Step 3: Cluster
-leiden_result <- run_leiden_with_umap(
-  expr_data$combined_matrix, expr_data$sample_labels
-)
-
-# Step 4: BRIDGE -- clusters to gating CSVs
-clusters_to_gating_csv(
-  expr_data$combined_matrix, expr_data$sample_labels,
-  leiden_result$cluster, output_dir = "out/gating_csvs/"
-)
-
-# Step 5: Split by cluster
-split_result <- split_by_cluster(
-  input_dir = "out/gating_csvs/",
-  output_dir = "out/split_clusters/",
-  markers_of_interest = markers_of_interest
-)
-
-# Step 6: Create per-group expression matrices
-expr_matrices <- create_expression_matrices(
-  input_dir = "out/split_clusters/",
-  output_dir = "out/expr_matrices/"
-)
-
-# Step 7: Heatmap per cluster group
-for (group_name in names(expr_matrices)) {
-  mtx <- as.matrix(expr_matrices[[group_name]])
-  plot_heatmap(mtx, output_path = paste0("out/heatmaps/", group_name, ".png"),
-               title = paste("Expression:", group_name))
-}
-
-# Bonus: Abundance plots from the tracking matrix
-plot_abundance(tracking_matrix = split_result$tracking_matrix,
-               output_dir = "out/abundance_plots/")
-```
-
-### 4.7 FlowJo workspace comparison to Venn/UpSet
-
-Compare gating across multiple FlowJo workspaces.
-
-```r
-# Step 1: Load multiple workspaces
-pop_strings <- load_multiple_workspaces(
-  wsp_paths = c("data/wsp/analyst1.wsp", "data/wsp/analyst2.wsp"),
-  names = c("Analyst_1", "Analyst_2"),
-  fcs_dirs = "data/fcs/"
-)
-
-# Step 2: Build binary membership matrix for each population
-# (typically handled by metadata_qc/compare_gatings.R, but you can
-#  construct it manually from the pop_strings lists)
-for (sample_name in names(pop_strings[["Analyst_1"]])) {
-  pops_1 <- pop_strings[["Analyst_1"]][[sample_name]]
-  pops_2 <- pop_strings[["Analyst_2"]][[sample_name]]
-  # Build index lists for overlap
-  all_pops <- union(unique(pops_1), unique(pops_2))
-  for (pop in all_pops[!is.na(all_pops)]) {
-    sets <- list(
-      Analyst_1 = which(pops_1 == pop),
-      Analyst_2 = which(pops_2 == pop)
-    )
-    if (all(sapply(sets, length) > 0)) {
-      plot_euler(sets, output_dir = "out/venn/",
-                 filename = paste0(sample_name, "_", basename(pop)))
-      plot_upset_from_list(sets, output_path = paste0("out/upset/",
-                           sample_name, "_", basename(pop), ".png"))
-    }
-  }
-}
-```
-
-### 4.8 CSV expression to flowFrame to UMAP (via bridge)
-
-When you want to use the flowFrame-based `plot_umap()` with CSV data,
-convert through the bridge function.
-
-```r
-# Step 1: Load CSVs
-expr_list <- load_csv_expression(input_dir = "data/csv_expr/")
-
-# Step 2: BRIDGE -- data.tables to flowFrames
-markers <- c("CD3", "CD4", "CD8", "CD19", "CD56")
-flow_frames <- create_flowframes_from_matrices(expr_list, markers_of_interest = markers)
-
-# Step 3: flowFrame-based UMAP
-plot_umap(flow_frames, names(flow_frames), markers_of_interest = markers,
-          output_dir = "out/umap/")
-
-# Note: for most cases, plot_umap_from_matrix() is simpler. Use this path
-# only if you need to chain into other flowFrame-based scripts (e.g.,
-# downsampling, harmonization) before plotting.
+# Writes: output/gating_csvs/sample_A.csv, output/gating_csvs/sample_B.csv, ...
 ```
 
 ---
 
-## 5. Decision Tree
+### 4.4 `run_supercell()`
 
-Use this tree to determine which scripts to chain for your specific
-situation.
+**Location:** `src/preprocessing/supercell.R`
 
+**Purpose:** Compresses single-cell data into supercells (metacells) using SuperCellCyto. Reduces the number of rows by a factor of `gam` (default 20x) while preserving population structure. Insert this between `build_combined_expr_matrix()` and clustering/visualization to handle large datasets.
+
+**Signature:**
+
+```r
+run_supercell(expr_matrix, sample_labels, markers,
+              gam = 20, k_knn = 30, n_pc = 10,
+              do_pca = TRUE, seed = 42)
+# Returns: list(supercell_matrix, supercell_labels, cell_map, supercell_sizes)
 ```
-What is your INPUT data?
-|
-+-- .fcs files
-|   |
-|   +-- Do you need quality control / transformation?
-|   |   |
-|   |   +-- YES --> load_fcs_raw() -> run_preprocessing()
-|   |   |           -> [continue below with flowFrame list]
-|   |   |
-|   |   +-- NO  --> load_fcs_raw()
-|   |               -> [continue below with flowFrame list]
-|   |
-|   +-- [flowFrame list] -- What is your GOAL?
-|       |
-|       +-- UMAP/density visualization
-|       |   |
-|       |   +-- Option A (direct): plot_umap() / plot_density()
-|       |   +-- Option B (via matrix): build_combined_expr_matrix()
-|       |       -> plot_umap_from_matrix() / plot_density_from_matrix()
-|       |
-|       +-- PCA / heatmap
-|       |   -> build_combined_expr_matrix() -> plot_pca() / plot_heatmap()
-|       |
-|       +-- Clustering
-|       |   -> build_combined_expr_matrix() -> run_leiden()
-|       |      -> [continue below with cluster labels]
-|       |
-|       +-- Differential abundance / enrichment
-|           -> build_combined_expr_matrix() -> run_leiden()
-|              -> clusters_to_gating_csv()
-|              -> run_differential_abundance() / run_cluster_enrichment()
-|
-+-- .csv expression files (no gating columns)
-|   |
-|   +-- load_csv_expression()
-|   |
-|   +-- What is your GOAL?
-|       |
-|       +-- UMAP/density/PCA (quick look)
-|       |   -> combine_expression_matrices()
-|       |      -> plot_umap_from_matrix() / plot_density_from_matrix() / plot_pca()
-|       |
-|       +-- Heatmap
-|       |   -> combine_expression_matrices() -> plot_heatmap()
-|       |
-|       +-- Clustering then analysis
-|       |   -> combine_expression_matrices() -> run_leiden()
-|       |      -> clusters_to_gating_csv()
-|       |      -> [see gating CSV goals below]
-|       |
-|       +-- Feed into flowFrame-based scripts
-|           -> create_flowframes_from_matrices()
-|              -> [treat as flowFrame list above]
-|
-+-- .csv files with gating/cluster columns
-|   |
-|   +-- load_csv_gating() or use CSVs directly
-|   |
-|   +-- What is your GOAL?
-|       |
-|       +-- Abundance analysis
-|       |   -> build_abundance_matrix() or build_tracking_matrix()
-|       |      -> run_differential_abundance() / plot_abundance()
-|       |
-|       +-- Enrichment analysis
-|       |   -> run_cluster_enrichment()
-|       |
-|       +-- Split by cluster then analyze per-cluster
-|       |   -> split_by_cluster()
-|       |      -> create_expression_matrices() -> plot_heatmap()
-|       |      -> run_marker_statistics()
-|       |
-|       +-- Composition barplots
-|       |   -> split_by_cluster() -> tracking_matrix_to_long()
-|       |      -> plot_composition_barplot()
-|       |
-|       +-- Cell type ratios
-|       |   -> build_tracking_matrix() -> calculate_cell_ratios()
-|       |
-|       +-- Volcano plot
-|           -> run_differential_abundance() -> plot_volcano()
-|           or run_cluster_enrichment() -> plot_volcano(fc_col="log2_enrichment")
-|
-+-- .wsp FlowJo workspace files
-    |
-    +-- Single workspace
-    |   -> load_flowjo_wsp() -> get_population_stats()
-    |
-    +-- Compare multiple workspaces
-        -> load_multiple_workspaces()
-           -> compare_gatings() / compute_fleiss_kappa()
-           -> plot_euler() / plot_upset() / plot_venn()
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `expr_matrix` | `numeric matrix` | Cells x markers |
+| `sample_labels` | `character` | One per row |
+| `markers` | `character` | Marker column names to use for compression |
+| `gam` | `numeric` | Graining level: higher = fewer supercells (20 = ~1/20 compression) |
+| `k_knn` | `integer` | Nearest neighbors for graph construction |
+| `n_pc` | `integer` | Number of PCs for initial reduction |
+| `do_pca` | `logical` | Run PCA before supercell construction |
+| `seed` | `integer` | Random seed |
+
+**Returns:** A list with:
+- `supercell_matrix`: Compressed numeric matrix (supercells x markers)
+- `supercell_labels`: Sample labels for each supercell
+- `cell_map`: `data.table` mapping original cell IDs to supercell IDs
+- `supercell_sizes`: `data.table` with the number of cells in each supercell
+
+**Also available:** `run_supercell_per_cluster()` applies compression independently within each cluster, preserving cluster boundaries. Useful when clusters have very different densities or when you need cluster-aware metacells.
+
+**Example:**
+
+```r
+source("src/preprocessing/supercell.R")
+sc <- run_supercell(expr_matrix, sample_labels, markers, gam = 20)
+# sc$supercell_matrix: 2500 x 12 (down from 50000 x 12)
+# Now cluster the compressed matrix:
+cluster_ids <- run_leiden(sc$supercell_matrix)
 ```
 
 ---
 
-## 6. Quick Reference Table
+### 4.5 `plot_umap_from_matrix()` / `plot_tsne_from_matrix()`
 
-For each script, this table shows: the primary function(s) exported, what
-they require as input, what they produce as output, and which downstream
-scripts they connect to.
+**Location:** `src/visualization/umap.R` / `src/visualization/tsne.R`
 
-### Loading
+**Purpose:** Generate dimensionality reduction visualizations directly from a numeric matrix, without requiring flowFrame objects. These are the matrix-based counterparts to `plot_umap()` and `plot_tsne()`.
 
-| Script | Function | Input | Output | Connects to |
-|--------|----------|-------|--------|-------------|
-| `load_fcs_raw.R` | `load_fcs_raw(input_dir)` | Directory of `.fcs` files | `list(flow_frames, sample_names, input_files)` | `run_preprocessing()`, `downsample_flowframes()`, `homogenize_flowframes()`, `build_combined_expr_matrix()`, `plot_umap()`, `plot_density()` |
-| `load_csv_expression.R` | `load_csv_expression(input_dir)` | Directory of `.csv` expression files | Named list of data.tables | `combine_expression_matrices()`, `create_flowframes_from_matrices()` |
-| `load_csv_gating.R` | `load_csv_gating(input_fcs_path, ...)` | Directory of `.csv` + `.fcs` files | Gating CSVs on disk (via `output_path`) | `split_by_cluster()`, `build_abundance_matrix()`, `run_differential_abundance()`, `run_cluster_enrichment()` |
-| `load_flowjo_wsp.R` | `load_flowjo_wsp(wsp_path)` | `.wsp` file + FCS directory | `list(gating_set, sample_names, population_names)` | `get_population_stats()`, `get_population_strings_list()`, `import_flowjo_gates()` |
-| `load_flowjo_wsp.R` | `load_multiple_workspaces(wsp_paths, names)` | Multiple `.wsp` files | Named list of population string lists | `compare_gatings()`, `compute_fleiss_kappa()`, `plot_euler()`, `plot_venn()`, `plot_upset()` |
-| `load_manual_gating.R` | `load_manual_gating(csv_dir)` | Directory of CSV files with gating columns | Named list of label vectors (one per sample) | Custom downstream analysis |
-| `create_flowframes.R` | `create_flowframes_from_matrices(expr_list)` | Named list of matrices/data.frames | Named list of flowFrame objects | `plot_umap()`, `plot_density()`, `downsample_flowframes()`, `homogenize_flowframes()` |
+**Signature (`plot_umap_from_matrix`):**
 
-### Preprocessing
+```r
+plot_umap_from_matrix(expr_matrix, sample_labels = NULL,
+                      markers_of_interest = NULL,
+                      cluster_labels = NULL,
+                      condition_labels = NULL,
+                      output_dir, n_neighbors = 15,
+                      min_dist = 0.1, umap_coords = NULL,
+                      output_formats = list(pdf = FALSE, png = TRUE, svg = TRUE),
+                      plot_width = 10, plot_height = 8, seed = 42)
+# Returns: list(umap_coords, sample_labels, plots)
+```
 
-| Script | Function | Input | Output | Connects to |
-|--------|----------|-------|--------|-------------|
-| `preprocess_pipeline.R` | `run_preprocessing(flow_frames, params)` | Named list of flowFrames + params list | Named list of preprocessed flowFrames | `downsample_flowframes()`, `homogenize_flowframes()`, `build_combined_expr_matrix()`, `plot_umap()`, `plot_density()` |
-| `downsampling.R` | `downsample_flowframes(flow_frames, sample_names, target_cells)` | Named list of flowFrames | Named list of downsampled flowFrames | Same as above |
-| `transformation.R` | `transform_flowframe(flowframe, sample_name, markers, offsets, widths)` | Single flowFrame | Transformed flowFrame | Used within `run_preprocessing()` |
-| `normalization.R` | `z_score_scaling(flowframe, marker_indices)` | Single flowFrame | Scaled flowFrame | Used within `run_preprocessing()` |
-| `normalization.R` | `quantile_norm(flowframe, marker_indices)` | Single flowFrame | Normalized flowFrame | Used within `run_preprocessing()` |
-| `normalization.R` | `harmony_normalize(expr_matrix, batch_vector)` | Numeric matrix + batch labels | Corrected matrix | `run_leiden()`, `plot_umap_from_matrix()` |
-| `quality_control.R` | `quality_control(flowframe, sample_name)` | Single flowFrame | QC-filtered flowFrame | Used within `run_preprocessing()` |
-| `compensation.R` | `apply_compensation(flowframe, comp_matrix)` | Single flowFrame | Compensated flowFrame | `quality_control()`, `transform_flowframe()` |
-| `spectral_unmixing.R` | `unmix_spectral(flowframe, unmixing_matrix)` | Single flowFrame + unmixing matrix | Unmixed flowFrame | `quality_control()`, `transform_flowframe()` |
-| `bead_normalization.R` | `normalize_beads(flowframe, bead_channels)` | Single flowFrame | `list(normalized_ff, bead_indices, normalization_factors)` | `quality_control()`, `transform_flowframe()` |
-| `doublet_detection.R` | `detect_doublets(flowframe)` | Single flowFrame | `list(filtered_ff, doublet_indices, singlet_rate)` | `quality_control()`, `transform_flowframe()` |
-| `live_dead_gating.R` | `gate_live_cells(flowframe, viability_channel)` | Single flowFrame | `list(live_ff, dead_indices, viability_rate)` | `quality_control()`, `transform_flowframe()` |
-| `supercell.R` | `run_supercell(expr_matrix, sample_labels, markers)` | Numeric matrix + sample labels | `list(supercell_matrix, supercell_labels, cell_map, supercell_sizes)` | `run_leiden()`, `run_flowsom()`, `plot_umap_from_matrix()` |
-| `automated_gating.R` | `run_auto_gating(flowframe, method, channels)` | Single flowFrame | `list(gated_ff, gate_coords, population_stats)` | Downstream analysis |
-| `gate_utils.R` | `apply_gate_sequence(flowframe, gate_list)` | Single flowFrame + gate list | `list(gated_ff, gate_indices, population_stats)` | Downstream analysis |
+**Signature (`plot_tsne_from_matrix`):**
 
-### Harmonization
+```r
+plot_tsne_from_matrix(expr_matrix, sample_labels = NULL,
+                      cluster_labels = NULL,
+                      condition_labels = NULL,
+                      output_dir, perplexity = 30,
+                      max_iter = 1000, tsne_coords = NULL,
+                      output_formats = list(pdf = FALSE, png = TRUE, svg = TRUE),
+                      plot_width = 10, plot_height = 8, seed = 42)
+# Returns: list(tsne_coords, sample_labels, plots)
+```
 
-| Script | Function | Input | Output | Connects to |
-|--------|----------|-------|--------|-------------|
-| `panel_homogenization.R` | `homogenize_flowframes(flow_frames, sample_names, markers)` | Named list of flowFrames | Named list of homogenized flowFrames | `build_combined_expr_matrix()`, `run_batch_correction()`, `plot_umap()`, `plot_density()` |
-| `batch_correction.R` | `run_batch_correction(flow_frames, sample_names, batch_labels)` | Named list of homogenized flowFrames | `list(corrected_matrix, sample_labels, batch_labels, markers)` | `run_leiden()`, `plot_umap_from_matrix()`, `plot_pca()` |
-| `cytonorm.R` | `run_cytonorm(train_frames, validation_frames, batch_labels, markers)` | flowFrame lists + batch labels | `list(corrected_frames, model)` | `transform_flowframe()`, `run_leiden()` |
-| `combat.R` | `run_combat(expr_matrix, batch_vector, covariates)` | Numeric matrix + batch vector | Corrected numeric matrix | `run_leiden()`, `plot_umap_from_matrix()` |
+**Key features:**
+- Accept optional `cluster_labels` to overlay cluster assignments on the embedding
+- Accept optional `condition_labels` (UMAP) for faceted condition plots
+- Accept optional pre-computed coordinates (`umap_coords` / `tsne_coords`) to skip recomputation
+- Automatically exclude Time, FSC, SSC, and index columns from computation
+- Generate per-marker expression overlay plots
 
-### Clustering
+**Example:**
 
-| Script | Function | Input | Output | Connects to |
-|--------|----------|-------|--------|-------------|
-| `leiden.R` | `run_leiden(expr_matrix)` | Numeric matrix | Integer vector of cluster IDs | `clusters_to_gating_csv()` |
-| `leiden.R` | `run_leiden_with_umap(expr_matrix, sample_labels)` | Numeric matrix + sample labels | Data.frame with UMAP1, UMAP2, cluster, sample | `clusters_to_gating_csv()`, `plot_umap_from_matrix()` (reuse UMAP coords) |
-| `leiden.R` | `clusters_to_gating_csv(matrix, labels, clusters, output_dir)` | Matrix + sample labels + cluster IDs | Per-sample gating CSVs on disk | `split_by_cluster()`, `build_abundance_matrix()`, `run_differential_abundance()`, `run_cluster_enrichment()` |
-| `flowjo_import.R` | `import_flowjo_gates(wsp_path)` | `.wsp` file + FCS directory | `list(gating_set, assignments)` with binary population columns | `get_cluster_assignments()` |
-| `cluster_assignment.R` | `get_cluster_assignments(source, ...)` | Depends on source type | Data.frame with cell_id, cluster, cluster_name | Custom downstream analysis |
-| `flowsom.R` | `run_flowsom(expr_matrix, n_clusters)` | Numeric matrix | Integer vector of cluster IDs | `clusters_to_gating_csv()`, `validate_clusters()` |
-| `flowsom.R` | `run_flowsom_flowframes(flow_frames, markers, n_clusters)` | flowFrame list | `list(cluster_ids, flowsom_obj, sample_labels)` | `clusters_to_gating_csv()` |
-| `phenograph.R` | `run_phenograph(expr_matrix, k)` | Numeric matrix | Integer vector of cluster IDs | `clusters_to_gating_csv()`, `validate_clusters()` |
-| `dbscan.R` | `run_dbscan(expr_matrix, eps, min_pts)` | Numeric matrix | `list(cluster_ids, noise_indices, n_clusters)` | `clusters_to_gating_csv()`, `validate_clusters()` |
-| `meta_clustering.R` | `run_resolution_sweep(expr_matrix, method, resolutions)` | Numeric matrix | `list(best_clusters, best_param, scores_df, all_clusterings)` | `clusters_to_gating_csv()` |
-| `meta_clustering.R` | `consensus_clusters(cluster_list)` | Named list of cluster vectors | Integer vector of consensus cluster IDs | `clusters_to_gating_csv()` |
-| `cluster_validation.R` | `validate_clusters(expr_matrix, cluster_ids)` | Numeric matrix + cluster IDs | Data.frame with metric values | Standalone report |
-| `cell_annotation.R` | `annotate_clusters(expr_matrix, cluster_ids, markers)` | Numeric matrix + cluster IDs | Data.frame with cluster, annotation, confidence | Visualization, analysis |
-
-### Analysis
-
-| Script | Function | Input | Output | Connects to |
-|--------|----------|-------|--------|-------------|
-| `cluster_splitting.R` | `split_by_cluster(input_dir, output_dir)` | Directory of gating CSVs | `list(tracking_matrix, cluster_summary, output_files)` + per-cluster CSVs on disk | `tracking_matrix_to_long()`, `create_expression_matrices()`, `run_marker_statistics()`, `plot_abundance()` |
-| `cluster_splitting.R` | `tracking_matrix_to_long(tracking_matrix)` | Tracking matrix (wide) | Long data.frame | `plot_composition_barplot()` |
-| `differential_abundance.R` | `build_abundance_matrix(data_dir)` | Directory of gating CSVs | `list(abundance_df, all_clusters, valid_clusters)` | `run_differential_abundance()`, `run_cluster_enrichment()`, `plot_abundance()` |
-| `differential_abundance.R` | `run_differential_abundance(data_dir, conditions_csv, output_dir)` | Directory of gating CSVs + conditions mapping | Results data.frame + volcano plot | `plot_volcano()` |
-| `differential_abundance.R` | `plot_volcano(results_df, output_dir)` | Data.frame with log2fc, p_adjusted, cluster | Volcano plot on disk | Standalone output |
-| `cluster_enrichment.R` | `run_cluster_enrichment(data_dir, conditions_csv, output_dir)` | Directory of gating CSVs + conditions mapping | Results data.frame with Fisher/ME statistics | `plot_volcano(fc_col="log2_enrichment")` |
-| `expression_matrices.R` | `create_expression_matrices(input_dir, output_dir)` | Directory of cluster-split CSVs | Named list of per-group data.tables + CSVs on disk | `plot_heatmap()`, `plot_cluster_heatmap()` |
-| `expression_matrices.R` | `combine_expression_matrices(expr_list, markers)` | Named list of data.tables | Numeric matrix | `plot_heatmap()`, `plot_pca()`, `plot_umap_from_matrix()`, `run_leiden()` |
-| `marker_statistics.R` | `run_marker_statistics(input_folder, output_folder)` | Directory of per-population CSVs | Results data.frame + CSV on disk | Standalone output |
-| `abundance_plotting.R` | `build_tracking_matrix(input_dir, cluster_regex, ...)` | Directory of gating CSVs | Tracking matrix (wide data.frame) | `plot_abundance()`, `tracking_matrix_to_long()`, `calculate_cell_ratios()` |
-| `abundance_plotting.R` | `plot_abundance(output_dir, tracking_matrix)` | Tracking matrix or path to CSV | Stacked barplot, proportional barplot, heatmap, totals plot | Standalone output |
-| `cell_ratio.R` | `calculate_cell_ratios(abundance_csv, num, den)` | Abundance CSV (tracking matrix on disk) | Data.frame with ratio, log2_ratio per sample | Standalone output |
-| `differential_expression.R` | `run_differential_expression(input_dir, conditions_csv, output_dir)` | Gating CSVs + conditions mapping | Data.frame with cluster, marker, log2fc, pvalue, padj | `plot_heatmap()` |
-| `effect_sizes.R` | `compute_effect_sizes(expr_data, condition_col, value_cols)` | data.table with markers + condition | Data.frame with marker, effect_size, ci, method | Standalone report |
-| `correlation_analysis.R` | `run_correlation_analysis(expr_matrix, method)` | Numeric matrix | `list(cor_matrix, p_matrix, significant_pairs)` | `plot_heatmap()` |
-| `diffcyt_analysis.R` | `run_diffcyt(flow_frames, experiment_info, markers)` | flowFrame list + experiment info | `list(results, top_table, cluster_assignments)` | Standalone output |
-| `survival_analysis.R` | `run_survival_analysis(abundance_matrix, clinical_csv, output_dir)` | Abundance data.frame + clinical CSV | Data.frame with cluster, hr, ci, pvalue, padj | Standalone output |
-
-### Visualization
-
-| Script | Function | Input | Output | Connects to |
-|--------|----------|-------|--------|-------------|
-| `umap.R` | `plot_umap(flow_frames, sample_names, ...)` | Named list of flowFrames | UMAP plots on disk + `list(umap_coords, plots)` | Standalone output |
-| `umap.R` | `plot_umap_from_matrix(expr_matrix, ...)` | Numeric matrix | UMAP plots on disk + `list(umap_coords, plots)` | Standalone output |
-| `density_plots.R` | `plot_density(flow_frames, sample_names, markers, ...)` | Named list of flowFrames | Density/ridge plots on disk | Standalone output |
-| `density_plots.R` | `plot_density_from_matrix(expr_matrix, ...)` | Numeric matrix | Density/ridge plots on disk | Standalone output |
-| `heatmaps.R` | `plot_heatmap(expr_matrix, output_path)` | Numeric matrix (rows x markers) | Heatmap on disk | Standalone output |
-| `heatmaps.R` | `plot_cluster_heatmap(expr_data, cluster_col, marker_cols, ...)` | Data.frame with expression + cluster column | Median expression heatmap on disk | Standalone output |
-| `barplots.R` | `plot_composition_barplot(data, output_dir)` | Long data.frame with sample, cluster, count | Barplot on disk | Standalone output |
-| `pca.R` | `plot_pca(expr_matrix, sample_labels, output_dir)` | Numeric matrix | PCA scatter + loadings plots on disk | Standalone output |
-| `upset_plots.R` | `plot_upset(data, set_columns, output_path)` | Data.frame with binary columns | UpSet plot on disk | Standalone output |
-| `upset_plots.R` | `plot_upset_from_list(sets, output_path)` | Named list of vectors | UpSet plot on disk | Standalone output |
-| `venn_diagrams.R` | `plot_euler(sets, output_dir, filename)` | Named list of index vectors | Euler diagram on disk | Standalone output |
-| `venn_diagrams.R` | `plot_venn(sets, filename, output_dir)` | Named list of index vectors | Venn diagram on disk | Standalone output |
-| `tsne.R` | `plot_tsne(flow_frames, sample_names, ...)` | Named list of flowFrames | t-SNE plots on disk + `list(tsne_coords, plots)` | Standalone output |
-| `tsne.R` | `plot_tsne_from_matrix(expr_matrix, ...)` | Numeric matrix | t-SNE plots on disk + `list(tsne_coords, plots)` | Standalone output |
-| `diffusion_map.R` | `plot_diffusion_map(expr_matrix, ...)` | Numeric matrix | Diffusion map plots + `list(dm_coords, eigenvalues, plots)` | Standalone output |
-| `biaxial_plots.R` | `plot_biaxial(flowframe, x_marker, y_marker, ...)` | flowFrame or numeric matrix | Biaxial scatter/pseudocolor plot | Standalone output |
-| `violin_plots.R` | `plot_violin(expr_data, markers, group_col, ...)` | data.table with markers + grouping col | Violin/box plots on disk | Standalone output |
-| `radar_plots.R` | `plot_radar(cluster_medians, markers, ...)` | data.frame (cluster x marker medians) | Radar/spider charts on disk | Standalone output |
-| `contour_plots.R` | `plot_contour(coords, group_labels, ...)` | data.frame with x, y columns | 2D contour/density plots on disk | Standalone output |
-
-### Shared Utilities (bridge functions)
-
-| Script | Function | Input | Output | Purpose |
-|--------|----------|-------|--------|---------|
-| `R_shared/flowframe_utils.R` | `build_combined_expr_matrix(flow_frames, sample_names, markers)` | flowFrame list | `list(combined_matrix, sample_labels)` | flowFrame list to numeric matrix |
-| `R_shared/flowframe_utils.R` | `extract_exprmtx_list(flow_frames, sample_names, markers)` | flowFrame list | Named list of matrices | flowFrame list to per-sample matrices |
-| `R_shared/flowframe_utils.R` | `from_mtx_to_ffr(mtx)` | Numeric matrix | Single flowFrame | Matrix to flowFrame (single sample) |
-| `R_shared/stats_utils.R` | `run_umap(expr_matrix, ...)` | Numeric matrix | 2-column UMAP coordinate matrix | Reusable UMAP computation |
-| `R_shared/stats_utils.R` | `run_pca(expr_matrix, ...)` | Numeric matrix | `list(coordinates, variance_explained, loadings)` | Reusable PCA computation |
+```r
+source("src/visualization/umap.R")
+umap_result <- plot_umap_from_matrix(
+  expr_matrix    = expr_data$combined_matrix,
+  sample_labels  = expr_data$sample_labels,
+  cluster_labels = cluster_ids,
+  output_dir     = "output/umap/"
+)
+# Saves: umap_sample.png, umap_cluster.png, umap_<marker>.png for each marker
+# Returns umap_coords for reuse in other visualizations
+```
 
 ---
 
-## 7. Method Swapping
+### 4.6 Clustering Functions
 
-Three dispatcher modules in `src/R_shared/` let you swap any method at any
-pipeline step by changing a single config parameter. The dispatchers
-normalize inputs and outputs so downstream code needs no changes.
+**Location:** `src/clustering/` (individual files) or `src/R_shared/clustering_dispatch.R` (dispatcher)
 
-### 7.1 Clustering: `run_clustering()`
+All four clustering methods accept a numeric expression matrix and return cluster assignments:
+
+| Function | File | Key Parameters | Return type | Notes |
+|----------|------|----------------|-------------|-------|
+| `run_leiden()` | `clustering/leiden.R` | `n_neighbors` (30), `resolution` (1.0), `seed` (42) | `numeric` vector | Coerce with `as.integer()` when calling directly |
+| `run_flowsom()` | `clustering/flowsom.R` | `n_clusters` (20), `grid_xdim` (10), `grid_ydim` (10), `seed` (42) | `integer` vector | Deterministic cluster count via ConsensusClusterPlus |
+| `run_phenograph()` | `clustering/phenograph.R` | `k` (30), `seed` (42) | `integer` vector | KNN + SNN graph + Louvain community detection |
+| `run_dbscan()` | `clustering/dbscan.R` | `eps` (auto), `min_pts` (5), `auto_eps` (TRUE), `seed` (42) | **list** with `$cluster_ids` | Cluster 0 = noise; use `$cluster_ids` to extract vector |
+
+**Contract:** All methods accept `matrix(cells x markers)` and produce cluster assignments of `length == nrow(expr_matrix)`. The `run_clustering()` dispatcher enforces a uniform `integer` vector output for all methods.
+
+**FlowSOM also provides** `run_flowsom_flowframes()` which accepts a flowFrame list directly and handles the matrix conversion internally, returning `list(cluster_ids, flowsom_obj, sample_labels)`.
+
+---
+
+### 4.7 `validate_clusters()`
+
+**Location:** `src/clustering/cluster_validation.R`
+
+**Purpose:** Compute internal validation metrics (silhouette width, Calinski-Harabasz index, Davies-Bouldin index) and, when ground-truth labels are available, external metrics (adjusted Rand index). Works with any clustering method's output.
+
+**Signature:**
+
+```r
+validate_clusters(expr_matrix, cluster_ids,
+                  true_labels = NULL,
+                  metrics = c("silhouette", "calinski_harabasz"),
+                  sample_size = 5000, seed = 42)
+# Returns: data.frame(metric, value, description)
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `expr_matrix` | `numeric matrix` | Cells x markers |
+| `cluster_ids` | `integer` | Cluster assignments (length = nrow) |
+| `true_labels` | `integer`/`character` or `NULL` | Ground-truth labels for ARI computation |
+| `metrics` | `character` | Which metrics: `"silhouette"`, `"calinski_harabasz"`, `"davies_bouldin"` |
+| `sample_size` | `integer` | Max cells for metric computation (subsamples if exceeded) |
+
+**Interpretation of metrics:**
+
+| Metric | Range | Better is | Measures |
+|--------|-------|-----------|----------|
+| Silhouette | -1 to 1 | Higher | How well each cell fits its cluster vs. nearest neighbor cluster |
+| Calinski-Harabasz | 0 to Inf | Higher | Ratio of between-cluster to within-cluster dispersion |
+| Davies-Bouldin | 0 to Inf | Lower | Average similarity between each cluster and its most similar cluster |
+| Adjusted Rand Index | -1 to 1 | Higher (1 = perfect) | Agreement between predicted and true labels |
+
+**Example:**
+
+```r
+source("src/clustering/cluster_validation.R")
+quality <- validate_clusters(expr_matrix, cluster_ids,
+                             metrics = c("silhouette", "calinski_harabasz", "davies_bouldin"))
+print(quality)
+#              metric     value                                          description
+# 1        n_clusters        12                                  Number of clusters
+# 2           n_cells     50000                              Total number of cells
+# 3        silhouette    0.3421  Mean silhouette width (-1 to 1; higher = better)
+# 4 calinski_harabasz   245.120  Calinski-Harabasz index (higher = better defined)
+# 5    davies_bouldin    1.2340  Davies-Bouldin index (lower = better separation)
+```
+
+---
+
+### 4.8 `annotate_clusters()`
+
+**Location:** `src/clustering/cell_annotation.R`
+
+**Purpose:** Assign cell type labels to clusters based on their marker expression profiles. Three annotation methods are available.
+
+**Signature:**
+
+```r
+annotate_clusters(expr_matrix, cluster_ids,
+                  markers = NULL, reference = "auto",
+                  method = "threshold")
+# Returns: data.frame(cluster, annotation, confidence, median_marker1, ...)
+```
+
+**Annotation methods:**
+
+| Method | How it works | When to use |
+|--------|-------------|-------------|
+| `"threshold"` | Markers above the global median are called positive (+), below negative (-). Builds phenotype strings like `CD3+CD4+CD8-`. Confidence = fraction of markers with clear (abs(z) > 1) calls. | Quick exploratory annotation, well-separated populations |
+| `"correlation"` | Cosine similarity between cluster median profiles and a user-provided reference matrix. Assigns the best-matching reference cell type. | When you have a known reference panel (e.g., from the literature or a previous experiment) |
+| `"manual"` | Returns median expression per cluster without automatic labels. User inspects the medians and assigns labels manually. | Complex panels, ambiguous populations |
+
+**Example:**
+
+```r
+source("src/clustering/cell_annotation.R")
+annotations <- annotate_clusters(expr_matrix, cluster_ids, method = "threshold")
+# annotations$cluster:    1, 2, 3, ...
+# annotations$annotation: "CD3+CD4+", "CD3+CD8+", "CD19+", ...
+# annotations$confidence: 0.85, 0.92, 0.78, ...
+
+# With a reference matrix for correlation-based annotation:
+ref_profiles <- matrix(c(1, 1, 0, 0, 0,    # T helper
+                          1, 0, 1, 0, 0,    # cytotoxic T
+                          0, 0, 0, 1, 0),   # B cell
+                        nrow = 3, byrow = TRUE,
+                        dimnames = list(c("T_helper", "Cytotoxic_T", "B_cell"),
+                                        c("CD3", "CD4", "CD8", "CD19", "CD56")))
+annotations <- annotate_clusters(expr_matrix, cluster_ids,
+                                 reference = ref_profiles, method = "correlation")
+```
+
+---
+
+## 5. Method Dispatchers
+
+Three dispatcher functions in `src/R_shared/` allow swapping methods via a single config parameter. Each dispatcher validates input, sources the appropriate module, normalizes output format, and handles fallbacks.
+
+### 5.1 Clustering Dispatcher: `run_clustering()`
 
 **Location:** `src/R_shared/clustering_dispatch.R`
 
-Set `clustering_method` in your config to one of:
-
-| Value | Routes to | Key params |
-|-------|-----------|------------|
-| `"leiden"` | `run_leiden()` | `n_neighbors`, `resolution` |
-| `"flowsom"` | `run_flowsom()` | `n_clusters`, `grid_xdim`, `grid_ydim` |
-| `"phenograph"` | `run_phenograph()` | `k` (or `n_neighbors`) |
-| `"dbscan"` | `run_dbscan()` | `dbscan_eps`, `dbscan_min_pts` |
-
-**Output:** Always an integer vector of `length == nrow(expr_matrix)`.
-DBSCAN's list output is normalized: `cluster_ids` extracted, metadata stored
-as `attr(ids, "dbscan_metadata")`.
+**Config parameter:** `clustering_method` (or pass `method` directly)
 
 ```r
 source(file.path(shared_dir, "clustering_dispatch.R"))
-ids <- run_clustering(expr_matrix, method = params$clustering_method,
-                       params = params)
+cluster_ids <- run_clustering(expr_matrix, method = "flowsom",
+                              params = list(n_clusters = 20, seed = 42))
 ```
 
-### 7.2 Dimensionality Reduction: `run_dimred()`
+| Method | Config value | Key params | Package |
+|--------|-------------|------------|---------|
+| Leiden | `"leiden"` | `n_neighbors` (30), `resolution` (1.0) | leiden, igraph, uwot |
+| FlowSOM | `"flowsom"` | `n_clusters` (20), `grid_xdim` (10), `grid_ydim` (10) | FlowSOM |
+| PhenoGraph | `"phenograph"` | `k` / `n_neighbors` (30) | igraph, uwot |
+| DBSCAN | `"dbscan"` | `dbscan_eps` / `eps` (auto), `dbscan_min_pts` / `min_pts` (5) | dbscan |
+
+**Output normalization:**
+- All methods return `integer(n_cells)` (Leiden's numeric output is coerced).
+- DBSCAN's list output is unwrapped; metadata (noise indices, eps used) is stored as `attr(cluster_ids, "dbscan_metadata")`.
+- Post-conditions enforced: `is.integer(cluster_ids)`, `length(cluster_ids) == nrow(expr_matrix)`.
+
+### 5.2 Dimensionality Reduction Dispatcher: `run_dimred()`
 
 **Location:** `src/R_shared/dimred_dispatch.R`
 
-Set `dimred_method` in your config to one of:
-
-| Value | Routes to | Key params |
-|-------|-----------|------------|
-| `"umap"` | `plot_umap_from_matrix()` | `n_neighbors`, `umap_min_dist` |
-| `"tsne"` | `plot_tsne_from_matrix()` | `tsne_perplexity`, `tsne_max_iter` |
-| `"diffusion_map"` | `plot_diffusion_map()` | `dm_n_components`, `dm_sigma` |
-
-**Output:** Always `list(coords, method, plots, extra)` where `coords` is
-a numeric matrix (cells x dims).
+**Config parameter:** `dimred_method` (or pass `method` directly)
 
 ```r
 source(file.path(shared_dir, "dimred_dispatch.R"))
-result <- run_dimred(expr_matrix, method = params$dimred_method,
-                      sample_labels = labels, cluster_labels = ids,
-                      output_dir = "out/", params = params)
+result <- run_dimred(expr_matrix, method = "tsne",
+                     sample_labels = labels, output_dir = "output/",
+                     params = list(perplexity = 30))
+# result$coords: matrix of coordinates (cells x dims)
+# result$method: "tsne"
+# result$plots:  list of ggplot objects (or NULL if output_dir is NULL)
+# result$extra:  NULL (or list(eigenvalues = ...) for diffusion_map)
 ```
 
-### 7.3 Batch Correction: `run_batch_correction_dispatch()`
+| Method | Config value | Key params | Package |
+|--------|-------------|------------|---------|
+| UMAP | `"umap"` | `n_neighbors` / `umap_n_neighbors` (15), `umap_min_dist` / `min_dist` (0.1) | uwot |
+| t-SNE | `"tsne"` | `tsne_perplexity` / `perplexity` (30), `tsne_max_iter` / `max_iter` (1000) | Rtsne |
+| Diffusion Map | `"diffusion_map"` | `dm_n_components` / `n_components` (3), `dm_sigma` / `sigma` ("local") | destiny |
+
+**Output normalization:** All methods return `list(coords, method, plots, extra)` where `nrow(coords) == nrow(expr_matrix)`.
+
+### 5.3 Batch Correction Dispatcher: `run_batch_correction_dispatch()`
 
 **Location:** `src/R_shared/batch_correction_dispatch.R`
 
-Set `batch_method` in your config to one of:
-
-| Value | Routes to | Accepts | Key params |
-|-------|-----------|---------|------------|
-| `"harmony"` | `run_batch_correction()` | flowFrames or matrix | `batch_do_pca` |
-| `"cytonorm"` | `run_cytonorm()` | flowFrames only | `cytonorm_train_indices`, `cytonorm_n_clusters` |
-| `"combat"` | `run_combat()` | flowFrames or matrix | `combat_method` |
-| `"none"` | pass-through | flowFrames or matrix | — |
-
-The dispatcher automatically bridges between flowFrame and matrix inputs:
-if Harmony needs flowFrames and you pass a matrix, it converts via
-`from_mtx_to_ffr()`. If ComBat needs a matrix and you pass flowFrames, it
-converts via `build_combined_expr_matrix()`.
-
-**Output:** Always `list(corrected_matrix, sample_labels, batch_labels,
-markers, corrected_frames)`.
+**Config parameter:** `batch_method` (or pass `method` directly)
 
 ```r
 source(file.path(shared_dir, "batch_correction_dispatch.R"))
 result <- run_batch_correction_dispatch(
-  data = homogenized, method = params$batch_method,
-  batch_labels = params$batch_names,
-  markers_of_interest = params$markers_of_interest,
-  sample_names = sample_names, params = params)
+  data                = flow_frames,   # or expr_matrix
+  method              = "combat",
+  batch_labels        = batch_labels,
+  markers_of_interest = markers,
+  sample_names        = sample_names
+)
+# result$corrected_matrix: numeric matrix (cells x markers)
+# result$sample_labels:    character vector
+# result$batch_labels:     character vector
+# result$markers:          character vector
+# result$corrected_frames: list(flowFrame) (CytoNorm only; NULL otherwise)
 ```
 
-### 7.4 Config Example
+| Method | Config value | Accepts | Key params | Package |
+|--------|-------------|---------|------------|---------|
+| Harmony | `"harmony"` | flowFrame list or matrix | `batch_do_pca` (FALSE) | harmony |
+| CytoNorm | `"cytonorm"` | flowFrame list **only** | `cytonorm_train_indices`, `cytonorm_n_clusters` (10), `cytonorm_goal` ("mean") | CytoNorm |
+| ComBat | `"combat"` | flowFrame list or matrix | `combat_covariates` (NULL), `combat_method` ("parametric") | sva |
+| None | `"none"` | flowFrame list or matrix | (pass-through) | -- |
 
-To switch Pipeline A from Leiden + UMAP to FlowSOM + t-SNE with ComBat
-batch correction, change three lines in your config:
+**Input flexibility:** The dispatcher automatically converts between flowFrame list and matrix as needed for each backend. If you pass a matrix to Harmony, it creates temporary flowFrames via `from_mtx_to_ffr()`. If you pass flowFrames to ComBat, it extracts the expression matrix via `build_combined_expr_matrix()`.
+
+**CytoNorm caveat:** Requires flowFrame input and only produces corrected frames for the validation subset (not training frames). Specify `cytonorm_train_indices` in your config.
+
+### 5.4 Config Example
+
+To switch Pipeline A from Leiden + UMAP + no batch correction to FlowSOM + t-SNE + ComBat, change three lines in your config:
 
 ```r
 params <- list(
   clustering_method = "flowsom",    # was: "leiden"
   batch_method      = "combat",     # was: "none"
   dimred_method     = "tsne",       # was: "umap"
+  n_clusters        = 15,           # FlowSOM-specific
+  tsne_perplexity   = 40,           # t-SNE-specific
   # ... rest of config unchanged
 )
 ```
+
+---
+
+## 6. Example Workflows
+
+### 6.1 Load CSV Data, Cluster, and Visualize
+
+A minimal workflow for expression CSV files that skips the flowFrame path entirely.
+
+```r
+# --- Setup ---
+shared_dir <- "/path/to/cytometry/src/R_shared"
+source(file.path(shared_dir, "io_utils.R"))
+source(file.path(shared_dir, "flowframe_utils.R"))
+source(file.path(shared_dir, "clustering_dispatch.R"))
+
+# --- Step 1: Load CSV expression data ---
+source("src/loading/load_csv_expression.R")
+expr_data <- load_csv_expression(input_dir = "data/csv_expression/")
+# expr_data: named list of data.frames, one per sample
+
+# --- Step 2: Combine into a single matrix ---
+all_matrices <- lapply(expr_data, as.matrix)
+combined <- do.call(rbind, all_matrices)
+sample_labels <- rep(names(all_matrices), sapply(all_matrices, nrow))
+
+# --- Step 3: Select markers of interest ---
+markers <- c("CD3", "CD4", "CD8", "CD19", "CD14", "CD56")
+expr_matrix <- combined[, markers, drop = FALSE]
+
+# --- Step 4: Cluster via dispatcher ---
+cluster_ids <- run_clustering(expr_matrix, method = "leiden",
+                              params = list(resolution = 0.8))
+
+# --- Step 5: Visualize with UMAP ---
+source("src/visualization/umap.R")
+plot_umap_from_matrix(expr_matrix, sample_labels = sample_labels,
+                      cluster_labels = cluster_ids,
+                      output_dir = "output/umap/")
+
+# --- Step 6: Export gating CSVs for downstream analysis ---
+source("src/clustering/leiden.R")
+clusters_to_gating_csv(expr_matrix, sample_labels, cluster_ids,
+                       output_dir = "output/gating_csvs/")
+```
+
+---
+
+### 6.2 Load FCS, Preprocess, Compress with SuperCell, Cluster, Annotate, Analyze
+
+A full workflow for large datasets that uses SuperCellCyto to reduce computational cost before clustering and analysis.
+
+```r
+# --- Setup ---
+shared_dir <- "/path/to/cytometry/src/R_shared"
+source(file.path(shared_dir, "io_utils.R"))
+source(file.path(shared_dir, "flowframe_utils.R"))
+source(file.path(shared_dir, "clustering_dispatch.R"))
+
+markers <- c("CD3", "CD4", "CD8", "CD19", "CD14", "CD56",
+             "CD16", "CD25", "HLA-DR", "CD45RA", "CD127", "CD38")
+
+# --- Step 1: Load raw FCS ---
+source("src/loading/load_fcs_raw.R")
+flow_data <- load_fcs_raw(input_dir = "data/fcs_files/")
+
+# --- Step 2: Preprocess (QC + transformation) ---
+source("src/preprocessing/preprocess_pipeline.R")
+preprocessed <- run_preprocessing(
+  flow_frames = flow_data$flow_frames,
+  params      = list(qc_type = "flowAI", transform_type = "arcsinh",
+                     cofactor = 5, pp_order = "QT"),
+  output_dir  = "output/preprocessing/"
+)
+
+# --- Step 3: Homogenize panels across samples ---
+source("src/harmonization/panel_homogenization.R")
+homogenized <- homogenize_flowframes(
+  flow_frames         = preprocessed,
+  sample_names        = flow_data$sample_names,
+  markers_of_interest = markers,
+  output_dir          = "output/harmonized/"
+)
+
+# --- Step 4: Build combined expression matrix (BRIDGE) ---
+expr_data <- build_combined_expr_matrix(homogenized, flow_data$sample_names, markers)
+
+# --- Step 5: Compress with SuperCellCyto ---
+source("src/preprocessing/supercell.R")
+sc <- run_supercell(expr_data$combined_matrix, expr_data$sample_labels,
+                    markers, gam = 20)
+# 500,000 cells -> ~25,000 supercells
+
+# --- Step 6: Cluster the compressed data ---
+cluster_ids <- run_clustering(sc$supercell_matrix, method = "flowsom",
+                              params = list(n_clusters = 15))
+
+# --- Step 7: Annotate clusters with cell type labels ---
+source("src/clustering/cell_annotation.R")
+annotations <- annotate_clusters(sc$supercell_matrix, cluster_ids,
+                                 markers = markers, method = "threshold")
+cat("Cluster annotations:\n")
+print(annotations[, c("cluster", "annotation", "confidence")])
+
+# --- Step 8: Validate clustering quality ---
+source("src/clustering/cluster_validation.R")
+quality <- validate_clusters(sc$supercell_matrix, cluster_ids,
+                             metrics = c("silhouette", "calinski_harabasz"))
+print(quality)
+
+# --- Step 9: Visualize ---
+source("src/visualization/umap.R")
+plot_umap_from_matrix(sc$supercell_matrix, sample_labels = sc$supercell_labels,
+                      cluster_labels = cluster_ids,
+                      output_dir = "output/umap/")
+
+# --- Step 10: Export gating CSVs and run differential abundance ---
+source("src/clustering/leiden.R")
+clusters_to_gating_csv(sc$supercell_matrix, sc$supercell_labels, cluster_ids,
+                       output_dir = "output/gating_csvs/")
+
+source("src/analysis/differential_abundance.R")
+da_results <- run_differential_abundance(
+  data_dir       = "output/gating_csvs/",
+  conditions_csv = "config/conditions.csv",
+  output_dir     = "output/abundance/"
+)
+```
+
+---
+
+### 6.3 Compare Multiple Clustering Methods with Validation
+
+Run Leiden, FlowSOM, PhenoGraph, and DBSCAN on the same data, compare their quality metrics, and build a consensus clustering.
+
+```r
+# --- Setup ---
+shared_dir <- "/path/to/cytometry/src/R_shared"
+source(file.path(shared_dir, "io_utils.R"))
+source(file.path(shared_dir, "flowframe_utils.R"))
+source(file.path(shared_dir, "clustering_dispatch.R"))
+
+# --- Assume expr_matrix and sample_labels are already prepared ---
+# (from build_combined_expr_matrix() or CSV loading)
+
+# --- Run all four methods via the dispatcher ---
+leiden_ids <- run_clustering(expr_matrix, method = "leiden",
+                             params = list(resolution = 1.0, n_neighbors = 30))
+
+flowsom_ids <- run_clustering(expr_matrix, method = "flowsom",
+                              params = list(n_clusters = 15))
+
+phenograph_ids <- run_clustering(expr_matrix, method = "phenograph",
+                                 params = list(k = 30))
+
+dbscan_ids <- run_clustering(expr_matrix, method = "dbscan",
+                              params = list(min_pts = 5))
+
+# --- Validate each method ---
+source("src/clustering/cluster_validation.R")
+methods <- list(leiden = leiden_ids, flowsom = flowsom_ids,
+                phenograph = phenograph_ids, dbscan = dbscan_ids)
+all_metrics <- list()
+
+for (name in names(methods)) {
+  cat("\n=== Validating:", name, "===\n")
+  metrics <- validate_clusters(expr_matrix, methods[[name]],
+                               metrics = c("silhouette", "calinski_harabasz",
+                                           "davies_bouldin"))
+  metrics$method <- name
+  all_metrics[[name]] <- metrics
+}
+
+# Compare all methods side by side
+comparison <- do.call(rbind, all_metrics)
+print(comparison[, c("method", "metric", "value")])
+
+# --- Build consensus from three graph-based methods ---
+source("src/clustering/meta_clustering.R")
+consensus_ids <- consensus_clusters(
+  cluster_list = list(leiden = leiden_ids, flowsom = flowsom_ids,
+                      phenograph = phenograph_ids),
+  method = "majority"
+)
+
+# --- Visualize each clustering on the same UMAP coordinates ---
+source("src/visualization/umap.R")
+
+# Compute UMAP once
+umap_result <- plot_umap_from_matrix(expr_matrix, sample_labels = sample_labels,
+                                     cluster_labels = leiden_ids,
+                                     output_dir = "output/umap_leiden/")
+
+# Reuse coordinates for other methods (avoids recomputing UMAP)
+for (name in c("flowsom", "phenograph", "dbscan", "consensus")) {
+  ids <- if (name == "consensus") consensus_ids else methods[[name]]
+  plot_umap_from_matrix(expr_matrix, sample_labels = sample_labels,
+                        cluster_labels = ids,
+                        umap_coords = umap_result$umap_coords,
+                        output_dir = paste0("output/umap_", name, "/"))
+}
+
+# --- Optional: compare to ground truth if available ---
+# quality_vs_truth <- validate_clusters(
+#   expr_matrix, leiden_ids, true_labels = manual_labels,
+#   metrics = c("silhouette", "calinski_harabasz")
+# )
+```
+
+---
+
+### 6.4 Load FlowJo Workspaces, Compare Gatings, Compute Agreement
+
+Compare gating strategies from multiple FlowJo analysts on the same FCS files.
+
+```r
+# --- Setup ---
+shared_dir <- "/path/to/cytometry/src/R_shared"
+source(file.path(shared_dir, "io_utils.R"))
+
+# --- Step 1: Load multiple FlowJo workspaces ---
+source("src/loading/load_flowjo_wsp.R")
+workspaces <- load_multiple_workspaces(
+  wsp_paths = c("data/analyst_A.wsp", "data/analyst_B.wsp", "data/analyst_C.wsp"),
+  names     = c("Analyst_A", "Analyst_B", "Analyst_C"),
+  fcs_dirs  = "data/fcs_files/"
+)
+
+# --- Step 2: Compare gating across analysts ---
+source("src/metadata_qc/gating_comparison.R")
+comparison <- compare_gating_strategies(
+  gating_sets            = workspaces$gating_sets,
+  analyst_names          = c("Analyst_A", "Analyst_B", "Analyst_C"),
+  populations_of_interest = c("CD3+", "CD4+", "CD8+", "CD19+"),
+  output_dir             = "output/gating_comparison/"
+)
+
+# --- Step 3: Compute inter-rater agreement (Fleiss' kappa) ---
+source("src/metadata_qc/fleiss_kappa.R")
+kappa_results <- compute_fleiss_kappa(
+  gating_matrices = comparison$gating_matrices,
+  output_dir      = "output/agreement/"
+)
+cat("Fleiss' kappa:", kappa_results$kappa, "\n")
+# Interpretation: < 0.20 poor, 0.21-0.40 fair, 0.41-0.60 moderate,
+#                 0.61-0.80 substantial, > 0.80 almost perfect
+
+# --- Step 4: Visualize overlap with Euler/Venn diagrams ---
+source("src/visualization/venn_diagrams.R")
+for (pop in c("CD3+", "CD4+", "CD8+")) {
+  plot_euler(
+    sets      = comparison$population_sets[[pop]],
+    set_names = c("Analyst_A", "Analyst_B", "Analyst_C"),
+    title     = paste("Gating agreement:", pop),
+    output_dir = "output/venn/"
+  )
+}
+
+# --- Step 5: UpSet plot for multi-population intersection ---
+source("src/visualization/upset_plots.R")
+plot_upset_from_list(
+  sets        = comparison$population_sets,
+  output_path = "output/upset/all_populations.png"
+)
+```
+
+---
+
+## 7. Common Pitfalls
+
+### 7.1 Type mismatches at boundaries
+
+**Problem:** Passing a flowFrame list to a function that expects a matrix (or vice versa).
+
+**Symptoms:** Errors like `"is.matrix(expr_matrix) is not TRUE"` or `"object of type 'S4' is not subsettable"`.
+
+**Fix:** Use the appropriate bridge function. If you have flowFrames and need a matrix, call `build_combined_expr_matrix()`. If you have a matrix and need flowFrames, call `create_flowframes_from_matrices()`.
+
+### 7.2 Leiden returns numeric, not integer
+
+**Problem:** `run_leiden()` returns a numeric vector. Downstream functions that check `is.integer()` will fail.
+
+**Fix:** Use the `run_clustering()` dispatcher, which coerces Leiden's output to integer. If calling `run_leiden()` directly, wrap the result: `cluster_ids <- as.integer(run_leiden(...))`.
+
+### 7.3 DBSCAN returns a list, not a vector
+
+**Problem:** `run_dbscan()` returns a list with `$cluster_ids`, `$noise_indices`, `$n_clusters`, `$eps_used`, and `$noise_fraction`. Passing the list directly to downstream functions fails.
+
+**Fix:** Extract the integer vector: `result <- run_dbscan(expr_matrix); ids <- result$cluster_ids`. The `run_clustering()` dispatcher handles this automatically and stores DBSCAN metadata as `attr(ids, "dbscan_metadata")`. Also note that DBSCAN uses cluster ID 0 for noise points, which some downstream functions may not expect.
+
+### 7.4 Missing panel homogenization
+
+**Problem:** Different FCS files have different marker sets. Combining them with `build_combined_expr_matrix()` may produce a matrix with fewer markers than expected, or emit `"No matching markers found"` warnings.
+
+**Fix:** Always run `homogenize_flowframes()` before `build_combined_expr_matrix()` when working with multiple FCS files from different instruments or panels. The homogenization step renames markers to a common set and drops channels that cannot be harmonized.
+
+### 7.5 Forgetting sample_labels after compression
+
+**Problem:** After supercell compression, the original `sample_labels` vector no longer matches the rows of the compressed matrix.
+
+**Fix:** Always use the labels that travel with the output. After `run_supercell()`, use `sc$supercell_labels` (not the original `sample_labels`). After `run_batch_correction_dispatch()`, use `result$sample_labels`. The labels vector and the matrix must always have the same number of rows.
+
+### 7.6 CytoNorm requires flowFrame input
+
+**Problem:** `run_batch_correction_dispatch()` with `method = "cytonorm"` fails if you pass a matrix.
+
+**Symptoms:** Error: `"CytoNorm requires flowFrame input. Provide a list of flowFrame objects."`.
+
+**Fix:** Pass a list of flowFrame objects. If your data is in matrix form, use `create_flowframes_from_matrices()` first. Alternatively, use `method = "harmony"` or `method = "combat"`, which accept both input types.
+
+### 7.7 Large datasets exhaust memory
+
+**Problem:** `build_combined_expr_matrix()` concatenates all samples into one matrix. With millions of cells, this can exceed available RAM.
+
+**Fix:** Two options:
+1. **Downsample first:** Use `downsample_flowframes()` before building the combined matrix.
+2. **Compress with SuperCellCyto:** Call `run_supercell()` on the combined matrix to reduce rows by 10-20x before clustering.
+
+For reading large CSV files, use `read_csv_chunked()` from `src/R_shared/memory_utils.R`.
+
+### 7.8 Shared directory path resolution
+
+**Problem:** Scripts use `shared_dir <- file.path(dirname(getwd()), "src", "R_shared")` to locate shared utilities. If your working directory is not a direct subdirectory of the project root, this path will be wrong.
+
+**Fix:** Set `shared_dir` explicitly before sourcing any scripts:
+
+```r
+shared_dir <- "/absolute/path/to/cytometry/src/R_shared"
+```
+
+### 7.9 `%||%` operator not defined in R < 4.0
+
+**Problem:** The null-coalescing operator `%||%` is used throughout dispatchers and pipelines. In R versions before 4.0, it is not defined.
+
+**Fix:** The dispatcher files define a polyfill automatically: `if (!exists("%||%")) \`%||%\` <- function(a, b) if (is.null(a)) b else a`. If you write custom scripts that use `%||%`, source any dispatcher file first, or add the polyfill yourself.
+
+### 7.10 Passing the wrong markers to downstream steps
+
+**Problem:** After batch correction or supercell compression, the set of marker columns may differ from what you specified initially (e.g., CytoNorm may reorder columns, or missing markers get dropped).
+
+**Fix:** Always check `colnames()` on the output matrix and use `result$markers` from dispatcher output. Do not assume column order is preserved across bridge functions.

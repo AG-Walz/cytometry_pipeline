@@ -19,7 +19,7 @@ save_plot_formats <- function(plot, filename_base,
   format_configs <- list(
     pdf = list(ext = ".pdf", device = "pdf", extra_args = list()),
     png = list(ext = ".png", device = "png", extra_args = list(dpi = png_dpi)),
-    svg = list(ext = ".svg", device = grDevices::svg, extra_args = list())
+    svg = list(ext = ".svg", device = "svg", extra_args = list())
   )
   formats_saved <- c()
   for (format_name in names(formats)) {

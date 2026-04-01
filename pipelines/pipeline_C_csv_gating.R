@@ -12,6 +12,18 @@ source(file.path(shared_dir, "pipeline_utils.R"))
 env <- init_pipeline("Pipeline C: CSV Gating -> Cluster Analysis",
                      "config/pipeline_C_config.R")
 
+# Validate required parameters
+if (is.null(params$input_dir) && is.null(params$fcs_folder)) {
+  stop("input_dir (or fcs_folder) is required in config")
+}
+if (is.null(params$output_dir)) {
+  stop("output_dir is required in config")
+}
+# Validate output directory can be created
+tryCatch(make_outdir(params$output_dir),
+  error = function(e) stop("Cannot create output directory: ", params$output_dir, " (", e$message, ")")
+)
+
 # Step 1: Load CSV with gating data (also splits per population)
 cat("\n--- Step 1: Loading CSV gating data ---\n")
 source(file.path(env$base_dir, "src", "loading", "load_csv_gating.R"))
@@ -27,9 +39,10 @@ gating_data <- load_csv_gating(
 cat("\n--- Step 2: Splitting by cluster ---\n")
 source(file.path(env$base_dir, "src", "analysis", "cluster_splitting.R"))
 split_result <- split_by_cluster(
-  input_dir     = params$csv_folder,
-  output_dir    = file.path(params$output_dir, "02_clusters"),
-  cluster_regex = params$cluster_regex
+  input_dir           = params$csv_folder,
+  output_dir          = file.path(params$output_dir, "02_clusters"),
+  cluster_regex       = params$cluster_regex,
+  markers_of_interest = params$markers_of_interest
 )
 
 # Step 3: Statistical analysis (enrichment or GLMM)

@@ -144,8 +144,11 @@ run_diffcyt <- function(flow_frames,
     }, error = function(e) {
       # Fallback: try edgeR if specified method fails
       if (method_DA != "diffcyt-DA-edgeR") {
+        warning("DA method '", method_DA, "' failed: ", e$message,
+                ". Falling back to diffcyt-DA-edgeR.")
         cat("  ", method_DA, "failed:", e$message, "\n")
         cat("  Falling back to diffcyt-DA-edgeR...\n")
+        method_DA <<- "diffcyt-DA-edgeR"
         tryCatch({
           diffcyt::testDA_edgeR(d_counts, design, contrast)
         }, error = function(e2) {
@@ -172,8 +175,11 @@ run_diffcyt <- function(flow_frames,
     }, error = function(e) {
       # Fallback: try limma if specified method fails
       if (method_DS != "diffcyt-DS-limma") {
+        warning("DS method '", method_DS, "' failed: ", e$message,
+                ". Falling back to diffcyt-DS-limma.")
         cat("  ", method_DS, "failed:", e$message, "\n")
         cat("  Falling back to diffcyt-DS-limma...\n")
+        method_DS <<- "diffcyt-DS-limma"
         tryCatch({
           diffcyt::testDS_limma(d_clustered, d_medians,
                                  design, contrast,
@@ -196,15 +202,23 @@ run_diffcyt <- function(flow_frames,
     data.frame()
   })
 
+  # Record the actual method used (may differ from requested if fallback occurred)
+  actual_method <- if (analysis_type == "DA") method_DA else method_DS
+  if (nrow(top_table) > 0) {
+    top_table$method_used <- actual_method
+  }
+
   n_sig <- sum(top_table$p_adj < 0.05, na.rm = TRUE)
   cat("\nDiffcyt analysis complete.\n")
+  cat("Method used:", actual_method, "\n")
   cat("Total clusters tested:", nrow(top_table), "\n")
   cat("Significant (padj < 0.05):", n_sig, "\n")
 
   list(
     results = results,
     top_table = top_table,
-    cluster_assignments = cluster_assignments
+    cluster_assignments = cluster_assignments,
+    method_used = actual_method
   )
 }
 

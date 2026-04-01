@@ -23,6 +23,16 @@ run_batch_correction <- function(flow_frames, sample_names, batch_labels,
                                   do_pca = FALSE, ...) {
   require(harmony)
 
+  # Validate all frames have identical marker columns
+  ref_cols <- sort(colnames(flowCore::exprs(flow_frames[[1]])))
+  for (i in seq_along(flow_frames)[-1]) {
+    curr_cols <- sort(colnames(flowCore::exprs(flow_frames[[i]])))
+    if (!identical(ref_cols, curr_cols)) {
+      stop("Frame '", names(flow_frames)[i], "' has different markers than frame '",
+           names(flow_frames)[1], "'. Use homogenize_flowframes() first.")
+    }
+  }
+
   # Concatenate expression matrices
   expr_list <- list()
   sample_vec <- c()

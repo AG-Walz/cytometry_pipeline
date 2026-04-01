@@ -63,6 +63,10 @@ transform_flowframe <- function(flowframe, sample_name,
 #' @param target_bimodality Target bimodality coefficient
 #' @return Optimal b cofactor value
 find_optimal_b_cofactor <- function(data, target_bimodality_coefficient = 0.9) {
+  if (!requireNamespace("mousetrap", quietly = TRUE)) {
+    warning("mousetrap package not available; using default cofactor of 5")
+    return(5)
+  }
   calculate_bc <- function(b_cofactor, data, target) {
     transformed <- asinh(data * b_cofactor)
     bc <- mousetrap::bimodality_coefficient(transformed)

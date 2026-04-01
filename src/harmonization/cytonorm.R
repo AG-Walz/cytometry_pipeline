@@ -34,7 +34,10 @@ run_cytonorm <- function(train_frames, validation_frames, batch_labels,
   n_total <- length(train_frames) + length(validation_frames)
   if (length(batch_labels) != n_total) {
     stop("batch_labels length (", length(batch_labels), ") must equal ",
-         "length(train_frames) + length(validation_frames) (", n_total, ")")
+         "length(train_frames) (", length(train_frames), ") + ",
+         "length(validation_frames) (", length(validation_frames), ") = ", n_total,
+         ". Provide one label per frame: first ", length(train_frames),
+         " for training, last ", length(validation_frames), " for validation.")
   }
 
   # Check that markers exist in all frames
@@ -198,6 +201,11 @@ run_cytonorm <- function(train_frames, validation_frames, batch_labels,
         x = probs, y = ref_quantiles[[m]],
         xout = ranked, rule = 2
       )$y
+
+      # Clamp to reference quantile bounds to prevent extrapolation artifacts
+      ref_min <- ref_quantiles[[m]][1]
+      ref_max <- ref_quantiles[[m]][length(ref_quantiles[[m]])]
+      corrected_vals <- pmax(pmin(corrected_vals, ref_max), ref_min)
 
       expr[, col_idx[1]] <- corrected_vals
     }

@@ -78,6 +78,15 @@ plot_heatmap <- function(expr_matrix, output_path,
 #' @param title Heatmap title
 plot_cluster_heatmap <- function(expr_data, cluster_col, marker_cols,
                                   output_path, title = "Cluster Expression") {
+  if (!cluster_col %in% colnames(expr_data)) {
+    stop("cluster_col '", cluster_col, "' not found in expr_data. ",
+         "Available columns: ", paste(head(colnames(expr_data), 10), collapse = ", "))
+  }
+  missing_markers <- setdiff(marker_cols, colnames(expr_data))
+  if (length(missing_markers) > 0) {
+    stop("marker_cols not found in expr_data: ", paste(missing_markers, collapse = ", "))
+  }
+
   # Calculate median expression per cluster
   median_expr <- aggregate(
     expr_data[, marker_cols],

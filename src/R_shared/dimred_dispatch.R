@@ -55,7 +55,9 @@ run_dimred <- function(expr_matrix, method = "umap",
   result <- switch(method,
 
     umap = {
-      source(file.path(viz_dir, "umap.R"))
+      tryCatch(source(file.path(viz_dir, "umap.R")),
+               error = function(e) stop("Failed to load UMAP module: ", e$message,
+                                        "\nExpected at: ", file.path(viz_dir, "umap.R")))
       umap_result <- plot_umap_from_matrix(
         expr_matrix     = expr_matrix,
         sample_labels   = sample_labels,
@@ -79,12 +81,15 @@ run_dimred <- function(expr_matrix, method = "umap",
     },
 
     tsne = {
-      source(file.path(viz_dir, "tsne.R"))
+      tryCatch(source(file.path(viz_dir, "tsne.R")),
+               error = function(e) stop("Failed to load t-SNE module: ", e$message,
+                                        "\nExpected at: ", file.path(viz_dir, "tsne.R")))
       tsne_result <- plot_tsne_from_matrix(
-        expr_matrix    = expr_matrix,
-        sample_labels  = sample_labels,
-        cluster_labels = cluster_labels,
-        output_dir     = output_dir,
+        expr_matrix      = expr_matrix,
+        sample_labels    = sample_labels,
+        cluster_labels   = cluster_labels,
+        condition_labels = condition_labels,
+        output_dir       = output_dir,
         perplexity     = params$tsne_perplexity %||% params$perplexity %||% 30,
         max_iter       = params$tsne_max_iter %||% params$max_iter %||% 1000,
         tsne_coords    = params$tsne_coords %||% NULL,
@@ -102,12 +107,15 @@ run_dimred <- function(expr_matrix, method = "umap",
     },
 
     diffusion_map = {
-      source(file.path(viz_dir, "diffusion_map.R"))
+      tryCatch(source(file.path(viz_dir, "diffusion_map.R")),
+               error = function(e) stop("Failed to load diffusion map module: ", e$message,
+                                        "\nExpected at: ", file.path(viz_dir, "diffusion_map.R")))
       dm_result <- plot_diffusion_map(
-        expr_matrix    = expr_matrix,
-        sample_labels  = sample_labels,
-        cluster_labels = cluster_labels,
-        output_dir     = output_dir,
+        expr_matrix      = expr_matrix,
+        sample_labels    = sample_labels,
+        cluster_labels   = cluster_labels,
+        condition_labels = condition_labels,
+        output_dir       = output_dir,
         n_components   = params$dm_n_components %||% params$n_components %||% 3,
         sigma          = params$dm_sigma %||% params$sigma %||% "local",
         seed           = seed,

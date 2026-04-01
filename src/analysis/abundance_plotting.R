@@ -141,6 +141,10 @@ plot_abundance_stacked <- function(tracking_matrix, output_dir) {
 plot_abundance_proportional <- function(tracking_matrix, output_dir) {
   require(ggplot2)
   require(tidyr)
+  if (!requireNamespace("ggdendro", quietly = TRUE)) {
+    stop("Package 'ggdendro' is required for plot_abundance_proportional(). ",
+         "Install with: install.packages('ggdendro')")
+  }
   require(ggdendro)
   require(patchwork)
   make_outdir(output_dir)

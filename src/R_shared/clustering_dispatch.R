@@ -42,7 +42,9 @@ run_clustering <- function(expr_matrix, method = "leiden", params = list()) {
   cluster_ids <- switch(method,
 
     leiden = {
-      source(file.path(cluster_dir, "leiden.R"))
+      tryCatch(source(file.path(cluster_dir, "leiden.R")),
+               error = function(e) stop("Failed to load Leiden module: ", e$message,
+                                        "\nExpected at: ", file.path(cluster_dir, "leiden.R")))
       run_leiden(
         expr_matrix,
         n_neighbors = params$n_neighbors %||% 30,
@@ -52,7 +54,9 @@ run_clustering <- function(expr_matrix, method = "leiden", params = list()) {
     },
 
     flowsom = {
-      source(file.path(cluster_dir, "flowsom.R"))
+      tryCatch(source(file.path(cluster_dir, "flowsom.R")),
+               error = function(e) stop("Failed to load FlowSOM module: ", e$message,
+                                        "\nExpected at: ", file.path(cluster_dir, "flowsom.R")))
       run_flowsom(
         expr_matrix,
         n_clusters = params$n_clusters %||% 20,
@@ -63,7 +67,9 @@ run_clustering <- function(expr_matrix, method = "leiden", params = list()) {
     },
 
     phenograph = {
-      source(file.path(cluster_dir, "phenograph.R"))
+      tryCatch(source(file.path(cluster_dir, "phenograph.R")),
+               error = function(e) stop("Failed to load PhenoGraph module: ", e$message,
+                                        "\nExpected at: ", file.path(cluster_dir, "phenograph.R")))
       run_phenograph(
         expr_matrix,
         k    = params$k %||% params$n_neighbors %||% 30,
@@ -72,7 +78,9 @@ run_clustering <- function(expr_matrix, method = "leiden", params = list()) {
     },
 
     dbscan = {
-      source(file.path(cluster_dir, "dbscan.R"))
+      tryCatch(source(file.path(cluster_dir, "dbscan.R")),
+               error = function(e) stop("Failed to load DBSCAN module: ", e$message,
+                                        "\nExpected at: ", file.path(cluster_dir, "dbscan.R")))
       result <- run_dbscan(
         expr_matrix,
         eps      = params$dbscan_eps %||% params$eps %||% NULL,

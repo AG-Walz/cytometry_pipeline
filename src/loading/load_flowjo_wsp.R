@@ -31,7 +31,15 @@ load_flowjo_wsp <- function(wsp_path, fcs_dir = dirname(wsp_path), name = NULL) 
                                   collapse = ", "), "\n")
 
   # Import as GatingSet
-  gs <- CytoML::flowjo_to_gatingset(ws, name = 1, path = fcs_dir)
+  gs <- tryCatch(
+    CytoML::flowjo_to_gatingset(ws, name = 1, path = fcs_dir),
+    error = function(e) {
+      stop("Failed to parse FlowJo workspace: ", e$message,
+           "\nWorkspace: ", wsp_path,
+           "\nFCS directory: ", fcs_dir,
+           "\nCheck that FCS files referenced in the workspace exist in the FCS directory.")
+    }
+  )
 
   sample_names <- flowWorkspace::sampleNames(gs)
   cat("Loaded", length(sample_names), "samples\n")

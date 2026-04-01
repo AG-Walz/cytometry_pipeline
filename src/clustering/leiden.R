@@ -18,6 +18,9 @@ source(file.path(shared_dir, "stats_utils.R"))
 #' @return Integer vector of cluster assignments
 run_leiden <- function(expr_matrix, n_neighbors = 30,
                        resolution = 1.0, seed = 42) {
+  if (!requireNamespace("Matrix", quietly = TRUE)) {
+    stop("Package 'Matrix' required for Leiden clustering. Install with: install.packages('Matrix')")
+  }
   require(leiden)
 
   set.seed(seed)

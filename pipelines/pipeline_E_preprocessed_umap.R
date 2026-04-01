@@ -13,6 +13,18 @@ env <- init_pipeline("Pipeline E: Preprocessed FCS -> UMAP/Clustering",
                      "config/pipeline_E_config.R")
 source(file.path(env$shared_dir, "flowframe_utils.R"))
 
+# Validate required parameters
+if (is.null(params$input_dir) && is.null(params$fcs_folder)) {
+  stop("input_dir (or fcs_folder) is required in config")
+}
+if (is.null(params$output_dir)) {
+  stop("output_dir is required in config")
+}
+# Validate output directory can be created
+tryCatch(make_outdir(params$output_dir),
+  error = function(e) stop("Cannot create output directory: ", params$output_dir, " (", e$message, ")")
+)
+
 # Step 1: Load preprocessed FCS (skip QC)
 cat("\n--- Step 1: Loading preprocessed FCS files ---\n")
 source(file.path(env$base_dir, "src", "loading", "load_fcs_raw.R"))

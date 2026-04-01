@@ -71,5 +71,14 @@ create_flowframes_from_matrices <- function(expr_list,
 #' @return flowSet object
 create_merged_flowset <- function(flow_frames) {
   cat("Creating flowSet from", length(flow_frames), "flowFrames...\n")
+
+  # Validate all frames have same number of columns
+  ncols <- sapply(flow_frames, ncol)
+  if (length(unique(ncols)) > 1) {
+    stop("Cannot merge flowFrames with different numbers of columns. ",
+         "Column counts: ", paste(unique(ncols), collapse = ", "),
+         ". Use homogenize_flowframes() first.")
+  }
+
   from_ffl_to_fSet(flow_frames, sample_names = names(flow_frames))
 }

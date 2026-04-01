@@ -50,6 +50,10 @@ run_dbscan <- function(expr_matrix, eps = NULL, min_pts = 5,
   if (is.null(eps) && auto_eps) {
     cat("Estimating eps from k-distance plot (k =", min_pts, ")...\n")
     eps <- estimate_eps(expr_matrix, k = min_pts, seed = seed)
+    if (is.na(eps) || is.nan(eps) || is.infinite(eps)) {
+      warning("Automatic eps estimation failed; using default eps = 0.5")
+      eps <- 0.5
+    }
     cat("Estimated eps =", round(eps, 4), "\n")
   } else if (is.null(eps)) {
     stop("eps must be provided when auto_eps = FALSE")

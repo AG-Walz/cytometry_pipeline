@@ -98,12 +98,18 @@ check_acquisition_dates <- function(parent_folder, output_dir) {
   }
   rel_paths <- substring(normalizePath(all_fcs, winslash = "/"), nchar(parent_norm) + 1)
 
-  # Extract metadata
+  # Extract metadata with per-file error handling
   cat("Extracting metadata...\n")
-  meta_list <- t(sapply(all_fcs, function(f) {
-    cat("  Processing:", basename(f), "\n")
-    get_fcs_metadata(f)
-  }))
+  results_list <- lapply(all_fcs, function(f) {
+    tryCatch({
+      cat("  Processing:", basename(f), "\n")
+      get_fcs_metadata(f)
+    }, error = function(e) {
+      warning("Failed to read FCS file: ", f, " (", e$message, ")")
+      c(acquisition_date = "Error", file_size = "Error")
+    })
+  })
+  meta_list <- do.call(rbind, results_list)
   colnames(meta_list) <- c("acquisition_date", "file_size")
 
   result <- data.frame(

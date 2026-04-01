@@ -69,6 +69,8 @@ validate_clusters <- function(expr_matrix, cluster_ids,
 
   # Check basic validity
   if (eval_n_clusters < 2) {
+    warning("Fewer than 2 clusters in evaluation set (", eval_n_clusters,
+            ") — validation metrics are not meaningful")
     cat("Warning: fewer than 2 clusters in evaluation set — metrics not meaningful\n")
     results[[length(results) + 1]] <- data.frame(
       metric = "n_clusters", value = eval_n_clusters,
@@ -79,6 +81,8 @@ validate_clusters <- function(expr_matrix, cluster_ids,
   }
 
   if (eval_n_clusters >= nrow(eval_matrix)) {
+    warning("As many clusters as cells (", eval_n_clusters,
+            " clusters, ", nrow(eval_matrix), " cells) — validation metrics are not meaningful")
     cat("Warning: as many clusters as cells — metrics not meaningful\n")
     results[[length(results) + 1]] <- data.frame(
       metric = "n_clusters", value = eval_n_clusters,

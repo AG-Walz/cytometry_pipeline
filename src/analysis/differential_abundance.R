@@ -73,6 +73,12 @@ build_abundance_matrix <- function(data_dir,
     })
   }
 
+  # Remove samples with zero total cells
+  if (any(abundance_df$total_cells == 0)) {
+    warning("Removing ", sum(abundance_df$total_cells == 0), " samples with zero total cells")
+    abundance_df <- abundance_df[abundance_df$total_cells > 0, ]
+  }
+
   # Merge with conditions if provided
   if (!is.null(conditions_csv)) {
     conditions <- fread(conditions_csv)
@@ -225,6 +231,16 @@ run_differential_abundance <- function(data_dir,
     )
 
     if (!is.null(model)) {
+      # Check for overdispersion if performance package is available
+      if (requireNamespace("performance", quietly = TRUE)) {
+        tryCatch({
+          od <- performance::check_overdispersion(model)
+          if (od$p_value < 0.05) {
+            cat(" [overdispersed, ratio=", round(od$overdispersion_ratio, 2), "]")
+          }
+        }, error = function(e) NULL)
+      }
+
       coefs <- summary(model)$coefficients
       cond_row <- grep("condition", rownames(coefs))
       if (length(cond_row) > 0) {

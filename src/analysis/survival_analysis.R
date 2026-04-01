@@ -202,7 +202,8 @@ run_survival_analysis <- function(abundance_matrix,
       )
       return(sc$cutpoint[[cluster_col]]$cutpoint)
     } else {
-      cat(" survminer not available, using median... ")
+      warning("survminer package not available for optimal cutpoint; falling back to median split")
+      split_method <- "median"
     }
   }
 

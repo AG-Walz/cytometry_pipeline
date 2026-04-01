@@ -29,6 +29,7 @@ source(file.path(shared_dir, "flowframe_utils.R"))
 plot_density <- function(flow_frames, sample_names, markers,
                           output_dir, plot_type = "density",
                           group_by = "sample", group_labels = NULL) {
+  plot_type <- match.arg(plot_type, c("density", "ridge", "both"))
   require(ggplot2)
   make_outdir(output_dir)
 
@@ -101,6 +102,7 @@ plot_density_from_matrix <- function(expr_matrix, sample_labels = NULL,
                                       markers = NULL, output_dir,
                                       plot_type = "density",
                                       group_labels = NULL) {
+  plot_type <- match.arg(plot_type, c("density", "ridge", "both"))
   require(ggplot2)
   make_outdir(output_dir)
 

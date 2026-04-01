@@ -24,6 +24,17 @@ plot_composition_barplot <- function(data, output_dir,
                                       fill_col = "sample",
                                       position = "stack",
                                       title = "Cell Composition") {
+  if (!x_col %in% colnames(data)) {
+    stop("x_col '", x_col, "' not found in data")
+  }
+  if (!fill_col %in% colnames(data)) {
+    stop("fill_col '", fill_col, "' not found in data")
+  }
+  if (nrow(data) == 0) {
+    warning("Empty data frame passed to plot_composition_barplot; returning NULL")
+    return(invisible(NULL))
+  }
+
   require(ggplot2)
   make_outdir(output_dir)
 

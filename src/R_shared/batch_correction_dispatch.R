@@ -92,7 +92,9 @@ run_batch_correction_dispatch <- function(data, method = "harmony",
 
   # --- Harmony (needs flowFrame list) ----------------------------------------
   if (method == "harmony") {
-    source(file.path(harm_dir, "batch_correction.R"))
+    tryCatch(source(file.path(harm_dir, "batch_correction.R")),
+             error = function(e) stop("Failed to load Harmony module: ", e$message,
+                                      "\nExpected at: ", file.path(harm_dir, "batch_correction.R")))
 
     if (is_flowframes) {
       # Direct: Harmony expects flowFrame list
@@ -136,7 +138,9 @@ run_batch_correction_dispatch <- function(data, method = "harmony",
 
   # --- ComBat (needs matrix) -------------------------------------------------
   if (method == "combat") {
-    source(file.path(harm_dir, "combat.R"))
+    tryCatch(source(file.path(harm_dir, "combat.R")),
+             error = function(e) stop("Failed to load ComBat module: ", e$message,
+                                      "\nExpected at: ", file.path(harm_dir, "combat.R")))
 
     if (is_flowframes) {
       # Convert flowFrames to matrix first
@@ -171,15 +175,25 @@ run_batch_correction_dispatch <- function(data, method = "harmony",
 
   # --- CytoNorm (needs flowFrame lists split into train/validation) ----------
   if (method == "cytonorm") {
-    source(file.path(harm_dir, "cytonorm.R"))
+    tryCatch(source(file.path(harm_dir, "cytonorm.R")),
+             error = function(e) stop("Failed to load CytoNorm module: ", e$message,
+                                      "\nExpected at: ", file.path(harm_dir, "cytonorm.R")))
 
     if (!is_flowframes) {
       stop("CytoNorm requires flowFrame input. Provide a list of flowFrame objects.")
     }
 
+    if (is.null(markers_of_interest)) {
+      stop("markers_of_interest is required for CytoNorm method. Specify in config.")
+    }
+
     train_indices <- params$cytonorm_train_indices %||% seq_along(data)
     val_indices <- setdiff(seq_along(data), train_indices)
-    if (length(val_indices) == 0) val_indices <- seq_along(data)
+    if (length(val_indices) == 0) {
+      warning("No validation indices specified; using all frames for both training ",
+              "and normalization. Consider specifying cytonorm_train_indices in config.")
+      val_indices <- seq_along(data)
+    }
 
     cyto_result <- run_cytonorm(
       train_frames      = data[train_indices],

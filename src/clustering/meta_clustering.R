@@ -7,12 +7,15 @@
 # clustering runs.
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+if (!exists("shared_dir")) {
+  shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+}
+cluster_dir <- file.path(dirname(shared_dir), "clustering")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "stats_utils.R"))
 
 # Source Leiden for run_leiden()
-source(file.path(dirname(sys.frame(1)$ofile %||% "."), "leiden.R"))
+source(file.path(cluster_dir, "leiden.R"))
 
 #' Run resolution sweep for clustering parameter optimization
 #'

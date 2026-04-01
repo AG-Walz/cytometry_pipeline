@@ -13,6 +13,19 @@ source(file.path(shared_dir, "pipeline_utils.R"))
 env <- init_pipeline("Pipeline A: Raw FCS -> Full Analysis",
                      "config/pipeline_A_config.R")
 source(file.path(env$shared_dir, "flowframe_utils.R"))
+source(file.path(env$base_dir, "src", "loading", "create_flowframes.R"))
+
+# Validate required parameters
+if (is.null(params$input_dir) && is.null(params$fcs_folder)) {
+  stop("input_dir (or fcs_folder) is required in config")
+}
+if (is.null(params$output_dir)) {
+  stop("output_dir is required in config")
+}
+# Validate output directory can be created
+tryCatch(make_outdir(params$output_dir),
+  error = function(e) stop("Cannot create output directory: ", params$output_dir, " (", e$message, ")")
+)
 
 # Step 1: Load FCS files
 cat("\n--- Step 1: Loading FCS files ---\n")
@@ -57,6 +70,14 @@ if ((params$batch_method %||% "none") != "none") {
   )
   if (!is.null(batch_result$corrected_frames)) {
     homogenized <- batch_result$corrected_frames
+  } else if (!is.null(batch_result$corrected_matrix)) {
+    # Convert corrected matrix back to flowFrame list for Harmony/ComBat
+    message("Converting batch-corrected matrix back to flowFrame list...")
+    homogenized <- create_flowframes_from_matrices(
+      expr_list = split(as.data.frame(batch_result$corrected_matrix),
+                        batch_result$sample_labels),
+      markers_of_interest = batch_result$markers
+    )
   }
 }
 

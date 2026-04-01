@@ -46,11 +46,18 @@ reorder_exprmtx <- function(flowframe, marker_name_list) {
   result <- matrix(NA, nrow = nrow(flowCore::exprs(flowframe)),
                    ncol = length(marker_name_list))
   colnames(result) <- marker_name_list
+  missing_markers <- c()
   for (j in seq_along(marker_name_list)) {
     col_idx <- which(data$markers == marker_name_list[j])
     if (length(col_idx) > 0) {
       result[, j] <- flowCore::exprs(flowframe)[, col_idx[1]]
+    } else {
+      missing_markers <- c(missing_markers, marker_name_list[j])
     }
+  }
+  if (length(missing_markers) > 0) {
+    warning("Markers filled with NA (not found in flowFrame): ",
+            paste(missing_markers, collapse = ", "))
   }
   result
 }
@@ -87,6 +94,13 @@ homogenize_flowframes <- function(flow_frames, sample_names,
 
     # Rename markers if needed
     if (length(markername_replacing) > 0) {
+      # Check for collisions: different old names mapping to the same new name
+      new_names <- unlist(markername_replacing)
+      if (any(duplicated(new_names))) {
+        dupes <- unique(new_names[duplicated(new_names)])
+        stop("markername_replacing collision: multiple markers map to the same name: ",
+             paste(dupes, collapse = ", "))
+      }
       ff <- replace_markernames(ff, markername_replacing)
     }
 

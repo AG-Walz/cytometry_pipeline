@@ -64,9 +64,14 @@ plot_pca <- function(expr_matrix, sample_labels = NULL,
   p_load <- ggplot(loadings_df, aes(x = PC1, y = PC2, label = marker)) +
     geom_segment(aes(xend = 0, yend = 0), arrow = grid::arrow(length = grid::unit(0.2, "cm")),
                  color = "steelblue") +
-    ggrepel::geom_text_repel(size = 3) +
     theme_minimal() +
     labs(title = paste(title, "- Loadings"))
+
+  if (requireNamespace("ggrepel", quietly = TRUE)) {
+    p_load <- p_load + ggrepel::geom_text_repel(size = 3)
+  } else {
+    p_load <- p_load + ggplot2::geom_text(size = 3)
+  }
 
   save_plot_formats(p_load, file.path(output_dir, "pca_loadings"),
                     width = 10, height = 10)

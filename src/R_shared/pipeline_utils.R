@@ -61,7 +61,7 @@ clustering_params <- function(params) {
     n_clusters     = params$n_clusters     %||% 20,
     grid_xdim      = params$grid_xdim      %||% 10,
     grid_ydim      = params$grid_ydim      %||% 10,
-    k              = params$n_neighbors    %||% 15,
+    k              = params$k %||% params$n_neighbors %||% 30,
     dbscan_eps     = params$dbscan_eps,
     dbscan_min_pts = params$dbscan_min_pts %||% 5,
     seed           = params$seed           %||% 42
@@ -95,8 +95,10 @@ batch_params <- function(params) {
   list(
     batch_do_pca           = params$batch_do_pca           %||% FALSE,
     combat_method          = params$combat_method          %||% "parametric",
+    combat_covariates      = params$combat_covariates      %||% NULL,
     cytonorm_train_indices = params$cytonorm_train_indices,
     cytonorm_n_clusters    = params$cytonorm_n_clusters    %||% 10,
+    cytonorm_goal          = params$cytonorm_goal          %||% "mean",
     seed                   = params$seed                   %||% 42
   )
 }

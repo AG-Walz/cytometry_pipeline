@@ -45,7 +45,7 @@ quality_control <- function(flowframe, sample_name,
         plot = TRUE,
         save_fcs = !is.null(output_dir),
         determine_good_cells = "all",
-        output_directory = output_dir %||% tempdir()
+        output_directory = if (is.null(output_dir)) tempdir() else output_dir
       )
       cat(sprintf("After QC: %d/%d cells remained.\n",
                   nrow(qc_result$FinalFF), nrow(flowframe)))
