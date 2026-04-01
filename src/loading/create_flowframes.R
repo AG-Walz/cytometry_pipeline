@@ -12,6 +12,17 @@ source(file.path(shared_dir, "flowframe_utils.R"))
 
 #' Create flowFrames from expression matrices
 #'
+#' Bridge function: converts matrix/data.frame data into flowFrame objects,
+#' enabling CSV expression data to flow into flowFrame-based scripts
+#' (e.g., plot_umap(), plot_density(), preprocessing).
+#'
+#' Input from: load_csv_expression() (loading/load_csv_expression.R),
+#'             combine_expression_matrices() (analysis/expression_matrices.R)
+#' Output to:  plot_umap() (visualization/umap.R),
+#'             plot_density() (visualization/density_plots.R),
+#'             homogenize_flowframes() (harmonization/panel_homogenization.R),
+#'             downsample_flowframes() (preprocessing/downsampling.R)
+#'
 #' @param expr_list Named list of expression matrices (or data.frames)
 #' @param markers_of_interest Character vector of marker names
 #' @param save_fcs Logical: save as FCS files
@@ -60,5 +71,14 @@ create_flowframes_from_matrices <- function(expr_list,
 #' @return flowSet object
 create_merged_flowset <- function(flow_frames) {
   cat("Creating flowSet from", length(flow_frames), "flowFrames...\n")
+
+  # Validate all frames have same number of columns
+  ncols <- sapply(flow_frames, ncol)
+  if (length(unique(ncols)) > 1) {
+    stop("Cannot merge flowFrames with different numbers of columns. ",
+         "Column counts: ", paste(unique(ncols), collapse = ", "),
+         ". Use homogenize_flowframes() first.")
+  }
+
   from_ffl_to_fSet(flow_frames, sample_names = names(flow_frames))
 }

@@ -1,0 +1,8 @@
+*.pptx
+*.excalidraw
+test_data/
+.git/
+nextflow/
+pipelines/
+config/
+docs/

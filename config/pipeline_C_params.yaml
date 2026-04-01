@@ -1,0 +1,8 @@
+pipeline: C
+input_dir: /path/to/csv_gating_files
+output_dir: ./results/pipeline_C
+markers_of_interest: "CD3,CD4,CD8,CD19,CD56,HLA-DR"
+conditions_csv: /path/to/conditions.csv
+condition_levels: "Control,Treatment"
+analysis_method: enrichment
+cluster_regex: "Clustering annotated"

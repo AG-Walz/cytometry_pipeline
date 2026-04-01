@@ -48,7 +48,12 @@ get_clusters_from_flowjo <- function(wsp_path, fcs_dir = dirname(wsp_path)) {
   result <- import_flowjo_gates(wsp_path, fcs_dir)
   # Convert binary columns to single assignment
   pop_cols <- setdiff(names(result$assignments), c("cell_id", "sample"))
-  convert_binary_to_single_cluster(result$assignments, pop_cols)
+  df <- convert_binary_to_single_cluster(result$assignments, pop_cols)
+  # Rename cluster_assignment to cluster for consistency with other loaders
+  if ("cluster_assignment" %in% names(df) && !"cluster" %in% names(df)) {
+    names(df)[names(df) == "cluster_assignment"] <- "cluster"
+  }
+  df
 }
 
 #' Load cluster assignments from a CSV file

@@ -23,7 +23,7 @@ Pipeline D requires **real FlowJo workspace files** and matching FCS data. It ca
 
 ## Pipeline Steps
 
-1. **`load_flowjo_wsp()`** + **`get_population_strings_list()`** — Extract gating sets from each WSP, get per-event population labels
+1. **`load_multiple_workspaces()`** — Load all WSP files and extract per-event population labels
 2. **`compare_gatings()`** — Align populations across workspaces, generate Venn/Euler per population
 3. **`compute_fleiss_kappa()`** — Inter-rater agreement statistics
 
@@ -150,43 +150,31 @@ print(ws$population_names)
 ```r
 source(file.path(base_dir, "src", "loading", "load_flowjo_wsp.R"))
 
-all_labels <- list()
-for (i in seq_along(params$wsp_paths)) {
-  ws <- load_flowjo_wsp(params$wsp_paths[i], fcs_dir = params$fcs_dir)
-  pops <- get_population_strings_list(ws$gating_set, ws$sample_names)
-  all_labels[[params$custom_name[i]]] <- pops
-}
+pop_strings_list <- load_multiple_workspaces(wsp_paths = wsp_paths, names = custom_name)
 ```
 
-**What it does:** For each workspace:
+**What it does:** Iterates over all workspace paths, and for each one:
 
 1. Opens the `.wsp` file with `CytoML::open_flowjo_xml()`
 2. Builds a GatingSet linking the workspace gates to the FCS data
 3. Extracts per-event population assignments using `gh_pop_get_indices()`
 4. Maps gate paths through `label_dict` to produce simplified labels
 
-**Function signatures:**
+Returns a named list (keyed by `custom_name`) of per-sample population string lists.
+
+**`load_multiple_workspaces()` signature:**
 
 ```r
-load_flowjo_wsp(wsp_path, fcs_dir = dirname(wsp_path), name = NULL)
+load_multiple_workspaces(wsp_paths, names = NULL, fcs_dir = NULL)
 ```
 
-Returns:
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `wsp_paths` | character vector | Paths to `.wsp` files |
+| `names` | character vector | Short labels for each workspace (defaults to filenames) |
+| `fcs_dir` | character | Directory containing FCS files (defaults to each WSP's parent directory) |
 
-```r
-list(
-  gating_set       = <GatingSet>,
-  sample_names     = c("sample_001", "sample_002"),
-  population_names = c("/no erys", "/no erys/Single Cells", ...),
-  workspace_name   = "Analyst_A"
-)
-```
-
-```r
-get_population_strings_list(gating_set, sample_names)
-```
-
-Returns a named list of data.frames, one per sample, with a `labels` column containing the gate path for each event.
+Returns a named list of population string lists, one entry per workspace. Internally calls `load_flowjo_wsp()` and `get_population_strings_list()` for each workspace.
 
 ---
 

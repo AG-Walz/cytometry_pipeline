@@ -11,6 +11,9 @@ source(file.path(shared_dir, "plot_utils.R"))
 
 #' Create expression heatmap from a matrix
 #'
+#' Input from: combine_expression_matrices() (analysis/expression_matrices.R),
+#'             create_expression_matrices() (analysis/expression_matrices.R)
+#'
 #' @param expr_matrix Numeric matrix (rows = clusters/samples, cols = markers)
 #' @param output_path Output file path
 #' @param title Heatmap title
@@ -38,6 +41,9 @@ plot_heatmap <- function(expr_matrix, output_path,
   # Handle Inf/NaN
   expr_matrix[is.infinite(expr_matrix)] <- NA
   expr_matrix[is.nan(expr_matrix)] <- NA
+
+  # Ensure output directory exists
+  make_outdir(dirname(output_path))
 
   # Strip extension from output_path to get base name
   filename_base <- sub("\\.[^.]+$", "", output_path)
@@ -72,6 +78,15 @@ plot_heatmap <- function(expr_matrix, output_path,
 #' @param title Heatmap title
 plot_cluster_heatmap <- function(expr_data, cluster_col, marker_cols,
                                   output_path, title = "Cluster Expression") {
+  if (!cluster_col %in% colnames(expr_data)) {
+    stop("cluster_col '", cluster_col, "' not found in expr_data. ",
+         "Available columns: ", paste(head(colnames(expr_data), 10), collapse = ", "))
+  }
+  missing_markers <- setdiff(marker_cols, colnames(expr_data))
+  if (length(missing_markers) > 0) {
+    stop("marker_cols not found in expr_data: ", paste(missing_markers, collapse = ", "))
+  }
+
   # Calculate median expression per cluster
   median_expr <- aggregate(
     expr_data[, marker_cols],

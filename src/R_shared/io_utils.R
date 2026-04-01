@@ -16,7 +16,7 @@ is_directory <- function(path) {
 #' @param dir_path_list Character vector of directory paths
 dir_create <- function(dir_path_list) {
   for (path in dir_path_list) {
-    if (!endsWith(path, "/")) path <- paste0(path, "/")
+    path <- normalizePath(path, mustWork = FALSE)
     if (!is_directory(path)) {
       dir.create(path, showWarnings = FALSE, recursive = TRUE)
     }

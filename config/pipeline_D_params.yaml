@@ -1,0 +1,5 @@
+pipeline: D
+output_dir: ./results/pipeline_D
+wsp_paths: "/path/to/workspace1.wsp,/path/to/workspace2.wsp"
+wsp_names: "Analyst1,Analyst2"
+target_fcs: /path/to/target.fcs

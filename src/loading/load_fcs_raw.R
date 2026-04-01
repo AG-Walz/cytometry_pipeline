@@ -58,7 +58,7 @@ load_fcs_raw <- function(input_dir,
   flow_frames <- list()
   for (i in seq_along(input_fcs_files)) {
     cat("Loading", basename(input_fcs_files[i]), "...")
-    flow_frames[[i]] <- flowWorkspace::load_cytoframe_from_fcs(
+    flow_frames[[i]] <- flowCore::read.FCS(
       input_fcs_files[i],
       transformation = FALSE,
       truncate_max_range = truncation,

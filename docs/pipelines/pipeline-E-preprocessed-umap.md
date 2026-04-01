@@ -217,13 +217,12 @@ downsample_flowframes(flow_frames, sample_names, target_cells = 10000,
 source(file.path(base_dir, "src", "clustering", "leiden.R"))
 
 # Build combined expression matrix from all samples
-expr_list <- extract_exprmtx_list(downsampled, flow_data$sample_names, params$markers_of_interest)
-combined_matrix <- do.call(rbind, expr_list)
-sample_labels <- rep(names(expr_list), sapply(expr_list, nrow))
-
+expr_data <- build_combined_expr_matrix(
+  downsampled, flow_data$sample_names, params$markers_of_interest
+)
 clusters <- run_leiden_with_umap(
-  expr_matrix   = combined_matrix,
-  sample_labels = sample_labels,
+  expr_matrix   = expr_data$combined_matrix,
+  sample_labels = expr_data$sample_labels,
   output_dir    = file.path(params$output_dir, "02_clustering"),
   n_neighbors   = params$n_neighbors,
   resolution    = params$resolution,
@@ -233,10 +232,17 @@ clusters <- run_leiden_with_umap(
 
 **What it does:**
 
-1. Extracts expression matrices from all downsampled flowFrames
-2. Combines into a single cells x markers matrix
-3. Builds a KNN graph and runs Leiden community detection
-4. Computes UMAP embedding for visualization
+1. `build_combined_expr_matrix()` extracts expression matrices from all downsampled flowFrames and combines them into a single cells x markers matrix with matching sample labels
+2. Builds a KNN graph and runs Leiden community detection
+3. Computes UMAP embedding for visualization
+
+**`build_combined_expr_matrix()` signature:**
+
+```r
+build_combined_expr_matrix(flow_frames, sample_names, markers_of_interest)
+```
+
+Returns a list with `combined_matrix` (cells x markers matrix) and `sample_labels` (character vector identifying the source sample for each row).
 
 **Function signature:**
 

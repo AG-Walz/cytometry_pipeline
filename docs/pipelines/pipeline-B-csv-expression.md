@@ -227,15 +227,30 @@ CD8_T_cells;CD3;2.92;0.001;0.98;0.001;150;3;lmer
 ### Step 3: Visualization — Expression Heatmap
 
 ```r
+source(file.path(base_dir, "src", "analysis", "expression_matrices.R"))
 source(file.path(base_dir, "src", "visualization", "heatmaps.R"))
-plot_heatmap(
-  expr_matrix = t(combined_matrix[sample(nrow(combined_matrix), min(500, nrow(combined_matrix))), ]),
-  output_path = file.path(viz_dir, "expression_heatmap.png"),
-  title       = "Expression Heatmap (sampled cells)"
+
+combined_matrix <- combine_expression_matrices(
+  expr_data_list = expr_data, markers = params$markers, max_cells = 500
 )
+if (!is.null(combined_matrix)) {
+  plot_heatmap(
+    expr_matrix = t(combined_matrix),
+    output_path = file.path(viz_dir, "expression_heatmap.png"),
+    title       = "Expression Heatmap (sampled cells)"
+  )
+}
 ```
 
-**What it does:** Generates a clustered heatmap (using `pheatmap`) showing expression patterns across markers and cells. If the combined matrix has more than 500 cells, a random subset of 500 is drawn for readability. Rows (markers) and columns (cells) are hierarchically clustered.
+**What it does:** `combine_expression_matrices()` filters each loaded data.table to the requested markers, row-binds them into a single matrix, and samples down to `max_cells` rows for readability. The resulting matrix is then passed to `plot_heatmap()` to generate a clustered heatmap (using `pheatmap`) showing expression patterns across markers and cells. Rows (markers) and columns (cells) are hierarchically clustered.
+
+**`combine_expression_matrices()` signature:**
+
+```r
+combine_expression_matrices(expr_data_list, markers = NULL, max_cells = 500)
+```
+
+Returns a matrix (cells x markers) subsetted to the requested markers and capped at `max_cells` rows via random sampling, or `NULL` if no valid data is found.
 
 **Function signature:**
 

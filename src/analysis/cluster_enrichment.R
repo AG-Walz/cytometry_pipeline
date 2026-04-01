@@ -17,6 +17,9 @@ source(file.path(shared_dir, "stats_utils.R"))
 
 #' Run cluster enrichment analysis between conditions
 #'
+#' Input from: clusters_to_gating_csv() (clustering/leiden.R),
+#'             load_csv_gating() (loading/load_csv_gating.R)
+#'
 #' @param data_dir Directory with per-cell CSV files
 #' @param conditions_csv Path to CSV with file_name, condition columns
 #' @param output_dir Output directory

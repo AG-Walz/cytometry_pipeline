@@ -31,6 +31,8 @@ If you are **looking for a specific utility function** (CSV I/O, memory manageme
 | [File Formats](file-formats.md) | Input and output format specifications for all pipelines (FCS, CSV, WSP, plots) |
 | [Standalone Scripts](standalone-scripts.md) | Using individual module functions outside of pipelines, with signatures and examples |
 | [R_shared API Reference](r-shared-reference.md) | Complete function reference for all 8 shared utility modules (io, gui, memory, cluster, plot, flowframe, fcs, stats) |
+| [Composability Guide](composability-guide.md) | Data flow contracts, format specs, and 8 example cross-pipeline workflows |
+| [Methods Guide](methods-guide.md) | Decision flowcharts and 19 deep-dive pages on every statistical, clustering, transformation, and QC method |
 
 ### Pipeline Guides
 
@@ -95,6 +97,9 @@ cytometry/
 │   ├── file-formats.md           Input/output format specifications
 │   ├── standalone-scripts.md     Using modules outside of pipelines
 │   ├── r-shared-reference.md     Shared utility API (8 modules, 50+ functions)
+│   ├── composability-guide.md   Cross-pipeline data flow and example workflows
+│   ├── methods-guide.md         Decision flowcharts + 19 method deep-dives
+│   ├── methods/                 Per-method deep-dive pages (peer-reviewed refs)
 │   ├── pipelines/                Per-pipeline deep-dive guides
 │   │   ├── pipeline-A-raw-fcs.md
 │   │   ├── pipeline-B-csv-expression.md
@@ -109,7 +114,7 @@ cytometry/
 │       ├── analysis.md
 │       ├── visualization.md
 │       └── metadata-qc.md
-├── src/                      Source code (9 subprojects, 47 scripts)
+├── src/                      Source code (8 subprojects, 43 scripts)
 │   ├── R_shared/                 Shared utility library (8 modules)
 │   ├── loading/                  Data loaders (FCS, CSV, FlowJo WSP)
 │   ├── preprocessing/            QC, transformation, downsampling, normalization

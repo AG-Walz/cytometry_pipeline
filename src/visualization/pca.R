@@ -12,6 +12,11 @@ source(file.path(shared_dir, "plot_utils.R"))
 
 #' Create PCA plots from expression data
 #'
+#' Input from: build_combined_expr_matrix() (R_shared/flowframe_utils.R),
+#'             combine_expression_matrices() (analysis/expression_matrices.R),
+#'             load_csv_expression() (loading/load_csv_expression.R)
+#' Output to:  standalone visualization output
+#'
 #' @param expr_matrix Numeric matrix (rows = cells, cols = markers)
 #' @param sample_labels Character vector of sample labels
 #' @param output_dir Output directory
@@ -59,9 +64,14 @@ plot_pca <- function(expr_matrix, sample_labels = NULL,
   p_load <- ggplot(loadings_df, aes(x = PC1, y = PC2, label = marker)) +
     geom_segment(aes(xend = 0, yend = 0), arrow = grid::arrow(length = grid::unit(0.2, "cm")),
                  color = "steelblue") +
-    ggrepel::geom_text_repel(size = 3) +
     theme_minimal() +
     labs(title = paste(title, "- Loadings"))
+
+  if (requireNamespace("ggrepel", quietly = TRUE)) {
+    p_load <- p_load + ggrepel::geom_text_repel(size = 3)
+  } else {
+    p_load <- p_load + ggplot2::geom_text(size = 3)
+  }
 
   save_plot_formats(p_load, file.path(output_dir, "pca_loadings"),
                     width = 10, height = 10)

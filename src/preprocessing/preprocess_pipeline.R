@@ -7,11 +7,16 @@
 # =============================================================================
 
 shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
-source(file.path(shared_dir, "io_utils.R"))
-source(file.path(shared_dir, "flowframe_utils.R"))
-source(file.path(dirname(getwd()), "src", "preprocessing", "quality_control.R"))
-source(file.path(dirname(getwd()), "src", "preprocessing", "transformation.R"))
-source(file.path(dirname(getwd()), "src", "preprocessing", "normalization.R"))
+tryCatch(source(file.path(shared_dir, "io_utils.R")),
+         error = function(e) stop("Failed to load io_utils: ", e$message))
+tryCatch(source(file.path(shared_dir, "flowframe_utils.R")),
+         error = function(e) stop("Failed to load flowframe_utils: ", e$message))
+tryCatch(source(file.path(dirname(getwd()), "src", "preprocessing", "quality_control.R")),
+         error = function(e) stop("Failed to load quality_control module: ", e$message))
+tryCatch(source(file.path(dirname(getwd()), "src", "preprocessing", "transformation.R")),
+         error = function(e) stop("Failed to load transformation module: ", e$message))
+tryCatch(source(file.path(dirname(getwd()), "src", "preprocessing", "normalization.R")),
+         error = function(e) stop("Failed to load normalization module: ", e$message))
 
 #' Run the full preprocessing pipeline on a list of flowFrames
 #'

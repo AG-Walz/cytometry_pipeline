@@ -28,8 +28,11 @@ compare_gatings <- function(pop_strings_list, target_fcs, label_dict,
                              idx_labels = NULL, scale_size = TRUE) {
   require(data.table)
 
-  # Source visualization functions
-  viz_dir <- file.path(dirname(getwd()), "src", "visualization")
+  # Source visualization functions using shared_dir pattern
+  if (!exists("shared_dir")) {
+    shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+  }
+  viz_dir <- file.path(dirname(shared_dir), "visualization")
   source(file.path(viz_dir, "venn_diagrams.R"))
 
   make_outdir(output_dir)
@@ -57,6 +60,15 @@ compare_gatings <- function(pop_strings_list, target_fcs, label_dict,
   # Translate labels
   for (i in seq_along(fj_label_lists)) {
     fj_label_lists[[i]] <- translate_labels(fj_label_lists[[i]], label_dict)
+  }
+
+  # Validate that all vectors have the same length before converting to data frame
+  lengths <- sapply(fj_label_lists, length)
+  if (length(unique(lengths)) > 1) {
+    warning("Workspaces have different cell counts: ", paste(lengths, collapse = ", "),
+            ". Truncating to minimum length for comparison.")
+    min_len <- min(lengths)
+    fj_label_lists <- lapply(fj_label_lists, function(x) x[seq_len(min_len)])
   }
 
   # Save FlowJo label lists

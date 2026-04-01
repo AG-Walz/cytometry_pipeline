@@ -23,7 +23,10 @@ z_score_scaling <- function(flowframe, marker_indices) {
 #' @param marker_indices Integer vector of column indices to normalize
 #' @return Quantile-normalized flowFrame
 quantile_norm <- function(flowframe, marker_indices) {
-  require(preprocessCore)
+  if (!requireNamespace("preprocessCore", quietly = TRUE)) {
+    stop("Package 'preprocessCore' required for quantile normalization. ",
+         "Install with: BiocManager::install('preprocessCore')")
+  }
   expr_data <- flowCore::exprs(flowframe)
   expr_data[, marker_indices] <- preprocessCore::normalize.quantiles(
     expr_data[, marker_indices]
@@ -39,7 +42,10 @@ quantile_norm <- function(flowframe, marker_indices) {
 #' @param ... Additional arguments to harmony::HarmonyMatrix
 #' @return Batch-corrected expression matrix
 harmony_normalize <- function(expr_matrix, batch_vector, ...) {
-  require(harmony)
+  if (!requireNamespace("harmony", quietly = TRUE)) {
+    stop("Package 'harmony' required for batch correction. ",
+         "Install with: install.packages('harmony')")
+  }
   meta <- data.frame(batch = batch_vector)
   corrected <- harmony::HarmonyMatrix(
     expr_matrix,

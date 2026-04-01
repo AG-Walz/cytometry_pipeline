@@ -76,6 +76,8 @@ Rscript pipelines/pipeline_X_name.R --config config/pipeline_X_config.R
 | [File Formats](docs/file-formats.md) | Input and output file format specifications |
 | [Standalone Scripts](docs/standalone-scripts.md) | Using individual scripts outside pipelines |
 | [R_shared API Reference](docs/r-shared-reference.md) | Shared utility library (8 modules, 50+ functions) |
+| [Composability Guide](docs/composability-guide.md) | Cross-pipeline data flow, format contracts, example workflows |
+| [Methods Guide](docs/methods-guide.md) | Decision flowcharts and 19 deep-dive pages with peer-reviewed references |
 
 ### Pipeline Guides
 
@@ -96,7 +98,7 @@ Rscript pipelines/pipeline_X_name.R --config config/pipeline_X_config.R
 
 ```
 cytometry/
-├── src/                      Source code (9 subprojects)
+├── src/                      Source code (8 subprojects)
 │   ├── R_shared/                 Shared utility library (8 modules)
 │   ├── loading/                  Data loaders (FCS, CSV, FlowJo WSP)
 │   ├── preprocessing/            QC, transformation, downsampling

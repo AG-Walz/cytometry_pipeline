@@ -29,7 +29,13 @@ load_csv_expression <- function(input_dir, sep = NULL, max_memory_gb = 4) {
     cat("Loading:", file_name, sprintf("(%.1f MB)...", csv_info$file_size_mb[i]))
 
     file_sep <- if (is.null(sep)) detect_csv_sep(file_path) else sep
-    dt <- read_csv_chunked(file_path, max_memory_gb = max_memory_gb)
+    # Use fread directly for small files (respects sep); chunked reader for large files
+    file_size_gb <- csv_info$file_size_mb[i] / 1000
+    dt <- if (file_size_gb > max_memory_gb) {
+      read_csv_chunked(file_path, max_memory_gb = max_memory_gb)
+    } else {
+      data.table::fread(file_path, sep = file_sep)
+    }
     results[[file_name]] <- dt
     cat(sprintf(" %d rows x %d cols\n", nrow(dt), ncol(dt)))
   }

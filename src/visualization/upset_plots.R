@@ -18,6 +18,15 @@ source(file.path(shared_dir, "plot_utils.R"))
 #' @param min_size Minimum intersection size to show
 plot_upset <- function(data, set_columns, output_path,
                         title = "UpSet Plot", min_size = 1) {
+  if (nrow(data) == 0) {
+    warning("Empty data for UpSet plot; skipping")
+    return(invisible(NULL))
+  }
+  missing_cols <- setdiff(set_columns, colnames(data))
+  if (length(missing_cols) > 0) {
+    stop("set_columns not found in data: ", paste(missing_cols, collapse = ", "))
+  }
+
   require(UpSetR)
 
   filename_base <- sub("\\.[^.]+$", "", output_path)
