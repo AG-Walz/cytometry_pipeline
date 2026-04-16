@@ -39,12 +39,15 @@ run_dimred <- function(expr_matrix, method = "umap",
   stopifnot(is.matrix(expr_matrix), is.numeric(expr_matrix))
   cat("Dispatching dimensionality reduction: method =", method, "\n")
 
-  # Resolve visualization directory
-  if (exists("shared_dir")) {
-    viz_dir <- file.path(dirname(shared_dir), "visualization")
+  # Resolve visualization directory. Prefer caller-provided shared_dir, then
+  # CYTOMETRY_SRC env var, then getwd.
+  .shared <- if (exists("shared_dir")) {
+    shared_dir
   } else {
-    viz_dir <- file.path(dirname(getwd()), "src", "visualization")
+    .s <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (nzchar(.s)) file.path(.s, "R_shared") else file.path(dirname(getwd()), "src", "R_shared")
   }
+  viz_dir <- file.path(dirname(.shared), "visualization")
 
   # Common output format params
   output_formats <- params$output_formats %||% list(pdf = FALSE, png = TRUE, svg = FALSE)

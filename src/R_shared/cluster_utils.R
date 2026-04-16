@@ -76,7 +76,7 @@ flatten_label_list <- function(label_lists, gating_tree) {
 #' @param df Data frame with binary columns
 #' @return List of character vectors (selected column names per row)
 labels_from_binary_df <- function(df) {
-  apply(df, 1, function(row) names(row)[which(row == 1)])
+  apply(df, 1, function(row) names(row)[which(row == 1)], simplify = FALSE)
 }
 
 #' Extract labels from a binary data.table (first column = index)
@@ -122,6 +122,7 @@ convert_binary_to_single_cluster <- function(cells_data, cluster_cols) {
 #' @param dictionary Named character vector (names = original, values = standardized)
 #' @return Character vector with translated labels
 translate_labels <- function(string_list, dictionary) {
+  if (length(string_list) == 0) return(as.character(string_list))
   idx <- match(string_list, names(dictionary))
   ifelse(!is.na(idx), dictionary[idx], string_list)
 }

@@ -108,10 +108,15 @@ combine_expression_matrices <- function(expr_data_list, markers,
 
   combined_list <- lapply(names(expr_data_list), function(nm) {
     dt <- expr_data_list[[nm]]
-    marker_cols <- intersect(markers, names(dt))
-    if (length(marker_cols) > 0) {
-      as.matrix(dt[, ..marker_cols])
+    # Only samples that contain ALL requested markers are included, otherwise
+    # rbind would fail on mismatched column counts. Samples missing markers
+    # are skipped with a warning.
+    if (all(markers %in% names(dt))) {
+      as.matrix(dt[, ..markers])
     } else {
+      missing <- setdiff(markers, names(dt))
+      warning("Sample '", nm, "' is missing markers (", paste(missing, collapse = ", "),
+              ") and will be excluded from the combined matrix.")
       NULL
     }
   })

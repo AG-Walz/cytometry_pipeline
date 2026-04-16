@@ -21,6 +21,11 @@ transform_flowframe <- function(flowframe, sample_name,
                                 markers_of_interest,
                                 offset_list = NULL, width_list = NULL,
                                 transform_type = "arcsinh") {
+  valid_transforms <- c("arcsinh", "logicle", "biexponential", "log", "None")
+  if (!transform_type %in% valid_transforms) {
+    stop("Invalid transform_type: '", transform_type, "'. Must be one of: ",
+         paste(valid_transforms, collapse = ", "))
+  }
   if (is.null(offset_list)) {
     offset_list <- rep(0, length(markers_of_interest))
   }
@@ -46,7 +51,7 @@ transform_flowframe <- function(flowframe, sample_name,
     offset <- offset_list[i]
     width <- width_list[i]
 
-    if (!(marker %in% colnames(flowframe))) {
+    if (!(marker %in% flowCore::colnames(flowframe))) {
       warning("Skipping marker '", marker, "' — not found in flowFrame.")
       next
     }

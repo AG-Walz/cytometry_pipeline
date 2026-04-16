@@ -32,12 +32,15 @@ run_clustering <- function(expr_matrix, method = "leiden", params = list()) {
   n_cells <- nrow(expr_matrix)
   cat("Dispatching clustering: method =", method, ", cells =", n_cells, "\n")
 
-  # Resolve shared directories
-  if (exists("shared_dir")) {
-    cluster_dir <- file.path(dirname(shared_dir), "clustering")
+  # Resolve shared directories. Prefer caller-provided shared_dir, then
+  # CYTOMETRY_SRC env var, then getwd.
+  .shared <- if (exists("shared_dir")) {
+    shared_dir
   } else {
-    cluster_dir <- file.path(dirname(getwd()), "src", "clustering")
+    .s <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (nzchar(.s)) file.path(.s, "R_shared") else file.path(dirname(getwd()), "src", "R_shared")
   }
+  cluster_dir <- file.path(dirname(.shared), "clustering")
 
   cluster_ids <- switch(method,
 

@@ -201,8 +201,8 @@ test_that("arcsinh transform produces expected output", {
   )
 
   expect_s4_class(result, "flowFrame")
-  expect_equal(nrow(result), 100)
-  expect_equal(ncol(result), 2)
+  expect_equal(unname(nrow(result)), 100)
+  expect_equal(unname(ncol(result)), 2)
 
   # Transformed values should differ from original
   orig_vals <- flowCore::exprs(ff)[, "CD3"]
@@ -321,7 +321,7 @@ test_that("z_score_scaling produces zero-mean columns", {
   result <- z_score_scaling(ff, marker_indices)
 
   expect_s4_class(result, "flowFrame")
-  expect_equal(nrow(result), 200)
+  expect_equal(unname(nrow(result)), 200)
 
   # Each scaled marker column should have mean ~ 0
   expr <- flowCore::exprs(result)
@@ -363,13 +363,22 @@ test_that("z_score_scaling on subset of markers leaves others unchanged", {
 
 test_that("quantile_norm produces normalized output", {
   skip_if_not_installed("preprocessCore")
-
+  # preprocessCore's native threading can fail under a container/CI cpuset
+  # with `pthread_create() ... 22`. Skip in that case rather than fail.
   ff <- make_synthetic_ff(n_cells = 100, markers = c("CD3", "CD4", "CD8"))
-  result <- quantile_norm(ff, marker_indices = 1:3)
+  result <- tryCatch(
+    quantile_norm(ff, marker_indices = 1:3),
+    error = function(e) {
+      if (grepl("pthread_create", conditionMessage(e))) {
+        skip(paste("preprocessCore pthread unavailable:", conditionMessage(e)))
+      }
+      stop(e)
+    }
+  )
 
   expect_s4_class(result, "flowFrame")
-  expect_equal(nrow(result), 100)
-  expect_equal(ncol(result), 3)
+  expect_equal(unname(nrow(result)), 100)
+  expect_equal(unname(ncol(result)), 3)
 
   # After quantile normalization, the distribution of each column
   # should be more similar to each other
@@ -1098,8 +1107,14 @@ test_that("boolean_gate validates gate_results input", {
     boolean_gate(ff, "not_a_list", "CD3+"),
     "named list"
   )
+  # A named list whose element has the wrong length should also error.
   expect_error(
     boolean_gate(ff, list("unnamed_element" = TRUE), "CD3+"),
+    "has length"
+  )
+  # A named list whose element is not logical should error with "logical vector".
+  expect_error(
+    boolean_gate(ff, list("unnamed_element" = rep(1, nrow(ff))), "CD3+"),
     "logical vector"
   )
 })
@@ -1221,6 +1236,8 @@ test_that("run_preprocessing saves output files when output_dir is set", {
 
 context("bead_normalization")
 
+source(file.path(pp_dir, "bead_normalization.R"))
+
 test_that("identify_beads finds high-intensity events", {
   set.seed(42)
   # Simulate bead channels: most cells are dim, beads are bright
@@ -1336,8 +1353,6 @@ test_that("doublet detection followed by live/dead gating chains correctly", {
 
 test_that("flowFrame with zero rows is handled gracefully", {
   markers <- c("CD3", "CD4")
-  empty_expr <- matrix(numeric(0), nrow = 0, ncol = 2)
-  colnames(empty_expr) <- markers
   params <- Biobase::AnnotatedDataFrame(data.frame(
     name     = markers,
     desc     = markers,
@@ -1347,18 +1362,23 @@ test_that("flowFrame with zero rows is handled gracefully", {
     row.names = paste0("$P", 1:2),
     stringsAsFactors = FALSE
   ))
-  ff_empty <- flowCore::flowFrame(exprs = empty_expr, parameters = params)
+  # flowCore's flowFrame constructor rejects a 0-row matrix directly
+  # (round-trips through FCS format which requires at least one row), so
+  # build a 1-row frame and drop the row.
+  dummy <- matrix(0, nrow = 1, ncol = 2, dimnames = list(NULL, markers))
+  ff_empty <- flowCore::flowFrame(exprs = dummy, parameters = params)[-1, ]
+  expect_equal(unname(nrow(ff_empty)), 0)
 
   # quality_control None should pass through
   result <- quality_control(ff_empty, "empty", qc_type = "None")
-  expect_equal(nrow(result), 0)
+  expect_equal(unname(nrow(result)), 0)
 
   # transform_flowframe should handle 0-row input
   result <- transform_flowframe(
     ff_empty, "empty", markers, c(0, 0), c(5, 5),
     transform_type = "arcsinh"
   )
-  expect_equal(nrow(result), 0)
+  expect_equal(unname(nrow(result)), 0)
 })
 
 test_that("single-cell flowFrame (1 row) is handled", {

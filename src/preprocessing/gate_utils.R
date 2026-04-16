@@ -124,21 +124,27 @@ boolean_gate <- function(flowframe, gate_results, expression) {
   cat("Boolean gating: '", expression, "' on ", n_cells, " events\n", sep = "")
 
   # --- Parse and evaluate expression -----------------------------------------
-  # Sort gate names by length (longest first) to avoid partial replacement
+  # Gate names may contain characters that are meaningful in regex (e.g. `+`
+  # in "CD3+"), so use fixed (literal) replacement. Sort by length so that
+  # longer names are replaced before their shorter prefixes (e.g. "CD3+CD4+"
+  # before "CD3+").
   gate_names <- names(gate_results)
   gate_names_sorted <- gate_names[order(nchar(gate_names), decreasing = TRUE)]
 
+  # Use a placeholder per gate to avoid overlap between replaced substrings
+  # and new gate-name tokens introduced by earlier substitutions.
+  placeholders <- paste0("__GATE_", seq_along(gate_names_sorted), "__")
   eval_expr <- expression
-  for (nm in gate_names_sorted) {
-    # Escape special regex characters in gate names (e.g., + in "CD3+")
-    escaped_nm <- gsub("([\\[\\]\\(\\)\\{\\}\\+\\*\\?\\.\\^\\$\\|\\\\])",
-                       "\\\\\\1", nm)
-    eval_expr <- gsub(escaped_nm, paste0("gate_results[['", nm, "']]"),
-                      eval_expr)
+  for (i in seq_along(gate_names_sorted)) {
+    eval_expr <- gsub(gate_names_sorted[i], placeholders[i], eval_expr, fixed = TRUE)
+  }
+  for (i in seq_along(gate_names_sorted)) {
+    eval_expr <- gsub(placeholders[i],
+                      paste0("gate_results[['", gate_names_sorted[i], "']]"),
+                      eval_expr, fixed = TRUE)
   }
 
   # Validate only expected tokens remain (logical operators and gate references)
-  # Replace known safe patterns to check for unexpected tokens
   check_expr <- eval_expr
   check_expr <- gsub("gate_results\\[\\['.+?'\\]\\]", "", check_expr)
   check_expr <- gsub("[&|!() ]", "", check_expr)

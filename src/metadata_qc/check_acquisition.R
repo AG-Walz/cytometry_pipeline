@@ -18,8 +18,16 @@ get_fcs_keyword <- function(fcs_path, keyword_name) {
   tryCatch({
     ff <- flowCore::read.FCS(fcs_path, transformation = FALSE,
                              which.lines = 1, truncate_max_range = FALSE)
+    # flowCore::keyword(ff, name) returns a named list; unwrap to a scalar
+    # character so downstream code can treat the result like a single value.
     val <- flowCore::keyword(ff, keyword_name)
-    if (is.null(val) || is.na(val) || val == "") "Unknown" else val
+    if (is.list(val)) val <- if (length(val) >= 1) val[[1]] else NULL
+    if (is.null(val) || length(val) == 0 ||
+        (length(val) == 1 && (is.na(val) || val == ""))) {
+      "Unknown"
+    } else {
+      as.character(val)
+    }
   }, error = function(e) {
     message("Error reading ", fcs_path, ": ", e$message)
     "Error"
@@ -61,11 +69,16 @@ get_fcs_metadata <- function(fcs_path) {
   tryCatch({
     ff <- flowCore::read.FCS(fcs_path, transformation = FALSE,
                              which.lines = 1, truncate_max_range = FALSE)
+    # keyword() returns a named list, so extract the scalar value.
     acq_date <- flowCore::keyword(ff, "$DATE")
-    if (is.null(acq_date) || is.na(acq_date) || acq_date == "") acq_date <- "Unknown"
+    if (is.list(acq_date)) acq_date <- if (length(acq_date) >= 1) acq_date[[1]] else NULL
+    if (is.null(acq_date) || length(acq_date) == 0 ||
+        (length(acq_date) == 1 && (is.na(acq_date) || acq_date == ""))) {
+      acq_date <- "Unknown"
+    }
     file_sz <- file.size(fcs_path)
     if (is.na(file_sz)) file_sz <- "Unknown" else file_sz <- as.character(file_sz)
-    c(acquisition_date = acq_date, file_size = file_sz)
+    c(acquisition_date = as.character(acq_date), file_size = file_sz)
   }, error = function(e) {
     message("Error reading ", fcs_path, ": ", e$message)
     c(acquisition_date = "Error", file_size = "Error")

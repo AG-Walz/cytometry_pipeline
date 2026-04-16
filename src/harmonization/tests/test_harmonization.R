@@ -149,8 +149,8 @@ test_that("homogenize_flowframes produces frames with identical columns", {
   expect_equal(names(result), c("S1", "S2"))
 
   # Both should have exactly the target markers as column names
-  cols1 <- colnames(flowCore::exprs(result[["S1"]]))
-  cols2 <- colnames(flowCore::exprs(result[["S2"]]))
+  cols1 <- unname(colnames(flowCore::exprs(result[["S1"]])))
+  cols2 <- unname(colnames(flowCore::exprs(result[["S2"]])))
   expect_equal(cols1, target_markers)
   expect_equal(cols2, target_markers)
 })
@@ -190,16 +190,17 @@ test_that("homogenize_flowframes fills NA for missing markers", {
       sample_names = c("S1", "S2"),
       markers_of_interest = target
     ),
-    "Markers filled with NA"
+    "Markers filled with 0"
   )
 
-  # S1 should have NA in CD8 column; S2 should have NA in CD4 column
+  # Missing markers are zero-filled (flowCore does not support NA in exprs).
+  # S1 has no CD8 data, S2 has no CD4 data, so those columns should be all 0.
   expr_s1 <- flowCore::exprs(result[["S1"]])
   expr_s2 <- flowCore::exprs(result[["S2"]])
-  expect_true(all(is.na(expr_s1[, "CD8"])))
-  expect_true(all(is.na(expr_s2[, "CD4"])))
-  # Non-missing should be populated
-  expect_false(any(is.na(expr_s1[, "CD3"])))
+  expect_true(all(expr_s1[, "CD8"] == 0))
+  expect_true(all(expr_s2[, "CD4"] == 0))
+  # Non-missing should be populated (non-zero with high probability for rnorm)
+  expect_false(all(expr_s1[, "CD3"] == 0))
 })
 
 test_that("homogenize_flowframes detects markername collision", {
@@ -517,7 +518,7 @@ test_that("reorder_exprmtx reorders columns to target order", {
   expect_equal(ncol(result), 2)
 })
 
-test_that("reorder_exprmtx warns about missing markers and fills NA", {
+test_that("reorder_exprmtx warns about missing markers and fills with 0", {
   skip_if_not_installed("flowCore")
   source(file.path(harm_dir, "panel_homogenization.R"))
 
@@ -526,10 +527,11 @@ test_that("reorder_exprmtx warns about missing markers and fills NA", {
 
   expect_warning(
     result <- reorder_exprmtx(ff, c("CD3", "CD4", "CD56")),
-    "Markers filled with NA"
+    "Markers filled with 0"
   )
-  expect_true(all(is.na(result[, "CD56"])))
-  expect_false(any(is.na(result[, "CD3"])))
+  # Missing markers are zero-filled (flowCore does not support NA in exprs).
+  expect_true(all(result[, "CD56"] == 0))
+  expect_false(all(result[, "CD3"] == 0))
 })
 
 # =============================================================================

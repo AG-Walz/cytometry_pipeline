@@ -24,6 +24,13 @@ save_plot_formats <- function(plot, filename_base,
   formats_saved <- c()
   for (format_name in names(formats)) {
     if (isTRUE(formats[[format_name]])) {
+      # SVG output via ggsave requires the 'svglite' package. Skip with a
+      # warning rather than erroring so callers don't have to feature-detect.
+      if (format_name == "svg" && !requireNamespace("svglite", quietly = TRUE)) {
+        warning("svglite package not installed; skipping SVG output for ",
+                filename_base, ".svg")
+        next
+      }
       config <- format_configs[[format_name]]
       args <- c(
         list(filename = paste0(filename_base, config$ext),
@@ -111,7 +118,8 @@ plot_per_sample <- function(df, value_col, out_dir, out_prefix, y_label, title) 
 create_safe_filename <- function(name, max_length = 100) {
   safe <- gsub("[^A-Za-z0-9_.-]", "_", name)
   safe <- gsub("_+", "_", safe)
-  safe <- gsub("^_|_$", "", safe)
+  safe <- gsub("-+", "-", safe)
+  safe <- gsub("^[_-]+|[_-]+$", "", safe)
   if (nchar(safe) > max_length) safe <- substr(safe, 1, max_length)
   safe
 }

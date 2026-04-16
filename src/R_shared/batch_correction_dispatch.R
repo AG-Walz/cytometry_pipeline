@@ -54,14 +54,15 @@ run_batch_correction_dispatch <- function(data, method = "harmony",
   is_flowframes <- is.list(data) && !is.matrix(data) &&
     length(data) > 0 && inherits(data[[1]], "flowFrame")
 
-  # Resolve source directories
-  if (exists("shared_dir")) {
-    harm_dir <- file.path(dirname(shared_dir), "harmonization")
-    shared <- shared_dir
+  # Resolve source directories. Prefer caller-provided shared_dir, then
+  # CYTOMETRY_SRC env var (set by CLI wrappers and test helpers), then getwd.
+  shared <- if (exists("shared_dir")) {
+    shared_dir
   } else {
-    harm_dir <- file.path(dirname(getwd()), "src", "harmonization")
-    shared <- file.path(dirname(getwd()), "src", "R_shared")
+    .s <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (nzchar(.s)) file.path(.s, "R_shared") else file.path(dirname(getwd()), "src", "R_shared")
   }
+  harm_dir <- file.path(dirname(shared), "harmonization")
 
   # --- "none" pass-through ---------------------------------------------------
   if (method == "none") {

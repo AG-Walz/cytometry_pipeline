@@ -175,10 +175,11 @@ classify_csv_columns <- function(col_names,
   for (col in pipe_cols) {
     parts <- trimws(strsplit(col, " \\| ")[[1]])
     if (length(parts) == 2) {
-      # Strip trailing .A/.H/.W from channel name for comparison
-      marker <- parts[1]
+      # Strip trailing .A/.H/.W from BOTH sides so "BUV496.A | BUV496.A" is
+      # detected as autofluorescence (marker root matches channel root).
+      marker_root  <- gsub("\\.[AHW]$", "", parts[1])
       channel_root <- gsub("\\.[AHW]$", "", parts[2])
-      if (marker == channel_root && !col %in% c(scatter_cols, gating_cols, af_cols)) {
+      if (marker_root == channel_root && !col %in% c(scatter_cols, gating_cols, af_cols)) {
         af_cols <- c(af_cols, col)
       }
     }
