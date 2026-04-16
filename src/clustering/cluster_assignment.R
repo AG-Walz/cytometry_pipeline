@@ -6,7 +6,7 @@
 # from Leiden, FlowSOM, FlowJo, or CSV-based clustering
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+if (!exists("shared_dir")) shared_dir <- { .s <- Sys.getenv("CYTOMETRY_SRC", ""); if (nzchar(.s)) file.path(.s, "R_shared") else file.path(dirname(getwd()), "src", "R_shared") }
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "cluster_utils.R"))
 

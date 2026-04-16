@@ -7,7 +7,7 @@
 # community detection to identify cell populations.
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+if (!exists("shared_dir")) shared_dir <- { .s <- Sys.getenv("CYTOMETRY_SRC", ""); if (nzchar(.s)) file.path(.s, "R_shared") else file.path(dirname(getwd()), "src", "R_shared") }
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "stats_utils.R"))
 
@@ -19,7 +19,7 @@ source(file.path(shared_dir, "stats_utils.R"))
 #'
 #' Input from: build_combined_expr_matrix() (R_shared/flowframe_utils.R),
 #'             normalize_expression() (preprocessing/normalization.R)
-#' Output to:  clusters_to_gating_csv() (clustering/leiden.R),
+#' Output to:  clusters_to_gating_csv() (R_shared/cluster_utils.R),
 #'             validate_clusters() (clustering/cluster_validation.R),
 #'             annotate_clusters() (clustering/cell_annotation.R)
 #'

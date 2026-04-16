@@ -17,40 +17,55 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+# --- Input validation ---
+if (!is.null(opt$expr_rds) && !file.exists(opt$expr_rds)) {
+  stop("Input file not found: ", opt$expr_rds)
+}
+if (!is.null(opt$cluster_rds) && !file.exists(opt$cluster_rds)) {
+  stop("Input file not found: ", opt$cluster_rds)
+}
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "plot_utils.R"))
 source(file.path(shared_dir, "dimred_dispatch.R"))
 
-expr_data   <- readRDS(opt$expr_rds)
-cluster_ids <- readRDS(opt$cluster_rds)
+tryCatch({
+  expr_data   <- readRDS(opt$expr_rds)
+  cluster_ids <- readRDS(opt$cluster_rds)
 
-# Parse output formats
-fmt_parts <- strsplit(opt$output_formats, ",")[[1]]
-output_formats <- list(
-  pdf = "pdf" %in% fmt_parts,
-  png = "png" %in% fmt_parts,
-  svg = "svg" %in% fmt_parts
-)
-
-dir.create(opt$output_dir, recursive = TRUE, showWarnings = FALSE)
-
-run_dimred(
-  expr_matrix    = expr_data$combined_matrix,
-  method         = opt$method,
-  sample_labels  = expr_data$sample_labels,
-  cluster_labels = cluster_ids,
-  output_dir     = opt$output_dir,
-  params         = list(
-    n_neighbors     = opt$n_neighbors,
-    umap_min_dist   = opt$umap_min_dist,
-    tsne_perplexity = opt$tsne_perplexity,
-    tsne_max_iter   = opt$tsne_max_iter,
-    output_formats  = output_formats,
-    plot_width      = opt$plot_width,
-    plot_height     = opt$plot_height,
-    seed            = opt$seed
+  # Parse output formats
+  fmt_parts <- strsplit(opt$output_formats, ",")[[1]]
+  output_formats <- list(
+    pdf = "pdf" %in% fmt_parts,
+    png = "png" %in% fmt_parts,
+    svg = "svg" %in% fmt_parts
   )
-)
-cat("Dimensionality reduction ->", opt$output_dir, "\n")
+
+  dir.create(opt$output_dir, recursive = TRUE, showWarnings = FALSE)
+
+  run_dimred(
+    expr_matrix    = expr_data$combined_matrix,
+    method         = opt$method,
+    sample_labels  = expr_data$sample_labels,
+    cluster_labels = cluster_ids,
+    output_dir     = opt$output_dir,
+    params         = list(
+      n_neighbors     = opt$n_neighbors,
+      umap_min_dist   = opt$umap_min_dist,
+      tsne_perplexity = opt$tsne_perplexity,
+      tsne_max_iter   = opt$tsne_max_iter,
+      output_formats  = output_formats,
+      plot_width      = opt$plot_width,
+      plot_height     = opt$plot_height,
+      seed            = opt$seed
+    )
+  )
+  cat("Dimensionality reduction ->", opt$output_dir, "\n")
+}, error = function(e) {
+  cat(sprintf("\n[ERROR] Dimensionality reduction failed: %s\n", conditionMessage(e)), file = stderr())
+  cat("Stack trace:\n", file = stderr())
+  traceback(e)
+  quit(status = 1)
+})

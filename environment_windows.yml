@@ -25,11 +25,11 @@ dependencies:
   - r-mclust
   - r-scales
   - r-tibble
-  - r-ggplot2
+  - r-ggplot2>=3.4
   - r-openxlsx
   - r-viridis
   - r-plotly
-  - r-data.table
+  - r-data.table>=1.14
   - r-ggrepel
   - r-janitor
   - r-rmarkdown
@@ -65,7 +65,7 @@ dependencies:
   # Bioconductor packages — install via BiocManager inside R if conda
   # resolution fails (see install_extra_packages_windows.R)
   # The following are often available as pre-built on conda-forge:
-  - bioconductor-flowcore
+  - bioconductor-flowcore>=2.12
   - bioconductor-flowai
   - bioconductor-peacoqc
   - bioconductor-biobase

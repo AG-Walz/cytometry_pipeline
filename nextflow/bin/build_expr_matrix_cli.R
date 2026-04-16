@@ -9,22 +9,34 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+# --- Input validation ---
+if (!is.null(opt$input_rds_dir) && !dir.exists(opt$input_rds_dir)) {
+  stop("Input directory not found: ", opt$input_rds_dir)
+}
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "flowframe_utils.R"))
 
-markers <- strsplit(opt$markers_of_interest, ",")[[1]]
+tryCatch({
+  markers <- strsplit(opt$markers_of_interest, ",")[[1]]
 
-# Load all flowFrames
-rds_files <- sort(list.files(opt$input_rds_dir, pattern = "\\.rds$",
-                             full.names = TRUE))
-flow_frames <- lapply(rds_files, readRDS)
-sample_names <- tools::file_path_sans_ext(basename(rds_files))
-names(flow_frames) <- sample_names
+  # Load all flowFrames
+  rds_files <- sort(list.files(opt$input_rds_dir, pattern = "\\.rds$",
+                               full.names = TRUE))
+  flow_frames <- lapply(rds_files, readRDS)
+  sample_names <- tools::file_path_sans_ext(basename(rds_files))
+  names(flow_frames) <- sample_names
 
-expr_data <- build_combined_expr_matrix(flow_frames, sample_names, markers)
+  expr_data <- build_combined_expr_matrix(flow_frames, sample_names, markers)
 
-saveRDS(expr_data, opt$output_rds)
-cat("Built expression matrix:", nrow(expr_data$combined_matrix), "cells x",
-    ncol(expr_data$combined_matrix), "markers\n")
+  saveRDS(expr_data, opt$output_rds)
+  cat("Built expression matrix:", nrow(expr_data$combined_matrix), "cells x",
+      ncol(expr_data$combined_matrix), "markers\n")
+}, error = function(e) {
+  cat(sprintf("\n[ERROR] Expression matrix building failed: %s\n", conditionMessage(e)), file = stderr())
+  cat("Stack trace:\n", file = stderr())
+  traceback(e)
+  quit(status = 1)
+})

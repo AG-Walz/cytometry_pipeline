@@ -48,7 +48,7 @@ run_clustering <- function(expr_matrix, method = "leiden", params = list()) {
       run_leiden(
         expr_matrix,
         n_neighbors = params$n_neighbors %||% 30,
-        resolution  = params$resolution %||% 1.0,
+        resolution  = params$resolution %||% 0.5,
         seed        = params$seed %||% 42
       )
     },

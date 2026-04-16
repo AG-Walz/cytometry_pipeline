@@ -210,7 +210,7 @@ contributes one PBMC sample measured by flow cytometry.
 The outcome for each cell is binary: the cell either belongs to the cluster
 (Y=1) or does not (Y=0). This is the natural outcome when working with
 binary indicator columns from Leiden clustering or FlowJo gating, as produced
-by `clusters_to_gating_csv()` in `src/clustering/leiden.R`.
+by `clusters_to_gating_csv()` in `src/R_shared/cluster_utils.R`.
 
 ### 3. Need to Account for Within-Sample Correlation
 

@@ -5,6 +5,9 @@
 # Cross-platform: Linux, macOS, Windows
 # =============================================================================
 
+# %||% polyfill for R < 4.0
+if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
+
 .get_os <- function() {
   Sys.info()[["sysname"]]
 }
@@ -20,19 +23,51 @@
       mem_values <- as.numeric(strsplit(mem_line, "\\s+")[[1]][-1])
       c(total_mb = mem_values[1], used_mb = mem_values[2], available_mb = mem_values[6])
     } else if (os == "Windows") {
-      # Use wmic for total and free physical memory (returns KB)
-      total_kb <- system2("wmic", args = c("OS", "get", "TotalVisibleMemorySize", "/value"),
-                          stdout = TRUE, stderr = FALSE)
-      free_kb  <- system2("wmic", args = c("OS", "get", "FreePhysicalMemory", "/value"),
-                          stdout = TRUE, stderr = FALSE)
-      parse_wmic <- function(x) {
+      # Try PowerShell Get-CimInstance first (Win11+; wmic was deprecated and
+      # may not be present). Fall back to wmic on older Windows.
+      parse_kv <- function(x) {
         val_line <- grep("=", x, value = TRUE)
         if (length(val_line) == 0) return(NA_real_)
         as.numeric(sub(".*=", "", trimws(val_line[1])))
       }
-      total_mb <- parse_wmic(total_kb) / 1024
-      free_mb  <- parse_wmic(free_kb) / 1024
-      if (is.na(total_mb) || is.na(free_mb)) return(NULL)
+      ps_query <- function() {
+        ps_cmd <- paste(
+          "$o = Get-CimInstance Win32_OperatingSystem;",
+          "Write-Output ('TotalVisibleMemorySize=' + $o.TotalVisibleMemorySize);",
+          "Write-Output ('FreePhysicalMemory=' + $o.FreePhysicalMemory)"
+        )
+        out <- tryCatch(
+          system2("powershell", args = c("-NoProfile", "-Command", ps_cmd),
+                  stdout = TRUE, stderr = FALSE),
+          error = function(e) NULL
+        )
+        if (is.null(out) || length(out) == 0) return(NULL)
+        total <- parse_kv(grep("^TotalVisibleMemorySize=", out, value = TRUE))
+        free  <- parse_kv(grep("^FreePhysicalMemory=", out, value = TRUE))
+        if (is.na(total) || is.na(free)) return(NULL)
+        list(total_kb = total, free_kb = free)
+      }
+      wmic_query <- function() {
+        out_t <- tryCatch(
+          system2("wmic", args = c("OS", "get", "TotalVisibleMemorySize", "/value"),
+                  stdout = TRUE, stderr = FALSE),
+          error = function(e) NULL
+        )
+        out_f <- tryCatch(
+          system2("wmic", args = c("OS", "get", "FreePhysicalMemory", "/value"),
+                  stdout = TRUE, stderr = FALSE),
+          error = function(e) NULL
+        )
+        if (is.null(out_t) || is.null(out_f)) return(NULL)
+        total <- parse_kv(out_t)
+        free  <- parse_kv(out_f)
+        if (is.na(total) || is.na(free)) return(NULL)
+        list(total_kb = total, free_kb = free)
+      }
+      kb <- ps_query() %||% wmic_query()
+      if (is.null(kb)) return(NULL)
+      total_mb <- kb$total_kb / 1024
+      free_mb  <- kb$free_kb / 1024
       c(total_mb = total_mb, used_mb = total_mb - free_mb, available_mb = free_mb)
     } else if (os == "Darwin") {
       # macOS: use vm_stat and sysctl

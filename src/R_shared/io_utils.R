@@ -83,10 +83,23 @@ list_csvs <- function(dir_path) {
 }
 
 #' Ensure packages are installed and loaded
+#'
+#' In container or non-interactive contexts, missing packages should be a hard
+#' failure rather than an unattended `install.packages()` call (which would
+#' attempt to write to a read-only library and prompt for a CRAN mirror).
+#' Set `CYTOMETRY_NO_INSTALL=1` to force the strict (no-install) path.
 #' @param req_packages Character vector of package names
 ensure_and_load_packages <- function(req_packages) {
+  no_install <- !interactive() ||
+    nzchar(Sys.getenv("CYTOMETRY_NO_INSTALL", "")) ||
+    nzchar(Sys.getenv("CYTOMETRY_SRC", ""))  # set inside the Docker image
   for (pkg in req_packages) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
+      if (no_install) {
+        stop("Required package '", pkg, "' is not installed. ",
+             "Install it via the project environment.yml/install_extra_packages.R ",
+             "(automatic install disabled in container/non-interactive contexts).")
+      }
       install.packages(pkg)
     }
     library(pkg, character.only = TRUE)

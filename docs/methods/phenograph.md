@@ -52,7 +52,7 @@ In the third stage, the Louvain algorithm partitions the SNN graph into communit
 - `normalize_expression()` in `src/preprocessing/normalization.R`
 
 **Output to**:
-- `clusters_to_gating_csv()` in `src/clustering/leiden.R` -- exports per-sample cluster CSVs
+- `clusters_to_gating_csv()` in `src/R_shared/cluster_utils.R` -- exports per-sample cluster CSVs
 - `validate_clusters()` in `src/clustering/cluster_validation.R`
 - `annotate_clusters()` in `src/clustering/cell_annotation.R`
 

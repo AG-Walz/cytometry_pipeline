@@ -8,7 +8,7 @@ Nine scripts providing multiple clustering algorithms (Leiden, FlowSOM, PhenoGra
 
 | Script | Functions | Description |
 |--------|-----------|-------------|
-| `leiden.R` | `run_leiden()`, `run_leiden_with_umap()`, `clusters_to_gating_csv()` | Leiden community detection + UMAP + CSV export |
+| `leiden.R` | `run_leiden()`, `run_leiden_with_umap()` | Leiden community detection + UMAP (CSV export via `R_shared/cluster_utils.R::clusters_to_gating_csv()`) |
 | `flowsom.R` | `run_flowsom()`, `run_flowsom_flowframes()` | FlowSOM self-organizing map meta-clustering |
 | `phenograph.R` | `run_phenograph()` | PhenoGraph KNN + Louvain community detection |
 | `dbscan.R` | `run_dbscan()`, `estimate_eps()` | DBSCAN density-based clustering with auto-eps |
@@ -97,27 +97,7 @@ result <- run_leiden_with_umap(
 )
 ```
 
-### `clusters_to_gating_csv()`
-
-```r
-clusters_to_gating_csv(combined_matrix, sample_labels, cluster_ids,
-                       output_dir, sep = ";")
-```
-
-Converts cluster IDs to per-sample CSVs with binary gating columns. Each output CSV contains expression columns plus one `Cluster_N (Clustering annotated)` column per cluster.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `combined_matrix` | matrix | *required* | Cells-by-markers expression matrix |
-| `sample_labels` | character vector | *required* | Sample label per cell |
-| `cluster_ids` | integer vector | *required* | Cluster assignment per cell |
-| `output_dir` | character | *required* | Directory for output CSVs |
-| `sep` | character | `";"` | CSV separator |
-
-**Returns:** Character vector of output file paths (invisible).
-
-**Input from:** `run_leiden_with_umap()`.
-**Output to:** `split_by_cluster()` (analysis/cluster_splitting.R), `run_differential_abundance()` (analysis/differential_abundance.R).
+> `clusters_to_gating_csv()` lives in `src/R_shared/cluster_utils.R` — see [r-shared-reference.md](../r-shared-reference.md#clusters_to_gating_csv) for full docs.
 
 **Packages:** `leiden`, `igraph`, `uwot`, `Matrix`
 

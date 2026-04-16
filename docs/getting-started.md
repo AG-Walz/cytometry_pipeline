@@ -28,7 +28,7 @@ This guide walks you through everything you need to run the cytometry pipeline: 
 
 Before you begin, make sure you have:
 
-- **Linux system** — Memory monitoring uses `/proc/meminfo` (Ubuntu, Debian, CentOS, etc.)
+- **Linux, macOS, or Windows system** — Memory monitoring uses `free -m` on Linux, `wmic` on Windows, and `sysctl`/`vm_stat` on macOS to query available memory
 - **Miniconda or Anaconda** — [Install Miniconda](https://docs.conda.io/en/latest/miniconda.html) if you don't have it
 - **At least 8 GB RAM** — 16 GB recommended for datasets with >50,000 cells per sample
 - **Python 3.8+** — Required for Leiden clustering (the R `leiden` package calls Python's `leidenalg` via `reticulate`)
@@ -58,6 +58,10 @@ This script will:
 If you prefer to set things up step by step:
 
 ```bash
+# Recommended: install the fast solver first (saves 20+ minutes)
+conda install -n base conda-libmamba-solver
+conda config --set solver libmamba
+
 # Step 1: Create the conda environment
 conda env create -f environment.yml
 
@@ -66,6 +70,9 @@ conda activate cytometry_env
 
 # Step 3: Install additional R packages not available in conda
 Rscript install_extra_packages.R
+
+# Step 4: Install Python dependencies for Leiden clustering
+pip install leidenalg igraph numpy
 ```
 
 ### Verify Your Installation
@@ -132,12 +139,12 @@ test_data/
 
 ## 3. Project Structure Overview
 
-The project is organized into **8 subprojects** under `src/`, with pipeline orchestrators in `pipelines/` and configuration templates in `config/`:
+The project is organized into **8 subprojects** under `src/`, with a Nextflow DSL2 pipeline in `nextflow/` and YAML parameter files in `config/`:
 
 ```
 cytometry/
 ├── src/                      Source code
-│   ├── R_shared/                 Shared utility library (8 modules, 50+ functions)
+│   ├── R_shared/                 Shared utility library (12 modules, 50+ functions)
 │   │   ├── io_utils.R                CSV I/O, column classification, path helpers
 │   │   ├── gui_utils.R               tcltk dialogs with CLI fallback
 │   │   ├── memory_utils.R            RAM monitoring, chunked CSV reading
@@ -145,7 +152,10 @@ cytometry/
 │   │   ├── plot_utils.R              Multi-format plot saving, barplot helpers
 │   │   ├── flowframe_utils.R         FlowFrame manipulation, expression extraction
 │   │   ├── fcs_utils.R               FCS parsing, CSV-FCS mapping, batch loading
-│   │   └── stats_utils.R             Enrichment, GLMM, PCA, UMAP, summary stats
+│   │   ├── stats_utils.R             Enrichment, GLMM, PCA, UMAP, summary stats
+│   │   ├── clustering_dispatch.R     Method dispatcher for swappable clustering
+│   │   ├── dimred_dispatch.R         Method dispatcher for dimensionality reduction
+│   │   └── batch_correction_dispatch.R  Method dispatcher for batch correction
 │   ├── loading/                  Data loaders
 │   │   ├── load_fcs_raw.R            FCS file loading (raw and preprocessed)
 │   │   ├── load_csv_expression.R     Expression CSV loading
@@ -153,32 +163,59 @@ cytometry/
 │   │   ├── load_flowjo_wsp.R         FlowJo workspace parsing
 │   │   ├── load_manual_gating.R      Manual gating label import
 │   │   └── create_flowframes.R       Create flowFrames from expression matrices
-│   ├── preprocessing/            QC and transformation
+│   ├── preprocessing/            QC and transformation (13 scripts)
 │   │   ├── preprocess_pipeline.R     Orchestrator (dispatches to QC + transform)
 │   │   ├── quality_control.R         Quality control (PeacoQC, flowAI)
 │   │   ├── transformation.R          arcsinh, logicle, biexponential transforms
 │   │   ├── downsampling.R            Maximal/consistent downsampling
-│   │   └── normalization.R           Quantile normalization
-│   ├── harmonization/            Panel unification and batch correction
+│   │   ├── normalization.R           Quantile normalization
+│   │   ├── compensation.R            Spillover compensation
+│   │   ├── spectral_unmixing.R       Spectral unmixing
+│   │   ├── bead_normalization.R      Bead-based normalization
+│   │   ├── doublet_detection.R       Doublet removal
+│   │   ├── live_dead_gating.R        Live/dead viability gating
+│   │   ├── supercell.R               SuperCellCyto compression
+│   │   ├── automated_gating.R        Automated gating
+│   │   └── gate_utils.R              Gating utilities
+│   ├── harmonization/            Panel unification and batch correction (5 scripts)
 │   │   ├── panel_comparison.R        Compare marker panels across samples
 │   │   ├── panel_homogenization.R    Unify to common marker set
-│   │   └── batch_correction.R        Harmony batch correction
-│   ├── clustering/               Cell clustering
+│   │   ├── batch_correction.R        Harmony batch correction
+│   │   ├── cytonorm.R                CytoNorm batch correction
+│   │   └── combat.R                  ComBat batch correction
+│   ├── clustering/               Cell clustering (9 scripts)
 │   │   ├── leiden.R                  Leiden community detection + UMAP
+│   │   ├── flowsom.R                 FlowSOM clustering
+│   │   ├── phenograph.R              PhenoGraph clustering
+│   │   ├── dbscan.R                  DBSCAN clustering
+│   │   ├── meta_clustering.R         Meta-clustering
+│   │   ├── cluster_validation.R      Cluster quality metrics
+│   │   ├── cell_annotation.R         Cell type annotation
 │   │   ├── flowjo_import.R           FlowJo gate import
 │   │   └── cluster_assignment.R      Unified cluster assignment interface
-│   ├── analysis/                 Statistical analysis
+│   ├── analysis/                 Statistical analysis (13 scripts)
 │   │   ├── cluster_splitting.R       Split data by cluster
 │   │   ├── differential_abundance.R  NB-GLMM testing
 │   │   ├── cluster_enrichment.R      Fisher's exact / mixed-effects
 │   │   ├── marker_statistics.R       Per-marker lmer + ICC
+│   │   ├── differential_expression.R Differential expression analysis
+│   │   ├── effect_sizes.R            Effect size calculations
+│   │   ├── correlation_analysis.R    Correlation analysis
+│   │   ├── diffcyt_analysis.R        diffcyt differential testing
+│   │   ├── survival_analysis.R       Cox PH survival analysis
 │   │   ├── abundance_plotting.R      Abundance bar/heatmap plots
 │   │   ├── expression_matrices.R     Grouped expression matrices
-│   │   └── cell_ratio.R             Population ratio calculation
-│   ├── visualization/            Plotting
+│   │   └── cell_ratio.R              Population ratio calculation
+│   ├── visualization/            Plotting (14 scripts)
 │   │   ├── umap.R                    UMAP scatter plots
+│   │   ├── tsne.R                    t-SNE scatter plots
+│   │   ├── diffusion_map.R           Diffusion map visualization
 │   │   ├── heatmaps.R               Clustered heatmaps (pheatmap)
 │   │   ├── density_plots.R           Density and ridge overlays
+│   │   ├── biaxial_plots.R           Biaxial scatter plots
+│   │   ├── violin_plots.R            Violin plots
+│   │   ├── radar_plots.R             Radar/spider plots
+│   │   ├── contour_plots.R           Contour plots
 │   │   ├── barplots.R                Composition barplots
 │   │   ├── pca.R                     PCA scatter + loadings
 │   │   ├── upset_plots.R             UpSet intersection plots
@@ -188,18 +225,20 @@ cytometry/
 │       ├── check_acquisition.R       FCS acquisition date extraction
 │       ├── overlap_statistics.R      Fleiss' kappa agreement
 │       └── compare_gatings.R         Cross-workspace gating comparison
-├── pipelines/                Config-driven orchestrators
-│   ├── pipeline_A_raw_fcs.R          Raw FCS → full analysis
-│   ├── pipeline_B_csv_expression.R   CSV expression → marker stats
-│   ├── pipeline_C_csv_gating.R       CSV gating → cluster analysis
-│   ├── pipeline_D_flowjo_comparison.R FlowJo → gating comparison
-│   └── pipeline_E_preprocessed_umap.R Preprocessed FCS → UMAP
-├── config/                   Configuration templates
-│   ├── pipeline_A_config.R
-│   ├── pipeline_B_config.R
-│   ├── pipeline_C_config.R
-│   ├── pipeline_D_config.R
-│   └── pipeline_E_config.R
+├── nextflow/                 Nextflow DSL2 pipeline
+│   ├── main.nf                  Entry point (--pipeline A/B/C/D/E)
+│   ├── nextflow.config          Global params, profiles, resource labels
+│   ├── modules/                 Process definitions
+│   ├── subworkflows/            Pipeline compositions (A-E)
+│   ├── bin/                     CLI wrappers bridging Nextflow to src/
+│   ├── conf/                    Execution profiles
+│   └── docker/                  Dockerfile
+├── config/                   Pipeline parameter files (YAML)
+│   ├── pipeline_A_params.yaml
+│   ├── pipeline_B_params.yaml
+│   ├── pipeline_C_params.yaml
+│   ├── pipeline_D_params.yaml
+│   └── pipeline_E_params.yaml
 └── test_data/                Synthetic test data
 ```
 
@@ -224,7 +263,7 @@ The `shared_dir` path is computed relative to the script's working directory, so
 
 - If your working directory is `src/loading/`, then `dirname(getwd())` gives `src/`, and `file.path(dirname(getwd()), "R_shared")` gives `src/R_shared/`.
 
-The 8 shared modules are:
+The 12 shared modules are:
 
 | Module | Key Functions | Purpose |
 |--------|---------------|---------|
@@ -236,6 +275,9 @@ The 8 shared modules are:
 | `flowframe_utils.R` | `explore_data()`, `extract_exprmtx_list()`, `from_mtx_to_ffr()` | FlowFrame manipulation |
 | `fcs_utils.R` | `check_tot()`, `load_fcs_folder()`, `create_csv_fcs_mapping()` | FCS parsing and loading |
 | `stats_utils.R` | `run_umap()`, `run_pca()`, `fit_nb_glmm()`, `calculate_enrichment()` | Statistical analysis and dimensionality reduction |
+| `clustering_dispatch.R` | `run_clustering()` | Method dispatcher for Leiden, FlowSOM, PhenoGraph, DBSCAN |
+| `dimred_dispatch.R` | `run_dimred()` | Method dispatcher for UMAP, t-SNE, diffusion map, PCA |
+| `batch_correction_dispatch.R` | `run_batch_correction_dispatch()` | Method dispatcher for Harmony, CytoNorm, ComBat |
 
 For complete function signatures and usage examples, see the [R_shared API Reference](r-shared-reference.md).
 
@@ -243,62 +285,71 @@ For complete function signatures and usage examples, see the [R_shared API Refer
 
 ## 5. Configuration Files
 
-All pipelines are driven by a `params` list defined in a configuration file. The config file is a plain R script that creates the `params` list with all necessary settings. Each pipeline has a template in `config/`.
+All pipelines are driven by parameters defined in a YAML configuration file. Nextflow reads these params at launch and passes them to each process. Each pipeline has a template in `config/`.
 
 ### Anatomy of a Config File
 
 Here is a minimal config for Pipeline A:
 
-```r
-# config/study_params/my_study.R
-
-params <- list()
+```yaml
+# config/pipeline_A_params.yaml
 
 # ─── Paths ──────────────────────────────────────────
-params$fcs_folder     <- "/data/raw_fcs/"          # Where your FCS files are
-params$output_dir     <- "/output/my_study/"        # Where results go
-params$conditions_csv <- "/data/conditions.csv"     # Sample → condition mapping
+fcs_folder:     "/data/raw_fcs/"          # Where your FCS files are
+output_dir:     "/output/my_study/"        # Where results go
+conditions_csv: "/data/conditions.csv"     # Sample → condition mapping
 
 # ─── Markers ────────────────────────────────────────
-params$markers_of_interest <- c("CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR")
-params$markername_replacing <- list()               # Rename map (empty = no renames)
+markers_of_interest:
+  - CD3
+  - CD4
+  - CD8
+  - CD19
+  - CD56
+  - HLA-DR
+markername_replacing: {}                   # Rename map (empty = no renames)
 
 # ─── Preprocessing ──────────────────────────────────
-params$qc_type        <- "None"                     # "PeacoQC", "flowAI", or "None"
-params$transform_type <- "arcsinh"                  # "arcsinh", "logicle", "biexponential", "None"
-params$pp_order       <- "QT"                       # "QT" = QC first, "TQ" = Transform first
-params$truncation     <- TRUE                       # Truncate expression to max range
+qc_type:        "None"                     # "PeacoQC", "flowAI", or "None"
+transform_type: "arcsinh"                  # "arcsinh", "logicle", "biexponential", "None"
+pp_order:       "QT"                       # "QT" = QC first, "TQ" = Transform first
+truncation:     true                       # Truncate expression to max range
 
 # ─── Downsampling ───────────────────────────────────
-params$downsample_n      <- 10000                    # Target cells per sample
-params$downsample_method <- "Maximal"                # "Maximal" or "Consistent"
+downsample_n:      10000                   # Target cells per sample
+downsample_method: "Maximal"               # "Maximal" or "Consistent"
 
 # ─── Clustering ─────────────────────────────────────
-params$n_neighbors <- 15                            # KNN graph neighbors
-params$resolution  <- 0.8                           # Leiden resolution (higher = more clusters)
+n_neighbors: 15                            # KNN graph neighbors
+resolution:  0.8                           # Leiden resolution (higher = more clusters)
 
 # ─── Analysis ───────────────────────────────────────
-params$condition_levels <- c("Control", "Treatment")
-params$cluster_regex    <- "Clustering annotated"
-params$p_adjust_method  <- "BH"                     # Benjamini-Hochberg
+condition_levels:
+  - Control
+  - Treatment
+cluster_regex:   "Clustering annotated"
+p_adjust_method: "BH"                     # Benjamini-Hochberg
 
 # ─── Output ─────────────────────────────────────────
-params$output_formats <- list(pdf = FALSE, png = TRUE, svg = FALSE)
+output_formats:
+  pdf: false
+  png: true
+  svg: false
 
 # ─── Reproducibility ───────────────────────────────
-params$seed <- 42
+seed: 42
 ```
 
 ### Creating Your Own Config
 
-The easiest way to get started is to copy a pipeline template and edit it:
+The easiest way to get started is to copy a pipeline YAML template and edit it:
 
 ```bash
 # For Pipeline A:
-cp config/pipeline_A_config.R config/study_params/my_study.R
+cp config/pipeline_A_params.yaml config/my_study_params.yaml
 
 # For Pipeline C:
-cp config/pipeline_C_config.R config/study_params/my_gating_study.R
+cp config/pipeline_C_params.yaml config/my_gating_study_params.yaml
 ```
 
 Then edit the copied file to point to your actual data paths and set your analysis parameters.
@@ -330,11 +381,11 @@ conda activate cytometry_env
 
 | Your Data | Pipeline | Command |
 |-----------|----------|---------|
-| Raw `.fcs` files | A | `Rscript pipelines/pipeline_A_raw_fcs.R --config config/pipeline_A_config.R` |
-| Expression CSVs | B | `Rscript pipelines/pipeline_B_csv_expression.R --config config/pipeline_B_config.R` |
-| CSVs with gating columns | C | `Rscript pipelines/pipeline_C_csv_gating.R --config config/pipeline_C_config.R` |
-| FlowJo `.wsp` files | D | `Rscript pipelines/pipeline_D_flowjo_comparison.R --config config/pipeline_D_config.R` |
-| Preprocessed `.fcs` | E | `Rscript pipelines/pipeline_E_preprocessed_umap.R --config config/pipeline_E_config.R` |
+| Raw `.fcs` files | A | `nextflow run nextflow/main.nf --pipeline A -params-file config/pipeline_A_params.yaml` |
+| Expression CSVs | B | `nextflow run nextflow/main.nf --pipeline B -params-file config/pipeline_B_params.yaml` |
+| CSVs with gating columns | C | `nextflow run nextflow/main.nf --pipeline C -params-file config/pipeline_C_params.yaml` |
+| FlowJo `.wsp` files | D | `nextflow run nextflow/main.nf --pipeline D -params-file config/pipeline_D_params.yaml` |
+| Preprocessed `.fcs` | E | `nextflow run nextflow/main.nf --pipeline E -params-file config/pipeline_E_params.yaml` |
 
 All pipeline commands are run from the project root directory.
 
@@ -344,7 +395,7 @@ Let's run Pipeline C as an example, using the bundled test data:
 
 ```bash
 cd /path/to/cytometry
-Rscript pipelines/pipeline_C_csv_gating.R --config config/pipeline_C_config.R
+nextflow run nextflow/main.nf --pipeline C -params-file config/pipeline_C_params.yaml
 ```
 
 You will see console output like this:
@@ -675,18 +726,28 @@ check_tot(ff, index = "problem_file")
 
 The file may be corrupted or truncated. Try re-exporting from the cytometer software.
 
-### Pipeline Exits Immediately
+### Docker Not Running
 
-**Problem:** The pipeline exits after printing `"Config file not found"`.
+**Problem:** Nextflow fails with an error about Docker daemon not being available.
 
-**Solution:** Provide the config path relative to your current working directory, or use an absolute path:
+**Solution:** Ensure Docker is installed, running, and your user has permission to use it:
 
 ```bash
-# From project root:
-Rscript pipelines/pipeline_A_raw_fcs.R --config config/pipeline_A_config.R
+# Check Docker is running:
+docker info
 
-# Or with absolute path:
-Rscript pipelines/pipeline_A_raw_fcs.R --config /path/to/cytometry/config/pipeline_A_config.R
+# If not running, start it:
+sudo systemctl start docker
+
+# If permission denied, add your user to the docker group:
+sudo usermod -aG docker $USER
+# Then log out and back in for the group change to take effect
+```
+
+If you do not want to use Docker, run Nextflow with the `conda` profile instead:
+
+```bash
+nextflow run nextflow/main.nf --pipeline A -params-file config/pipeline_A_params.yaml -profile conda
 ```
 
 ---
@@ -700,8 +761,8 @@ Many scripts present interactive dialogs for marker or column selection using tc
 ```r
 # Inside gui_utils.R:
 is_gui_available <- function() {
-  requireNamespace("tcltk", quietly = TRUE) &&
-    nchar(Sys.getenv("DISPLAY")) > 0
+  interactive() && requireNamespace("tcltk", quietly = TRUE) &&
+    tryCatch({ tcltk::tclRequire("Tk"); TRUE }, error = function(e) FALSE)
 }
 ```
 
@@ -734,7 +795,7 @@ The pipeline is designed to handle large datasets (hundreds of thousands of cell
 
 ### Automatic Memory Monitoring
 
-The `memory_utils.R` module monitors `/proc/meminfo` and triggers garbage collection when memory usage exceeds a threshold:
+The `memory_utils.R` module uses `free -m` on Linux, `wmic` on Windows, and `sysctl`/`vm_stat` on macOS to query available memory and triggers garbage collection when memory usage exceeds a threshold:
 
 ```r
 # Called internally by long-running functions
@@ -821,7 +882,7 @@ Now that your environment is set up and you've run a test pipeline, here's where
    - [Pipeline D — FlowJo Comparison](pipelines/pipeline-D-flowjo-comparison.md)
    - [Pipeline E — Preprocessed UMAP](pipelines/pipeline-E-preprocessed-umap.md)
 
-2. **Create a config for your study.** Copy the relevant template from `config/` to `config/study_params/` and edit it with your paths and parameters.
+2. **Create a config for your study.** Copy the relevant YAML template from `config/` (e.g., `config/pipeline_A_params.yaml`) to a new file like `config/my_study_params.yaml` and edit it with your paths and parameters.
 
 3. **Browse the R_shared API.** The [R_shared API Reference](r-shared-reference.md) documents every shared utility function. This is especially useful if you're calling functions directly from an R session rather than using a pipeline orchestrator.
 

@@ -61,7 +61,7 @@ list(
 )
 ```
 
-**Input from:** `clusters_to_gating_csv()` (clustering/leiden.R), `load_csv_gating()` (loading/load_csv_gating.R).
+**Input from:** `clusters_to_gating_csv()` (R_shared/cluster_utils.R), `load_csv_gating()` (loading/load_csv_gating.R).
 **Output to:** `tracking_matrix_to_long()` (this file), `run_cluster_enrichment()`, `run_differential_abundance()`, `create_expression_matrices()`.
 
 **CLI Usage:**

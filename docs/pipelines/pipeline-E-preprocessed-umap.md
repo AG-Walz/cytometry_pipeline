@@ -52,40 +52,49 @@ No conditions CSV is needed — Pipeline E does not perform differential testing
 ### Running the Pipeline
 
 ```bash
-cd pipelines
-Rscript pipeline_E_preprocessed_umap.R --config ../config/pipeline_E_config.R
+# Minimal invocation with inline parameters
+nextflow run nextflow/main.nf --pipeline E --input_dir /data/preprocessed_fcs \
+    --markers_of_interest "CD3,CD4,CD8,CD19,CD56,HLA-DR" \
+    --output_dir ./results -profile docker
+
+# Using a YAML parameter file (recommended for reproducibility)
+nextflow run nextflow/main.nf -params-file config/pipeline_E_params.yaml -profile docker
 ```
 
-### Example Config
+Pipeline-level defaults are defined in `nextflow.config`. Any parameter can be overridden on the command line or via a YAML params file.
 
-```r
-# config/pipeline_E_config.R
+### Example Params File
 
-params <- list(
-  # --- Paths ---
-  fcs_folder            = "/path/to/preprocessed/fcs",
-  output_dir            = "/path/to/output/pipeline_E_results",
+```yaml
+# config/pipeline_E_params.yaml
 
-  # --- Markers ---
-  markers_of_interest   = c("CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR"),
-  markername_replacing  = list(),     # e.g. list(`PD1 (CD279)` = "PD1")
+pipeline:              "E"
 
-  # --- Downsampling ---
-  downsample_method     = "Consistent",
-  downsample_n          = 10000,
+# --- Paths ---
+input_dir:             "/path/to/preprocessed/fcs"
+output_dir:            "/path/to/output/pipeline_E_results"
 
-  # --- Clustering ---
-  n_neighbors           = 15,
-  resolution            = 0.5,
+# --- Markers ---
+markers_of_interest:   "CD3,CD4,CD8,CD19,CD56,HLA-DR"
+markername_replacing:  {}     # e.g. { "PD1 (CD279)": "PD1" }
 
-  # --- Reproducibility ---
-  seed                  = 42,
+# --- Downsampling ---
+downsample_method:     "Consistent"
+downsample_n:          10000
 
-  # --- Plot formats ---
-  output_formats        = list(pdf = FALSE, png = TRUE, svg = TRUE),
-  plot_width            = 8,
-  plot_height           = 6
-)
+# --- Clustering ---
+n_neighbors:           15
+resolution:            0.5
+
+# --- Reproducibility ---
+seed:                  42
+
+# --- Plot formats ---
+output_format_pdf:     false
+output_format_png:     true
+output_format_svg:     true
+plot_width:            8
+plot_height:           6
 ```
 
 ### Key Parameters
@@ -264,6 +273,41 @@ run_leiden_with_umap(expr_matrix, sample_labels = NULL, output_dir = NULL,
 ...
 ```
 
+#### Alternative Clustering Methods
+
+The clustering method is swappable via the `clustering_method` parameter. All methods are dispatched through `run_clustering()` in `src/R_shared/clustering_dispatch.R` and return integer cluster labels.
+
+| Method | `clustering_method` | Description | Key Parameters |
+|--------|---------------------|-------------|----------------|
+| **Leiden** (default) | `"leiden"` | Community detection via Python `leidenalg`. Best for discovering natural clusters in high-dimensional data. | `n_neighbors`, `resolution` |
+| **FlowSOM** | `"flowsom"` | Self-organizing maps. Fast and memory-efficient, good for large datasets. | `n_clusters`, `grid_xdim`, `grid_ydim` |
+| **PhenoGraph** | `"phenograph"` | KNN + Louvain. Particularly good at finding rare cell populations. | `n_neighbors` |
+| **DBSCAN** | `"dbscan"` | Density-based clustering. No need to specify cluster count; labels outliers as noise. | `dbscan_eps` (`null` = auto), `dbscan_min_pts` |
+
+To switch methods, set `clustering_method` in your params file:
+
+```yaml
+clustering_method: "phenograph"
+n_neighbors:       30
+```
+
+#### Batch Correction Alternatives
+
+Batch correction can be inserted between harmonization (Step 2) and clustering (Step 4) via the `batch_method` parameter, dispatched through `run_batch_correction_dispatch()` in `src/R_shared/batch_correction_dispatch.R`.
+
+| Method | `batch_method` | Description | Key Parameters |
+|--------|----------------|-------------|----------------|
+| **None** (default) | `"none"` | No correction. Use when all samples come from the same batch. | -- |
+| **Harmony** | `"harmony"` | Fast iterative correction. Good general-purpose choice. | (default Harmony settings) |
+| **ComBat** | `"combat"` | Parametric or non-parametric empirical Bayes correction (`sva` package). | `combat_method` (`"parametric"` or `"nonparametric"`) |
+| **CytoNorm** | `"cytonorm"` | Quantile-based normalization for cytometry data. Requires reference samples. | `cytonorm_n_clusters`, `cytonorm_goal`. Requires `flowWorkspace`. |
+
+Example:
+
+```yaml
+batch_method: "harmony"
+```
+
 ---
 
 ### Step 5: UMAP Visualization
@@ -306,6 +350,24 @@ plot_umap(flow_frames, sample_names, markers_of_interest = NULL,
 ├── umap_CD19.png
 ├── umap_CD56.png
 └── umap_HLA-DR.png
+```
+
+#### Alternative Dimensionality Reduction Methods
+
+The visualization method is swappable via the `dimred_method` parameter, dispatched through `run_dimred()` in `src/R_shared/dimred_dispatch.R`.
+
+| Method | `dimred_method` | Description | Key Parameters |
+|--------|-----------------|-------------|----------------|
+| **UMAP** (default) | `"umap"` | Good at preserving both local and global structure. | `umap_min_dist`, `n_neighbors` |
+| **t-SNE** | `"tsne"` | Excels at revealing local cluster structure; does not preserve global distances. | `tsne_perplexity` (typical range 5-50), `tsne_max_iter` |
+| **Diffusion Map** | `"diffusion_map"` | Captures gradual transitions and trajectories. Best for developmental processes. | Requires the `destiny` package (install separately). |
+
+Example:
+
+```yaml
+dimred_method:    "tsne"
+tsne_perplexity:  30
+tsne_max_iter:    1000
 ```
 
 ---

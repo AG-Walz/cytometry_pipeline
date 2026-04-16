@@ -14,7 +14,7 @@ This documentation is organized in three layers, from high-level to low-level:
 
 If you are **new to the project**, start with [Getting Started](getting-started.md), then read the pipeline guide that matches your input data format.
 
-If you are **calling functions directly** from an R session (not using a pipeline orchestrator), jump to the subproject reference for the module you need.
+If you are **calling functions directly** from an R session (not using the Nextflow orchestrator), jump to the subproject reference for the module you need.
 
 If you are **looking for a specific utility function** (CSV I/O, memory management, FlowFrame manipulation, etc.), see the [R_shared API Reference](r-shared-reference.md).
 
@@ -30,7 +30,7 @@ If you are **looking for a specific utility function** (CSV I/O, memory manageme
 | [Configuration Guide](configuration.md) | How to create config files, key parameters for each pipeline, standalone script configs |
 | [File Formats](file-formats.md) | Input and output format specifications for all pipelines (FCS, CSV, WSP, plots) |
 | [Standalone Scripts](standalone-scripts.md) | Using individual module functions outside of pipelines, with signatures and examples |
-| [R_shared API Reference](r-shared-reference.md) | Complete function reference for all 8 shared utility modules (io, gui, memory, cluster, plot, flowframe, fcs, stats) |
+| [R_shared API Reference](r-shared-reference.md) | Complete function reference for all 12 shared utility modules (io, gui, memory, cluster, plot, flowframe, fcs, stats, clustering_dispatch, dimred_dispatch, batch_correction_dispatch) |
 | [Composability Guide](composability-guide.md) | Data flow contracts, format specs, and 8 example cross-pipeline workflows |
 | [Methods Guide](methods-guide.md) | Decision flowcharts and 19 deep-dive pages on every statistical, clustering, transformation, and QC method |
 
@@ -63,11 +63,11 @@ Each subproject reference documents every function in that module: its signature
 | Module | Scripts | Reference | What It Does |
 |--------|---------|-----------|--------------|
 | `src/loading/` | 6 scripts | [Loading Reference](subprojects/loading.md) | Load data from FCS files, CSV files, FlowJo workspaces, and manual gating exports |
-| `src/preprocessing/` | 5 scripts | [Preprocessing Reference](subprojects/preprocessing.md) | Quality control (PeacoQC, flowAI), transformation (arcsinh, logicle), downsampling, normalization |
-| `src/harmonization/` | 3 scripts | [Harmonization Reference](subprojects/harmonization.md) | Compare marker panels across samples, unify to a common marker set, correct batch effects with Harmony |
-| `src/clustering/` | 3 scripts | [Clustering Reference](subprojects/clustering.md) | Leiden community detection on expression data, FlowJo gate import, unified cluster assignment interface |
-| `src/analysis/` | 7 scripts | [Analysis Reference](subprojects/analysis.md) | Cluster splitting, NB-GLMM differential abundance, Fisher's enrichment, marker statistics (lmer/ICC), abundance plotting, expression matrices, cell ratios |
-| `src/visualization/` | 7 scripts | [Visualization Reference](subprojects/visualization.md) | UMAP scatter plots, clustered heatmaps, density/ridge overlays, composition barplots, PCA, UpSet intersection plots, Venn/Euler diagrams |
+| `src/preprocessing/` | 13 scripts | [Preprocessing Reference](subprojects/preprocessing.md) | Compensation, unmixing, beads, doublets, live/dead, QC (PeacoQC, flowAI), transformation (arcsinh, logicle), downsampling, normalization, SuperCellCyto, auto-gating |
+| `src/harmonization/` | 5 scripts | [Harmonization Reference](subprojects/harmonization.md) | Compare marker panels across samples, unify to a common marker set, correct batch effects (Harmony, CytoNorm, ComBat) |
+| `src/clustering/` | 9 scripts | [Clustering Reference](subprojects/clustering.md) | Leiden, FlowSOM, PhenoGraph, DBSCAN, meta-clustering, validation, annotation, FlowJo gate import, unified cluster assignment interface |
+| `src/analysis/` | 13 scripts | [Analysis Reference](subprojects/analysis.md) | Cluster splitting, NB-GLMM differential abundance, Fisher's enrichment, marker statistics (lmer/ICC), differential expression, effect sizes, correlations, diffcyt, survival analysis, abundance plotting, expression matrices, cell ratios |
+| `src/visualization/` | 14 scripts | [Visualization Reference](subprojects/visualization.md) | UMAP, t-SNE, diffusion maps, clustered heatmaps, density/ridge overlays, biaxial, violin, radar, contour, composition barplots, PCA, UpSet intersection plots, Venn/Euler diagrams |
 | `src/metadata_qc/` | 4 scripts | [Metadata QC Reference](subprojects/metadata-qc.md) | Metadata validation barplots, FCS acquisition date extraction, Fleiss' kappa inter-rater agreement, gating comparison across FlowJo workspaces |
 
 ### Example Data
@@ -96,7 +96,7 @@ cytometry/
 │   ├── configuration.md          Config creation and parameter reference
 │   ├── file-formats.md           Input/output format specifications
 │   ├── standalone-scripts.md     Using modules outside of pipelines
-│   ├── r-shared-reference.md     Shared utility API (8 modules, 50+ functions)
+│   ├── r-shared-reference.md     Shared utility API (12 modules, 50+ functions)
 │   ├── composability-guide.md   Cross-pipeline data flow and example workflows
 │   ├── methods-guide.md         Decision flowcharts + 19 method deep-dives
 │   ├── methods/                 Per-method deep-dive pages (peer-reviewed refs)
@@ -114,8 +114,8 @@ cytometry/
 │       ├── analysis.md
 │       ├── visualization.md
 │       └── metadata-qc.md
-├── src/                      Source code (8 subprojects, 43 scripts)
-│   ├── R_shared/                 Shared utility library (8 modules)
+├── src/                      Source code (8 subprojects, 76 scripts)
+│   ├── R_shared/                 Shared utility library (12 modules)
 │   ├── loading/                  Data loaders (FCS, CSV, FlowJo WSP)
 │   ├── preprocessing/            QC, transformation, downsampling, normalization
 │   ├── harmonization/            Panel unification, batch correction
@@ -123,19 +123,17 @@ cytometry/
 │   ├── analysis/                 GLMM, enrichment, marker stats, abundance
 │   ├── visualization/            UMAP, heatmaps, density, barplots, Venn/Euler
 │   └── metadata_qc/             Metadata checks, gating comparison
-├── pipelines/                Config-driven orchestrators
-│   ├── pipeline_A_raw_fcs.R
-│   ├── pipeline_B_csv_expression.R
-│   ├── pipeline_C_csv_gating.R
-│   ├── pipeline_D_flowjo_comparison.R
-│   └── pipeline_E_preprocessed_umap.R
-├── config/                   Parameter templates and study-specific configs
-│   ├── pipeline_A_config.R       Template for Pipeline A
-│   ├── pipeline_B_config.R       Template for Pipeline B
-│   ├── pipeline_C_config.R       Template for Pipeline C
-│   ├── pipeline_D_config.R       Template for Pipeline D
-│   ├── pipeline_E_config.R       Template for Pipeline E
-│   └── study_params/             Your study-specific configs go here
+├── nextflow/                 Nextflow pipeline orchestration
+│   ├── main.nf                   Entry point (--pipeline A|B|C|D|E)
+│   ├── modules/                  Per-step Nextflow process definitions
+│   └── bin/                      CLI wrappers that call src/ R functions
+├── config/                   YAML parameter files
+│   ├── pipeline_A_params.yaml    Template for Pipeline A
+│   ├── pipeline_B_params.yaml    Template for Pipeline B
+│   ├── pipeline_C_params.yaml    Template for Pipeline C
+│   ├── pipeline_D_params.yaml    Template for Pipeline D
+│   ├── pipeline_E_params.yaml    Template for Pipeline E
+│   └── study_params/             Your study-specific YAML configs
 ├── test_data/                Synthetic test data
 │   ├── generate_test_data.R      Script to regenerate all test fixtures
 │   ├── fcs_samples/              Synthetic FCS files for Pipelines A/E

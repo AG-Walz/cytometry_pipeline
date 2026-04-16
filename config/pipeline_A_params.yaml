@@ -4,8 +4,57 @@ output_dir: ./results/pipeline_A
 markers_of_interest: "CD3,CD4,CD8,CD19,CD56,HLA-DR"
 conditions_csv: /path/to/conditions.csv
 condition_levels: "Control,Treatment"
-clustering_method: leiden
-batch_method: none
-dimred_method: umap
-transform_type: arcsinh
+
+# --- Methods (swappable) ---
+clustering_method: leiden          # leiden, flowsom, phenograph, dbscan
+batch_method: none                 # harmony, cytonorm, combat, none
+dimred_method: umap                # umap, tsne, diffusion_map
+transform_type: arcsinh            # arcsinh, logicle, biexponential, log
+# analysis_method: enrichment      # enrichment, abundance
+
+# --- Preprocessing ---
+# pp_order: QT                     # QT (QC then Transform) or TQ
+# qc_type: None                    # None, flowAI, PeacoQC
+# quant_norm: false
+# scaling: false
+
+# --- Downsampling ---
 downsample_n: 10000
+# downsample_method: Consistent    # Consistent or Maximal
+
+# --- Clustering ---
+# n_neighbors: 15
+# resolution: 0.5
+# n_clusters: 20                   # FlowSOM grid target clusters
+# grid_xdim: 10                    # FlowSOM grid X dimension
+# grid_ydim: 10                    # FlowSOM grid Y dimension
+# dbscan_eps: null                 # DBSCAN epsilon (null = auto)
+# dbscan_min_pts: 5                # DBSCAN minimum points
+
+# --- Batch correction ---
+# batch_names: null                # comma-separated batch labels
+# batch_do_pca: false
+# combat_method: parametric        # parametric or nonparametric
+# cytonorm_n_clusters: 10
+# cytonorm_goal: mean
+
+# --- Dimensionality reduction ---
+# umap_min_dist: 0.1
+# tsne_perplexity: 30
+# tsne_max_iter: 1000
+
+# --- Analysis ---
+# min_cluster_size: 5
+# p_adjust_method: BH              # BH, bonferroni, holm
+# alpha_level: 0.05
+# stat_method: pooled
+# test_type: lmer
+
+# --- Output ---
+# output_formats: png              # png, pdf, svg, or png,pdf
+# plot_width: 10
+# plot_height: 8
+# save_intermediates: false         # Save intermediate RDS files
+
+# --- Reproducibility ---
+# seed: 42

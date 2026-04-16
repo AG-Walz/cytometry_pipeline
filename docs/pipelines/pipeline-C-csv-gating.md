@@ -96,39 +96,45 @@ sample_003;Treatment
 ### Running the Pipeline
 
 ```bash
-cd pipelines
-Rscript pipeline_C_csv_gating.R --config ../config/pipeline_C_config.R
+# Minimal invocation with inline parameters
+nextflow run nextflow/main.nf --pipeline C --input_dir /data/csv_gating \
+    --conditions_csv /data/conditions.csv --output_dir ./results -profile docker
+
+# Using a YAML parameter file (recommended for reproducibility)
+nextflow run nextflow/main.nf -params-file config/pipeline_C_params.yaml -profile docker
 ```
 
-### Example Config
+Pipeline-level defaults are defined in `nextflow.config`. Any parameter can be overridden on the command line or via a YAML params file.
 
-```r
-# config/pipeline_C_config.R
+### Example Params File
 
-params <- list(
-  # --- Paths ---
-  csv_folder             = "/path/to/csv/gating/files",
-  output_dir             = "/path/to/output/pipeline_C_results",
-  conditions_csv         = "/path/to/conditions.csv",    # outside csv_folder!
+```yaml
+# config/pipeline_C_params.yaml
 
-  # --- Column detection ---
-  gating_pattern         = "\\(Clustering annotated\\)$|^Clustering raw$",
-  cluster_regex          = "Clustering annotated",
-  processing_mode        = "manual",    # "automatic" (GUI), "manual", "expression_only"
+pipeline:              "C"
 
-  # --- Analysis ---
-  analysis_method        = "enrichment",    # "enrichment" (Fisher) or "glmm" (NB-GLMM)
-  condition_levels       = c("Control", "Treatment"),
-  stat_method            = "pooled",        # "pooled" or "mixed_effects"
-  p_adjust_method        = "BH",
+# --- Paths ---
+input_dir:             "/path/to/csv/gating/files"
+output_dir:            "/path/to/output/pipeline_C_results"
+conditions_csv:        "/path/to/conditions.csv"    # outside input_dir!
 
-  # --- Abundance plotting ---
-  exclude_patterns       = c(),             # patterns to exclude from tracking
-  cytolution_metadata_file = NULL,          # optional metadata CSV for grouping
+# --- Column detection ---
+gating_pattern:        "\\(Clustering annotated\\)$|^Clustering raw$"
+cluster_regex:         "Clustering annotated"
+processing_mode:       "manual"      # "automatic" (GUI), "manual", "expression_only"
 
-  # --- Reproducibility ---
-  seed                   = 42
-)
+# --- Analysis ---
+analysis_method:       "enrichment"  # "enrichment" (Fisher) or "glmm" (NB-GLMM)
+condition_levels:      "Control,Treatment"
+stat_method:           "pooled"      # "pooled" or "mixed_effects"
+p_adjust_method:       "BH"
+
+# --- Abundance plotting ---
+exclude_patterns:      []            # patterns to exclude from tracking
+cytolution_metadata_file: null       # optional metadata CSV for grouping
+
+# --- Reproducibility ---
+seed:                  42
 ```
 
 ### Key Parameters
@@ -454,6 +460,41 @@ output/pipeline_C_results/
     ├── total_cells_per_cluster.png      # Total cells per cluster
     └── cluster_proportion_heatmap.png   # Biclustered proportion heatmap
 ```
+
+---
+
+## Choosing an Analysis Method
+
+The `analysis_method` parameter in Step 3 determines which statistical test is applied to compare cluster abundances between conditions. The two options have different assumptions and are suited to different experimental designs:
+
+### `"enrichment"` (Fisher's exact test) -- default
+
+Tests whether the proportion of cells in a given cluster differs between two conditions. Uses a 2x2 contingency table (in-cluster vs not-in-cluster, condition A vs condition B).
+
+| Sub-option (`stat_method`) | Description |
+|----------------------------|-------------|
+| `"pooled"` | Pools all cells across samples within each condition into a single count. Simple and robust with small sample sizes (2-3 per group). |
+| `"mixed_effects"` | Fits a mixed-effects logistic regression with sample as a random effect. Accounts for per-sample variability but requires more samples (4+ per group recommended). |
+
+**Output:** `enrichment_results.csv` with odds ratios, p-values, confidence intervals, and log2 enrichment scores.
+
+**Best for:** Small sample sizes, exploratory analysis, binary comparisons.
+
+### `"glmm"` (Negative binomial GLMM)
+
+Fits a negative binomial generalized linear mixed model per cluster: `count ~ condition + offset(log_total) + (1 | sample_id)`. This models overdispersed count data with sample-level random effects.
+
+**Output:** `glmm_results.csv` with model coefficients, z-values, log2 fold changes, and adjusted p-values.
+
+**Best for:** Larger studies (5+ samples per condition), when you want to account for sample-to-sample variability and overdispersion in cell counts.
+
+### Quick decision guide
+
+| Scenario | Recommended Setting |
+|----------|---------------------|
+| 2-3 samples per condition, exploratory | `analysis_method: "enrichment"`, `stat_method: "pooled"` |
+| 4-6 samples per condition | `analysis_method: "enrichment"`, `stat_method: "mixed_effects"` |
+| 5+ samples per condition, publication-grade | `analysis_method: "glmm"` |
 
 ---
 

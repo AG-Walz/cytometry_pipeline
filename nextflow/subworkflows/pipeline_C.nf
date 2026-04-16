@@ -31,11 +31,11 @@ workflow PIPELINE_C {
         }
     }
 
-    // Step 4: Composition barplot
-    if (ch_split.split_result) {
-        BARPLOT(ch_split.split_result)
-    }
+    // Step 4: Composition barplot (runs when split produces output)
+    BARPLOT(ch_split.split_result)
 
     // Step 5: Abundance analysis
-    ABUNDANCE_PLOT(ch_input_dir)
+    if (params.conditions_csv) {
+        ABUNDANCE_PLOT(ch_input_dir)
+    }
 }

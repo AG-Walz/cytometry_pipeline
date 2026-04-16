@@ -82,22 +82,27 @@ You can customize this regex in the config.
 ### Running the Pipeline
 
 ```bash
-cd pipelines
-Rscript pipeline_B_csv_expression.R --config ../config/pipeline_B_config.R
+# Minimal invocation with inline parameters
+nextflow run nextflow/main.nf --pipeline B --input_dir /data/csv_expression \
+    --markers_of_interest "CD3,CD4,CD8" --output_dir ./results -profile docker
+
+# Using a YAML parameter file (recommended for reproducibility)
+nextflow run nextflow/main.nf -params-file config/pipeline_B_params.yaml -profile docker
 ```
 
-### Example Config
+Pipeline-level defaults are defined in `nextflow.config`. Any parameter can be overridden on the command line or via a YAML params file.
 
-```r
-# config/pipeline_B_config.R
+### Example Params File
 
-params <- list(
-  csv_folder = "/path/to/csv/expression/files",
-  output_dir = "/path/to/output/pipeline_B_results",
-  markers    = c("CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR"),
-  test_type  = "lmer",    # "lmer" (mixed-effects model)
-  seed       = 42
-)
+```yaml
+# config/pipeline_B_params.yaml
+
+pipeline:            "B"
+input_dir:           "/path/to/csv/expression/files"
+output_dir:          "/path/to/output/pipeline_B_results"
+markers_of_interest: "CD3,CD4,CD8,CD19,CD56,HLA-DR"
+test_type:           "lmer"    # "lmer" (mixed-effects model)
+seed:                42
 ```
 
 ### Key Parameters
@@ -276,6 +281,24 @@ output/pipeline_B_results/
     ├── expression_heatmap.png     # Clustered heatmap
     └── expression_heatmap.svg     # Vector format (if svg enabled)
 ```
+
+---
+
+## Available Statistical Methods
+
+The `test_type` parameter controls the statistical method used for marker analysis in Step 2. Currently supported:
+
+| `test_type` | Method | Description | When to Use |
+|-------------|--------|-------------|-------------|
+| `"lmer"` (default) | Linear mixed-effects model | Fits `expression ~ 1 + (1 | sample_id)` via `lme4::lmer()`. Decomposes variance into between-sample and within-sample components. Reports ICC (intraclass correlation coefficient). | General-purpose default. Works well with 3+ samples per population. |
+
+If the mixed model fails to converge (too few samples or near-zero between-sample variance), the function automatically falls back to `"simple_mean"` — a plain arithmetic mean with no variance decomposition. The `method` column in the output CSV indicates which approach was used for each marker/population combination.
+
+**Reading the ICC values:**
+
+- **ICC > 0.1:** The marker varies meaningfully between samples — a candidate for biological signal investigation.
+- **ICC near 0:** All variation is cell-to-cell within samples — the marker behaves consistently across samples.
+- **ICC near 1:** Almost all variation is between samples — strong batch or condition effect.
 
 ---
 

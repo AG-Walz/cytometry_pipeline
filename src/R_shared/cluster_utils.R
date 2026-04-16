@@ -125,3 +125,51 @@ translate_labels <- function(string_list, dictionary) {
   idx <- match(string_list, names(dictionary))
   ifelse(!is.na(idx), dictionary[idx], string_list)
 }
+
+#' Write per-sample gating CSVs from cluster assignments
+#'
+#' Takes a combined expression matrix with sample labels and cluster IDs,
+#' and writes one CSV per sample with binary gating columns.
+#'
+#' Input from: build_combined_expr_matrix() (R_shared/flowframe_utils.R),
+#'             run_leiden/run_flowsom/run_phenograph/run_dbscan
+#' Output to:  split_by_cluster() (analysis/cluster_splitting.R),
+#'             run_differential_abundance() (analysis/differential_abundance.R),
+#'             run_cluster_enrichment() (analysis/cluster_enrichment.R)
+#'
+#' @param combined_matrix Numeric matrix (cells x markers)
+#' @param sample_labels Character vector of sample labels (one per row)
+#' @param cluster_ids Integer or character vector of cluster assignments (one per row)
+#' @param output_dir Directory for per-sample CSV output files
+#' @param sep CSV separator (default ";")
+#' @return Character vector of written file paths (invisibly)
+clusters_to_gating_csv <- function(combined_matrix, sample_labels, cluster_ids,
+                                    output_dir, sep = ";") {
+  require(data.table)
+  make_outdir(output_dir)
+
+  clustered_df <- as.data.frame(combined_matrix)
+  clustered_df$sample <- sample_labels
+  clustered_df$cluster <- cluster_ids
+
+  unique_clusters <- unique(cluster_ids)
+  unique_samples <- unique(sample_labels)
+  output_files <- character(length(unique_samples))
+
+  for (i in seq_along(unique_samples)) {
+    sname <- unique_samples[i]
+    sdata <- clustered_df[clustered_df$sample == sname, ]
+    for (cl in unique_clusters) {
+      col_name <- paste0("Cluster_", cl, " (Clustering annotated)")
+      sdata[[col_name]] <- as.integer(sdata$cluster == cl)
+    }
+    sdata$cluster <- NULL
+    sdata$sample <- NULL
+    out_path <- file.path(output_dir, paste0(sname, ".csv"))
+    data.table::fwrite(sdata, out_path, sep = sep)
+    output_files[i] <- out_path
+  }
+
+  cat("Wrote", length(output_files), "cluster CSV files to:", output_dir, "\n")
+  invisible(output_files)
+}

@@ -3,9 +3,9 @@ library(testthat)
 # ---------------------------------------------------------------------------
 # Helpers: resolve shared and metadata_qc source directories
 # ---------------------------------------------------------------------------
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
-mqc_dir    <- file.path(dirname(getwd()), "src", "metadata_qc")
-test_data  <- file.path(dirname(getwd()), "test_data")
+if (!exists("shared_dir")) shared_dir <- { .s <- Sys.getenv("CYTOMETRY_SRC", ""); if (nzchar(.s)) file.path(.s, "R_shared") else file.path(dirname(getwd()), "src", "R_shared") }
+mqc_dir    <- file.path(dirname(shared_dir), "metadata_qc")
+test_data  <- file.path(dirname(dirname(shared_dir)), "test_data")
 
 # Source shared utilities
 source(file.path(shared_dir, "io_utils.R"))

@@ -8,8 +8,8 @@ A modular flow cytometry analysis framework in R, supporting raw FCS files, prep
 
 ### Prerequisites
 
-- Linux system (memory monitoring uses `/proc/meminfo`)
-- Conda (Miniconda or Mambaforge)
+- Nextflow (>= 23.04.0) and Docker (recommended for reproducible runs)
+- Alternatively: Conda (Miniconda or Mambaforge) for local R development
 - At least 8 GB RAM (16 GB recommended for large FCS datasets)
 
 ### Setup
@@ -43,8 +43,12 @@ Rscript -e "library(flowCore); library(data.table); library(lme4); library(uwot)
 # Generate synthetic test data
 Rscript test_data/generate_test_data.R
 
-# Run a pipeline (from project root)
-Rscript pipelines/pipeline_A_raw_fcs.R --config config/pipeline_A_config.R
+# Run a pipeline via Nextflow (from project root)
+nextflow run nextflow/main.nf --pipeline A --input_dir /data/fcs \
+    --markers_of_interest "CD3,CD4,CD8" --output_dir ./results -profile docker
+
+# Or with a param file:
+nextflow run nextflow/main.nf -params-file config/pipeline_A_params.yaml -profile docker
 ```
 
 ---
@@ -59,10 +63,12 @@ Rscript pipelines/pipeline_A_raw_fcs.R --config config/pipeline_A_config.R
 | [**D**](docs/pipelines/pipeline-D-flowjo-comparison.md) | FlowJo `.wsp` files | Compare gating strategies, Fleiss' kappa, Venn/UpSet | Comparing multiple analysts' gating of the same samples |
 | [**E**](docs/pipelines/pipeline-E-preprocessed-umap.md) | Preprocessed `.fcs` | Harmonize, Leiden clustering, UMAP | Already QC'd and transformed FCS, quick clustering |
 
-All pipelines follow the same invocation pattern:
+All pipelines follow the same Nextflow invocation pattern:
 
 ```bash
-Rscript pipelines/pipeline_X_name.R --config config/pipeline_X_config.R
+nextflow run nextflow/main.nf --pipeline X --input_dir /path/to/data --output_dir ./results -profile docker
+# Or with a param file:
+nextflow run nextflow/main.nf -params-file config/pipeline_X_params.yaml -profile docker
 ```
 
 ---
@@ -75,7 +81,7 @@ Rscript pipelines/pipeline_X_name.R --config config/pipeline_X_config.R
 | [Configuration Guide](docs/configuration.md) | Writing config files, parameter reference |
 | [File Formats](docs/file-formats.md) | Input and output file format specifications |
 | [Standalone Scripts](docs/standalone-scripts.md) | Using individual scripts outside pipelines |
-| [R_shared API Reference](docs/r-shared-reference.md) | Shared utility library (8 modules, 50+ functions) |
+| [R_shared API Reference](docs/r-shared-reference.md) | Shared utility library (12 modules, 50+ functions) |
 | [Composability Guide](docs/composability-guide.md) | Cross-pipeline data flow, format contracts, example workflows |
 | [Methods Guide](docs/methods-guide.md) | Decision flowcharts and 19 deep-dive pages with peer-reviewed references |
 
@@ -99,7 +105,7 @@ Rscript pipelines/pipeline_X_name.R --config config/pipeline_X_config.R
 ```
 cytometry/
 ├── src/                      Source code (8 subprojects)
-│   ├── R_shared/                 Shared utility library (8 modules)
+│   ├── R_shared/                 Shared utility library (12 modules)
 │   ├── loading/                  Data loaders (FCS, CSV, FlowJo WSP)
 │   ├── preprocessing/            QC, transformation, downsampling
 │   ├── harmonization/            Panel unification, batch correction
@@ -107,8 +113,17 @@ cytometry/
 │   ├── analysis/                 GLMM, enrichment, marker stats, abundance
 │   ├── visualization/            UMAP, heatmaps, density, barplots
 │   └── metadata_qc/             Metadata checks, gating comparison
-├── pipelines/                Pipeline orchestrators (A through E)
-├── config/                   Parameter templates and study-specific configs
+├── nextflow/                 Nextflow pipeline orchestration
+│   ├── main.nf                   Entry point (--pipeline A|B|C|D|E)
+│   ├── modules/                  Per-step Nextflow process definitions
+│   └── bin/                      CLI wrappers that call src/ R functions
+├── config/                   YAML parameter files
+│   ├── pipeline_A_params.yaml    Template for Pipeline A
+│   ├── pipeline_B_params.yaml    Template for Pipeline B
+│   ├── pipeline_C_params.yaml    Template for Pipeline C
+│   ├── pipeline_D_params.yaml    Template for Pipeline D
+│   ├── pipeline_E_params.yaml    Template for Pipeline E
+│   └── study_params/             Your study-specific YAML configs
 ├── docs/                     Documentation
 ├── test_data/                Synthetic test data
 └── output/                   Pipeline output (gitignored)

@@ -13,14 +13,14 @@
 #   plot_abundance()              — orchestrator calling all four
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+if (!exists("shared_dir")) shared_dir <- { .s <- Sys.getenv("CYTOMETRY_SRC", ""); if (nzchar(.s)) file.path(.s, "R_shared") else file.path(dirname(getwd()), "src", "R_shared") }
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "cluster_utils.R"))
 source(file.path(shared_dir, "plot_utils.R"))
 
 #' Build a sample-by-cluster tracking matrix from CSVs
 #'
-#' Input from: clusters_to_gating_csv() (clustering/leiden.R),
+#' Input from: clusters_to_gating_csv() (R_shared/cluster_utils.R),
 #'             load_csv_gating() (loading/load_csv_gating.R)
 #' Output to:  plot_abundance() (this file)
 #'

@@ -3,10 +3,9 @@ library(testthat)
 # ---------------------------------------------------------------------------
 # Helpers: resolve shared and visualization source directories
 # ---------------------------------------------------------------------------
-root_dir   <- file.path(dirname(getwd()), "..")
-if (!dir.exists(root_dir)) root_dir <- dirname(getwd())
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
-viz_dir    <- file.path(dirname(getwd()), "src", "visualization")
+if (!exists("shared_dir")) shared_dir <- { .s <- Sys.getenv("CYTOMETRY_SRC", ""); if (nzchar(.s)) file.path(.s, "R_shared") else file.path(dirname(getwd()), "src", "R_shared") }
+viz_dir    <- file.path(dirname(shared_dir), "visualization")
+root_dir   <- dirname(dirname(shared_dir))
 
 # Source shared utilities (required by all visualization scripts)
 source(file.path(shared_dir, "io_utils.R"))

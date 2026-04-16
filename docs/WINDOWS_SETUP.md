@@ -157,7 +157,7 @@ Now you will use Git to download the pipeline code to your computer.
    ```
    dir
    ```
-   You should see folders like `src`, `pipelines`, `config`, `docs`, and files like `environment_windows.yml`, `setup_env.ps1`, etc.
+   You should see folders like `src`, `nextflow`, `config`, `docs`, and files like `environment_windows.yml`, `setup_env.ps1`, etc.
 
 ---
 
@@ -263,11 +263,59 @@ Still in the same PowerShell window:
 
 ---
 
+## Part 4b: Optional — Install WSL2 and Docker Desktop
+
+If you want to run full pipelines (all steps in sequence, with per-sample parallelism), you need Nextflow, which runs best through WSL2 on Windows. This is optional — you can still run individual R scripts directly without it.
+
+1. **Enable WSL2.** Open PowerShell **as Administrator** (right-click > "Run as administrator") and type:
+   ```
+   wsl --install
+   ```
+   Restart your computer when prompted.
+
+2. **Install Docker Desktop** from **https://www.docker.com/products/docker-desktop/**. During installation, make sure the **"Use WSL 2 based engine"** option is checked.
+
+3. **Install Nextflow inside WSL2.** Open a WSL2 terminal (press the `Windows` key, type `ubuntu`, click the Ubuntu app) and type:
+   ```bash
+   curl -s https://get.nextflow.io | bash
+   sudo mv nextflow /usr/local/bin/
+   ```
+
+4. With WSL2, Docker, and Nextflow installed you can run **all 5 pipelines** including Pipeline D (FlowJo workspace comparison), which is not available when running R scripts directly on Windows.
+
+---
+
 ## Part 5: How to run a pipeline
 
-Every time you want to use the pipeline, you need to do two things first: **open PowerShell** and **activate the conda environment**. Then you can run any pipeline or script.
+Every time you want to use the pipeline, you need to do two things first: **open PowerShell** and **activate the conda environment**. Then you can run a pipeline or an individual script.
 
-### Step-by-step: running a pipeline
+There are two ways to run a pipeline:
+
+### Option A: Using Nextflow via WSL2 (recommended for full pipeline support)
+
+This requires WSL2, Docker, and Nextflow (see Part 4b above). Nextflow handles running every step in the correct order, with per-sample parallelism and containerized execution.
+
+1. Open a **WSL2 terminal** (press the `Windows` key, type `ubuntu`, click the Ubuntu app).
+
+2. Run the pipeline. For example, Pipeline A (raw FCS analysis):
+   ```powershell
+   # In WSL2 terminal:
+   cd /mnt/c/cytometry
+   nextflow run nextflow/main.nf --pipeline A --input_dir /mnt/c/path/to/fcs \
+       --markers_of_interest "CD3,CD4,CD8,CD19" --output_dir ./results -profile docker
+   ```
+
+   You can also use a parameter file instead of typing all options on the command line:
+   ```powershell
+   cd /mnt/c/cytometry
+   nextflow run nextflow/main.nf -params-file config/pipeline_A_params.yaml -profile docker
+   ```
+
+3. The pipeline will run and print progress messages. When it finishes, your results will be in the output directory you specified.
+
+### Option B: Running individual R scripts directly (no Nextflow needed)
+
+If you do not have WSL2/Nextflow set up, you can run individual processing steps directly. This is useful for quick analyses or when you only need one specific step (e.g., just clustering, or just a UMAP).
 
 1. **Open PowerShell:**
    - Press the `Windows` key.
@@ -280,80 +328,43 @@ Every time you want to use the pipeline, you need to do two things first: **open
    ```
    Wait until you see `(cytometry_env)` at the start of the line.
 
-3. **Navigate to the pipelines folder:**
-   ```
-   cd C:\cytometry\pipelines
-   ```
-
-4. **Run the pipeline you need.** Replace the config path with your actual config file:
-
-   **Pipeline A** — Full analysis from raw .fcs files:
-   ```
-   Rscript pipeline_A_raw_fcs.R --config ..\config\pipeline_A_config.R
-   ```
-
-   **Pipeline B** — Quick statistics from CSV expression files:
-   ```
-   Rscript pipeline_B_csv_expression.R --config ..\config\pipeline_B_config.R
-   ```
-
-   **Pipeline C** — Cluster abundance from CSV files with gating columns:
-   ```
-   Rscript pipeline_C_csv_gating.R --config ..\config\pipeline_C_config.R
-   ```
-
-   **Pipeline E** — Fast UMAP/clustering from preprocessed .fcs files:
-   ```
-   Rscript pipeline_E_preprocessed_umap.R --config ..\config\pipeline_E_config.R
-   ```
-
-5. The pipeline will run and print progress messages. When it finishes, your results will be in the output directory specified in the config file.
-
-### Step-by-step: running an individual script
-
-Individual scripts (the building blocks inside `src/`) must be run from **their own folder**. This is because each script finds shared utilities relative to its working directory.
-
-1. Open PowerShell and activate the environment (steps 1-2 above).
-
-2. Navigate to the script's folder. For example, to run the Leiden clustering script:
-   ```
+3. **Navigate to the script's folder and run it.** For example, to run the Leiden clustering script:
+   ```powershell
+   # In PowerShell with cytometry_env activated:
    cd C:\cytometry\src\clustering
-   ```
-
-3. Run it:
-   ```
    Rscript leiden.R
    ```
 
-**Important rule:** always `cd` into the folder that contains the script before running it. Do NOT run it from the project root like this:
+**Important rule:** always `cd` into the folder that contains the script before running it. Each script finds shared utilities relative to its working directory. Do NOT run it from the project root like this:
 ```
 # WRONG — will fail with "file not found" error:
 cd C:\cytometry
 Rscript src\clustering\leiden.R
 ```
 
+**Note:** Full pipeline orchestration (running all steps in sequence) requires Nextflow, which runs best through WSL2 on Windows. Individual scripts can be run directly in PowerShell as shown above.
+
 ---
 
 ## Part 6: Editing a config file before running
 
-Each pipeline reads a config file that tells it where your data is, where to save results, and which methods to use. You need to edit this file to point to YOUR data.
+Each pipeline reads a YAML config file that tells it where your data is, where to save results, and which methods to use. You need to edit this file to point to YOUR data.
 
 1. Open **File Explorer** (the folder icon in your taskbar, or press `Windows + E`).
 
 2. Navigate to `C:\cytometry\config\`.
 
-3. Right-click on the config file you want to edit (e.g. `pipeline_A_config.R`) and choose **"Open with" > "Notepad"**. If you don't see "Open with", choose "Open with" > "Choose another app" > "Notepad".
+3. Right-click on the config file you want to edit (e.g. `pipeline_A_params.yaml`) and choose **"Open with" > "Notepad"**. If you don't see "Open with", choose "Open with" > "Choose another app" > "Notepad".
 
 4. The config file looks like this (simplified example):
-   ```r
-   params <- list(
-     input_dir      = "C:/path/to/your/fcs/files",
-     output_dir     = "C:/path/to/your/output",
-     markers        = c("CD3", "CD4", "CD8", "CD19", "CD56"),
-     clustering_method = "leiden",
-     dimred_method     = "umap",
-     batch_method      = "none"
-   )
+   ```yaml
+   pipeline: A
+   input_dir: "C:/path/to/your/fcs/files"
+   output_dir: "C:/path/to/your/output"
+   markers_of_interest: "CD3,CD4,CD8,CD19,CD56"
+   clustering_method: "leiden"
+   dimred_method: "umap"
+   batch_method: "none"
    ```
 
 5. **Change the paths to match your data:**
@@ -393,19 +404,10 @@ After initial setup is complete, this is all you need to do each time:
 # 2. Activate the environment
 conda activate cytometry_env
 
-# 3. Go to the pipelines folder
-cd C:\cytometry\pipelines
+# 3. Option A: Run via WSL2 + Nextflow (full pipeline)
+wsl -e bash -c "cd /mnt/c/cytometry && nextflow run nextflow/main.nf -params-file config/pipeline_A_params.yaml -profile docker"
 
-# 4. Run the pipeline you need (pick one):
-Rscript pipeline_A_raw_fcs.R --config ..\config\pipeline_A_config.R
-Rscript pipeline_B_csv_expression.R --config ..\config\pipeline_B_config.R
-Rscript pipeline_C_csv_gating.R --config ..\config\pipeline_C_config.R
-Rscript pipeline_E_preprocessed_umap.R --config ..\config\pipeline_E_config.R
-```
-
-To run an individual script instead:
-```powershell
-conda activate cytometry_env
+# 4. Option B: Run individual scripts directly
 cd C:\cytometry\src\clustering
 Rscript leiden.R
 ```
@@ -619,8 +621,8 @@ After installation, your computer will have:
 ```
 C:\cytometry\                       <-- the pipeline code (from Git)
     src\                            <-- all R scripts (the building blocks)
-    pipelines\                      <-- pipeline orchestrators (A, B, C, E)
-    config\                         <-- config files (edit these for your data)
+    nextflow\                       <-- Nextflow pipeline (workflows, modules, configs)
+    config\                         <-- YAML config files (edit these for your data)
     docs\                           <-- documentation (you are reading this)
     test_data\                      <-- example test files
     environment_windows.yml         <-- conda package list

@@ -58,59 +58,67 @@ sample_003;Treatment
 ### Running the Pipeline
 
 ```bash
-cd pipelines
-Rscript pipeline_A_raw_fcs.R --config ../config/pipeline_A_config.R
+# Minimal invocation with inline parameters
+nextflow run nextflow/main.nf --pipeline A --input_dir /data/fcs \
+    --markers_of_interest "CD3,CD4,CD8,CD19,CD56,HLA-DR" \
+    --conditions_csv /data/conditions.csv \
+    --output_dir ./results -profile docker
+
+# Using a YAML parameter file (recommended for reproducibility)
+nextflow run nextflow/main.nf -params-file config/pipeline_A_params.yaml -profile docker
 ```
 
-If `--config` is not provided, the pipeline falls back to `config/pipeline_A_config.R`.
+Pipeline-level defaults are defined in `nextflow.config`. Any parameter can be overridden on the command line or via a YAML params file.
 
-### Example Config
+### Example Params File
 
-```r
-# config/pipeline_A_config.R — key parameters
+```yaml
+# config/pipeline_A_params.yaml — key parameters
 
-params <- list(
-  # --- Paths ---
-  fcs_folder          = "/path/to/fcs/files",
-  output_dir          = "/path/to/output/pipeline_A_results",
-  conditions_csv      = "/path/to/conditions.csv",
+pipeline: "A"
 
-  # --- Markers ---
-  markers_of_interest = c("CD3", "CD4", "CD8", "CD19", "CD56", "HLA-DR"),
-  markername_replacing = list(),   # e.g. list(`PD1 (CD279)` = "PD1")
+# --- Paths ---
+input_dir:           "/path/to/fcs/files"
+output_dir:          "/path/to/output/pipeline_A_results"
+conditions_csv:      "/path/to/conditions.csv"
 
-  # --- Preprocessing ---
-  pp_order            = "QT",           # "QT" (QC first) or "TQ" (Transform first)
-  qc_type             = "None",         # "PeacoQC", "flowAI", or "None"
-  transform_type      = "arcsinh",      # "arcsinh", "logicle", "biexponential", "None"
-  offset_list         = rep(0, 6),      # one value per marker (cofactor offset)
-  width_list          = rep(5, 6),      # one value per marker (cofactor width)
-  truncation          = FALSE,          # truncate values to $PnR range
-  save_pp_fcs         = FALSE,          # save preprocessed FCS files
-  save_pp_csv         = FALSE,          # save preprocessed CSVs
+# --- Markers ---
+markers_of_interest: "CD3,CD4,CD8,CD19,CD56,HLA-DR"
+markername_replacing: {}   # e.g. { "PD1 (CD279)": "PD1" }
 
-  # --- Downsampling ---
-  downsample_method   = "Consistent",   # "Consistent" (fixed N per sample) or "Maximal"
-  downsample_n        = 10000,          # target cell count
+# --- Preprocessing ---
+pp_order:            "QT"            # "QT" (QC first) or "TQ" (Transform first)
+qc_type:             "None"          # "PeacoQC", "flowAI", or "None"
+transform_type:      "arcsinh"       # "arcsinh", "logicle", "biexponential", "None"
+offset_list:         "0,0,0,0,0,0"   # one value per marker (cofactor offset)
+width_list:          "5,5,5,5,5,5"   # one value per marker (cofactor width)
+truncation:          false           # truncate values to $PnR range
+save_pp_fcs:         false           # save preprocessed FCS files
+save_pp_csv:         false           # save preprocessed CSVs
 
-  # --- Clustering ---
-  n_neighbors         = 15,             # KNN neighbors for UMAP + Leiden
-  resolution          = 0.5,            # Leiden resolution (higher = more clusters)
+# --- Downsampling ---
+downsample_method:   "Consistent"    # "Consistent" (fixed N per sample) or "Maximal"
+downsample_n:        10000           # target cell count
 
-  # --- Analysis ---
-  condition_levels    = c("Control", "Treatment"),
-  cluster_regex       = "Clustering annotated",
-  min_cluster_size    = 10,
-  p_adjust_method     = "BH",
+# --- Clustering ---
+n_neighbors:         15              # KNN neighbors for UMAP + Leiden
+resolution:          0.5             # Leiden resolution (higher = more clusters)
 
-  # --- Reproducibility ---
-  seed                = 42,
+# --- Analysis ---
+condition_levels:    "Control,Treatment"
+cluster_regex:       "Clustering annotated"
+min_cluster_size:    10
+p_adjust_method:     "BH"
 
-  # --- Plot formats ---
-  output_formats      = list(pdf = FALSE, png = TRUE, svg = TRUE),
-  plot_width          = 8,
-  plot_height         = 6
-)
+# --- Reproducibility ---
+seed:                42
+
+# --- Plot formats ---
+output_format_pdf:   false
+output_format_png:   true
+output_format_svg:   true
+plot_width:          8
+plot_height:         6
 ```
 
 ### Key Parameters
@@ -381,6 +389,63 @@ Each row is one cell. `cluster` is an integer (1, 2, 3...) assigned by Leiden. `
   Found 1 cluster
   Cluster sizes: 99
   Results saved to: output/pipeline_A_results/03_clustering/leiden_clusters.csv
+```
+
+#### Alternative Clustering Methods
+
+The clustering method is swappable via the `clustering_method` parameter. All methods are dispatched through `run_clustering()` in `src/R_shared/clustering_dispatch.R` and return integer cluster labels that feed directly into `clusters_to_gating_csv()` and downstream analysis.
+
+| Method | `clustering_method` | Description | Key Parameters |
+|--------|---------------------|-------------|----------------|
+| **Leiden** (default) | `"leiden"` | Community detection via Python `leidenalg`. Best for discovering natural clusters in high-dimensional data. | `n_neighbors` (KNN graph size), `resolution` (higher = more clusters) |
+| **FlowSOM** | `"flowsom"` | Self-organizing maps followed by consensus meta-clustering. Fast and memory-efficient, good for large datasets. | `n_clusters` (target cluster count), `grid_xdim` / `grid_ydim` (SOM grid dimensions) |
+| **PhenoGraph** | `"phenograph"` | KNN graph + Louvain community detection. Particularly good at finding rare cell populations. | `n_neighbors` (KNN graph size) |
+| **DBSCAN** | `"dbscan"` | Density-based spatial clustering. Does not require specifying cluster count; discovers clusters of arbitrary shape and labels outliers as noise. | `dbscan_eps` (`null` = auto-determined), `dbscan_min_pts` (minimum cluster size) |
+
+To switch methods, set `clustering_method` in your params file:
+
+```yaml
+clustering_method: "flowsom"
+n_clusters:        20
+grid_xdim:         10
+grid_ydim:         10
+```
+
+All methods produce the same output format (integer cluster IDs per cell), so no downstream steps need to change.
+
+#### Batch Correction Alternatives
+
+Batch correction runs between harmonization and clustering (between Steps 3 and 5). It is controlled by the `batch_method` parameter and dispatched through `run_batch_correction_dispatch()` in `src/R_shared/batch_correction_dispatch.R`.
+
+| Method | `batch_method` | Description | Key Parameters |
+|--------|----------------|-------------|----------------|
+| **None** (default) | `"none"` | No batch correction applied. Use when samples come from the same batch/instrument run. | -- |
+| **Harmony** | `"harmony"` | Fast iterative correction that learns batch-specific linear adjustments. Good general-purpose choice for most experiments. | (uses default Harmony settings) |
+| **ComBat** | `"combat"` | Parametric or non-parametric empirical Bayes correction (from `sva` package). Well-established method from genomics. | `combat_method` (`"parametric"` or `"nonparametric"`) |
+| **CytoNorm** | `"cytonorm"` | Quantile-based normalization designed specifically for cytometry data. Requires reference samples (anchors) across batches. | `cytonorm_n_clusters` (number of FlowSOM clusters for normalization), `cytonorm_goal` (target distribution). Requires `flowWorkspace`. |
+
+Example configuration:
+
+```yaml
+batch_method:          "harmony"
+```
+
+#### Dimensionality Reduction Alternatives
+
+The visualization step (Step 7) uses UMAP by default, but the dimensionality reduction method is swappable via the `dimred_method` parameter, dispatched through `run_dimred()` in `src/R_shared/dimred_dispatch.R`.
+
+| Method | `dimred_method` | Description | Key Parameters |
+|--------|-----------------|-------------|----------------|
+| **UMAP** (default) | `"umap"` | Uniform Manifold Approximation and Projection. Good at preserving both local and global structure. | `umap_min_dist` (minimum distance between points), `n_neighbors` (neighborhood size) |
+| **t-SNE** | `"tsne"` | t-distributed Stochastic Neighbor Embedding. Excels at revealing local cluster structure but does not preserve global distances. | `tsne_perplexity` (effective number of neighbors; typical range 5-50), `tsne_max_iter` (maximum iterations) |
+| **Diffusion Map** | `"diffusion_map"` | Diffusion-based embedding that captures gradual transitions and trajectories. Best for continuous developmental processes. | Requires the `destiny` package (not included in the default conda environment; install separately). |
+
+Example configuration:
+
+```yaml
+dimred_method:    "tsne"
+tsne_perplexity:  30
+tsne_max_iter:    1000
 ```
 
 ---

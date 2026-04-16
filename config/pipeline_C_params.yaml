@@ -4,5 +4,23 @@ output_dir: ./results/pipeline_C
 markers_of_interest: "CD3,CD4,CD8,CD19,CD56,HLA-DR"
 conditions_csv: /path/to/conditions.csv
 condition_levels: "Control,Treatment"
-analysis_method: enrichment
+analysis_method: enrichment        # enrichment or abundance
 cluster_regex: "Clustering annotated"
+
+# --- Analysis ---
+# gating_pattern: '\\(Clustering annotated\\)$|^Clustering raw$'
+# processing_mode: manual
+# min_cluster_size: 5
+# p_adjust_method: BH
+# alpha_level: 0.05
+# stat_method: pooled
+# test_type: lmer
+# exclude_patterns: ''
+
+# --- Output ---
+# output_formats: png
+# plot_width: 10
+# plot_height: 8
+
+# --- Reproducibility ---
+# seed: 42

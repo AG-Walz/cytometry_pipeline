@@ -190,7 +190,7 @@ test_that("estimate_eps returns a finite positive number", {
 
 # ====================== clusters_to_gating_csv() ============================
 test_that("clusters_to_gating_csv writes correct per-sample CSV files", {
-  source(file.path(cluster_dir, "leiden.R"))
+  source(file.path(shared_dir, "cluster_utils.R"))
 
   n_cells <- 30
   n_markers <- 3

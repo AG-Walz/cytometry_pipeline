@@ -85,7 +85,7 @@ extract_exprmtx_list <- function(flow_frames_list, sample_names, markers_of_inte
 #'             downsample_flowframes() (preprocessing/downsampling.R),
 #'             homogenize_flowframes() (harmonization/panel_homogenization.R)
 #' Output to:  run_leiden_with_umap() (clustering/leiden.R),
-#'             clusters_to_gating_csv() (clustering/leiden.R),
+#'             clusters_to_gating_csv() (R_shared/cluster_utils.R),
 #'             plot_umap() (visualization/umap.R)
 #'
 #' @param flow_frames_list List of flowFrame objects

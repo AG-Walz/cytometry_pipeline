@@ -2,7 +2,7 @@ process LOAD_CSV_GATING {
     tag "load_csv_gating"
     label 'process_low'
 
-    publishDir "${params.output_dir}/01_loaded", mode: 'copy'
+    publishDir "${params.output_dir}/loading", mode: 'copy'
 
     input:
     path input_dir

@@ -3,8 +3,8 @@ library(testthat)
 # ---------------------------------------------------------------------------
 # Helpers: resolve shared and harmonization source directories
 # ---------------------------------------------------------------------------
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
-harm_dir   <- file.path(dirname(getwd()), "src", "harmonization")
+if (!exists("shared_dir")) shared_dir <- { .s <- Sys.getenv("CYTOMETRY_SRC", ""); if (nzchar(.s)) file.path(.s, "R_shared") else file.path(dirname(getwd()), "src", "R_shared") }
+harm_dir   <- file.path(dirname(shared_dir), "harmonization")
 
 # Source shared utilities
 source(file.path(shared_dir, "io_utils.R"))

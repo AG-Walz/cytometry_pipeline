@@ -22,7 +22,6 @@ Complete reference for the 12 shared utility modules in `src/R_shared/`. These m
   - [clustering_dispatch.R](#clustering_dispatchr) -- Clustering method dispatcher
   - [dimred_dispatch.R](#dimred_dispatchr) -- Dimensionality reduction dispatcher
   - [batch_correction_dispatch.R](#batch_correction_dispatchr) -- Batch correction dispatcher
-  - [pipeline_utils.R](#pipeline_utilsr) -- Pipeline initialization and parameter builders
 - [Quick Reference: Module Selection Guide](#quick-reference-module-selection-guide)
 
 ---
@@ -41,7 +40,6 @@ stats_utils.R (independent; requires lme4, dplyr, uwot)
 clustering_dispatch.R (sources clustering/*.R at runtime)
 dimred_dispatch.R (sources visualization/*.R at runtime)
 batch_correction_dispatch.R (sources harmonization/*.R and flowframe_utils.R at runtime)
-pipeline_utils.R (sources io_utils.R and memory_utils.R at runtime)
 ```
 
 ---
@@ -710,6 +708,37 @@ translate_labels(string_list, dictionary)
 dict <- c("BCs" = "B cells", "CD4TCs" = "CD4+ T cells", "NKCs" = "NK cells")
 translate_labels(c("BCs", "NKCs", "Unknown"), dict)
 # c("B cells", "NK cells", "Unknown")
+```
+
+---
+
+#### `clusters_to_gating_csv`
+
+Write per-sample gating CSVs from cluster assignments. Takes a combined expression matrix with sample labels and cluster IDs, and writes one CSV per sample with binary gating columns (one column per cluster, e.g. `Cluster_1 (Clustering annotated)`).
+
+```r
+clusters_to_gating_csv(combined_matrix, sample_labels, cluster_ids,
+                        output_dir, sep = ";")
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `combined_matrix` | numeric matrix | Cells x markers expression matrix |
+| `sample_labels` | character vector | Sample label per row |
+| `cluster_ids` | integer/character vector | Cluster assignment per row |
+| `output_dir` | character | Output directory for CSV files |
+| `sep` | character | CSV separator (default `";"`) |
+
+**Returns:** `character vector` -- paths to written CSV files (invisibly).
+
+**Input from:** `build_combined_expr_matrix()` (`flowframe_utils.R`), `run_leiden()`/`run_flowsom()`/`run_phenograph()`/`run_dbscan()`
+
+**Output to:** `split_by_cluster()` (`analysis/cluster_splitting.R`), `run_differential_abundance()`, `run_cluster_enrichment()`
+
+```r
+clusters_to_gating_csv(expr_matrix, sample_labels, cluster_ids,
+                        output_dir = "cluster_csvs/")
+# Wrote 5 cluster CSV files to: cluster_csvs/
 ```
 
 ---
@@ -1619,164 +1648,6 @@ dim(result$corrected_matrix)
 
 ---
 
-### pipeline_utils.R
-
-Pipeline boilerplate utilities for config loading, module sourcing, and parameter list construction. Eliminates repeated setup code from pipeline scripts.
-
-**Required packages:** none (sources io_utils.R and memory_utils.R internally)
-
-**Used by:** pipelines (A, B, C, D, E)
-
-#### `init_pipeline`
-
-Initialize a pipeline: parse `--config` from command-line arguments, source the config file, source core shared modules (io_utils.R and memory_utils.R), and record the start time.
-
-```r
-init_pipeline(pipeline_name, default_config)
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `pipeline_name` | character | Short name for logging (e.g. `"Pipeline A"`) |
-| `default_config` | character | Relative path from project root to the default config file (e.g. `"config/pipeline_A_config.R"`) |
-
-**Returns:** Named `list` with `base_dir` (character), `shared_dir` (character), `start_time` (POSIXct).
-
-```r
-source(file.path(shared_dir, "pipeline_utils.R"))
-env <- init_pipeline("Pipeline A", "config/pipeline_A_config.R")
-# Prints: === Pipeline A ===
-# Sources config and core modules
-```
-
----
-
-#### `finish_pipeline`
-
-Print a pipeline completion message with elapsed time in minutes.
-
-```r
-finish_pipeline(pipeline_name, start_time)
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `pipeline_name` | character | Short name (e.g. `"Pipeline A"`) |
-| `start_time` | POSIXct | The `start_time` value from `init_pipeline()` |
-
-**Returns:** `NULL` (invisible). Side effect: prints completion message.
-
-```r
-finish_pipeline("Pipeline A", env$start_time)
-# === Pipeline A complete (3.2 minutes) ===
-```
-
----
-
-#### `clustering_params`
-
-Build a params list for `run_clustering()` from a user config. Extracts and applies defaults for all clustering method parameters.
-
-```r
-clustering_params(params)
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `params` | named list | The user's config `params` list |
-
-**Returns:** Named `list` suitable for passing to `run_clustering(..., params = result)`.
-
-**Extracted keys and defaults:**
-
-| Key | Default |
-|-----|---------|
-| `n_neighbors` | 15 |
-| `resolution` | 0.5 |
-| `n_clusters` | 20 |
-| `grid_xdim` | 10 |
-| `grid_ydim` | 10 |
-| `k` | `params$n_neighbors` or 30 |
-| `dbscan_eps` | `NULL` |
-| `dbscan_min_pts` | 5 |
-| `seed` | 42 |
-
-```r
-cluster_p <- clustering_params(params)
-ids <- run_clustering(expr_matrix, method = params$clustering_method, params = cluster_p)
-```
-
----
-
-#### `dimred_params`
-
-Build a params list for `run_dimred()` from a user config. Extracts and applies defaults for all dimensionality reduction parameters.
-
-```r
-dimred_params(params)
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `params` | named list | The user's config `params` list |
-
-**Returns:** Named `list` suitable for passing to `run_dimred(..., params = result)`.
-
-**Extracted keys and defaults:**
-
-| Key | Default |
-|-----|---------|
-| `n_neighbors` | 15 |
-| `umap_min_dist` | 0.1 |
-| `tsne_perplexity` | 30 |
-| `tsne_max_iter` | 1000 |
-| `dm_n_components` | 3 |
-| `dm_sigma` | `"local"` |
-| `output_formats` | `list(pdf=FALSE, png=TRUE, svg=FALSE)` |
-| `plot_width` | 10 |
-| `plot_height` | 8 |
-| `seed` | 42 |
-
-```r
-dr_p <- dimred_params(params)
-result <- run_dimred(expr_matrix, method = params$dimred_method, params = dr_p)
-```
-
----
-
-#### `batch_params`
-
-Build a params list for `run_batch_correction_dispatch()` from a user config.
-
-```r
-batch_params(params)
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `params` | named list | The user's config `params` list |
-
-**Returns:** Named `list` suitable for passing to `run_batch_correction_dispatch(..., params = result)`.
-
-**Extracted keys and defaults:**
-
-| Key | Default |
-|-----|---------|
-| `batch_do_pca` | `FALSE` |
-| `combat_method` | `"parametric"` |
-| `combat_covariates` | `NULL` |
-| `cytonorm_train_indices` | `NULL` |
-| `cytonorm_n_clusters` | 10 |
-| `cytonorm_goal` | `"mean"` |
-| `seed` | 42 |
-
-```r
-bp <- batch_params(params)
-result <- run_batch_correction_dispatch(data, method = params$batch_method, params = bp)
-```
-
----
-
 ## Quick Reference: Module Selection Guide
 
 | Task | Module | Key Function |
@@ -1808,5 +1679,3 @@ result <- run_batch_correction_dispatch(data, method = params$batch_method, para
 | Swappable clustering (dispatch) | `clustering_dispatch.R` | `run_clustering` |
 | Swappable dim. reduction (dispatch) | `dimred_dispatch.R` | `run_dimred` |
 | Swappable batch correction (dispatch) | `batch_correction_dispatch.R` | `run_batch_correction_dispatch` |
-| Pipeline initialization | `pipeline_utils.R` | `init_pipeline`, `finish_pipeline` |
-| Build dispatcher param lists | `pipeline_utils.R` | `clustering_params`, `dimred_params`, `batch_params` |

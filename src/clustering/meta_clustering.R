@@ -25,7 +25,7 @@ source(file.path(cluster_dir, "leiden.R"))
 #'
 #' Input from: build_combined_expr_matrix() (R_shared/flowframe_utils.R),
 #'             normalize_expression() (preprocessing/normalization.R)
-#' Output to:  clusters_to_gating_csv() (clustering/leiden.R),
+#' Output to:  clusters_to_gating_csv() (R_shared/cluster_utils.R),
 #'             validate_clusters() (clustering/cluster_validation.R)
 #'
 #' @param expr_matrix Numeric matrix (rows = cells, cols = markers)
@@ -156,7 +156,7 @@ run_resolution_sweep <- function(expr_matrix, method = "leiden",
 #'             run_leiden() (clustering/leiden.R),
 #'             run_flowsom() (clustering/flowsom.R),
 #'             run_phenograph() (clustering/phenograph.R)
-#' Output to:  clusters_to_gating_csv() (clustering/leiden.R),
+#' Output to:  clusters_to_gating_csv() (R_shared/cluster_utils.R),
 #'             validate_clusters() (clustering/cluster_validation.R)
 #'
 #' @param cluster_list Named list of integer vectors (cluster assignments).

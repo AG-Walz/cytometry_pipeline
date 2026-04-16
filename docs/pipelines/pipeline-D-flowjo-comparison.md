@@ -57,64 +57,64 @@ study_data/
 ### Running the Pipeline
 
 ```bash
-cd pipelines
-Rscript pipeline_D_flowjo_comparison.R --config ../config/study_params/my_comparison.R
+# Minimal invocation with inline parameters
+nextflow run nextflow/main.nf --pipeline D \
+    --wsp_paths "/data/analyst_A.wsp,/data/analyst_B.wsp" \
+    --wsp_names "Analyst_A,Analyst_B" --output_dir ./results -profile docker
+
+# Using a YAML parameter file (recommended for reproducibility)
+nextflow run nextflow/main.nf -params-file config/pipeline_D_params.yaml -profile docker
 ```
 
-**The `--config` flag is mandatory for this pipeline.** The pipeline calls `stop()` if no config file is provided, because workspace paths and label mappings are inherently study-specific. Example config templates:
+**A params file is strongly recommended for this pipeline**, because workspace paths and label mappings are inherently study-specific.
 
-- `config/study_params/Compare_gatings_Endo_CD45_Julia.R`
-- `config/study_params/Compare_gatings_ICK_broad_narrow.R`
+Pipeline-level defaults are defined in `nextflow.config`. Any parameter can be overridden on the command line or via a YAML params file.
 
-### Example Config
+### Example Params File
 
-```r
-# config/study_params/my_comparison.R
+```yaml
+# config/pipeline_D_params.yaml
 
-params <- list(
-  # --- Workspace paths ---
-  wsp_paths    = c(
-    "/path/to/analyst_A.wsp",
-    "/path/to/analyst_B.wsp"
-  ),
-  custom_name  = c("Analyst_A", "Analyst_B"),    # Short labels for legends
+pipeline:      "D"
 
-  # --- Target FCS ---
-  target_fcs   = "sample_001.fcs",               # Compare this FCS across workspaces
-  fcs_dir      = "/path/to/fcs/files",           # Where FCS files are located
+# --- Workspace paths ---
+wsp_paths:     "/path/to/analyst_A.wsp,/path/to/analyst_B.wsp"
+wsp_names:     "Analyst_A,Analyst_B"    # Short labels for legends
 
-  # --- Label mapping ---
-  label_dict   = c(
-    "/no erys/Single Cells/lymphocytes/CD3+"                      = "CD3+",
-    "/no erys/Single Cells/lymphocytes/CD3+/T cells/CD4+"         = "CD4+ T cells",
-    "/no erys/Single Cells/lymphocytes/CD3+/T cells/CD8+"         = "CD8+ T cells",
-    "/no erys/Single Cells/lymphocytes/CD3-/CD19+"                = "B cells",
-    "/no erys/Single Cells/lymphocytes/CD3-/CD56+"                = "NK cells"
-  ),
+# --- Target FCS ---
+target_fcs:    "sample_001.fcs"          # Compare this FCS across workspaces
+fcs_dir:       "/path/to/fcs/files"      # Where FCS files are located
 
-  # --- Optional: pre-computed labels CSV ---
-  idx_labels   = NULL,     # or "/path/to/labels.csv"
+# --- Label mapping ---
+label_dict:
+  "/no erys/Single Cells/lymphocytes/CD3+":                      "CD3+"
+  "/no erys/Single Cells/lymphocytes/CD3+/T cells/CD4+":         "CD4+ T cells"
+  "/no erys/Single Cells/lymphocytes/CD3+/T cells/CD8+":         "CD8+ T cells"
+  "/no erys/Single Cells/lymphocytes/CD3-/CD19+":                "B cells"
+  "/no erys/Single Cells/lymphocytes/CD3-/CD56+":                "NK cells"
 
-  # --- Output ---
-  output_dir   = "/path/to/output/pipeline_D_results",
+# --- Optional: pre-computed labels CSV ---
+idx_labels:    null     # or "/path/to/labels.csv"
 
-  # --- Options ---
-  scale_size   = TRUE      # TRUE = Euler (proportional), FALSE = Venn
-)
+# --- Output ---
+output_dir:    "/path/to/output/pipeline_D_results"
+
+# --- Options ---
+scale_size:    true     # true = Euler (proportional), false = Venn
 ```
 
-### Key Config Variables
+### Key Parameters
 
-| Variable | Type | Description |
-|----------|------|-------------|
-| `wsp_paths` | character vector | Paths to `.wsp` files to compare |
-| `custom_name` | character vector | Short nicknames for each workspace (used in legends) |
-| `target_fcs` | character | FCS filename to compare across workspaces |
-| `fcs_dir` | character | Directory containing FCS files |
-| `label_dict` | named character vector | Maps FlowJo gate hierarchy paths to simplified display labels |
-| `idx_labels` | character or `NULL` | Optional CSV with pre-computed labels (alternative to WSP labels) |
-| `output_dir` | character | Output directory |
-| `scale_size` | logical | `TRUE` for Euler (area-proportional), `FALSE` for Venn |
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `wsp_paths` | comma-separated string | Paths to `.wsp` files to compare |
+| `wsp_names` | comma-separated string | Short nicknames for each workspace (used in legends) |
+| `target_fcs` | string | FCS filename to compare across workspaces |
+| `fcs_dir` | string | Directory containing FCS files |
+| `label_dict` | YAML map | Maps FlowJo gate hierarchy paths to simplified display labels |
+| `idx_labels` | string or `null` | Optional CSV with pre-computed labels (alternative to WSP labels) |
+| `output_dir` | string | Output directory |
+| `scale_size` | boolean | `true` for Euler (area-proportional), `false` for Venn |
 
 ### Understanding `label_dict`
 
@@ -302,6 +302,38 @@ output/pipeline_D_results/
 - **Euler diagram limits:** Area-proportional Euler diagrams work best with 2–5 sets. For more workspaces, only the UpSet plot is generated.
 - **Finding gate paths:** Use `get_population_stats()` or print `ws$population_names` after loading a workspace to see all available gate paths.
 - Pipeline D does **not** perform expression analysis, clustering, or differential testing. It is strictly a gating comparison tool.
+
+---
+
+## Platform Notes
+
+### Windows Limitation
+
+Pipeline D depends on `flowWorkspace` and `CytoML`, which require HDF5 libraries that are not natively available on Windows. **On Windows, this pipeline must be run through WSL2 or Docker:**
+
+```bash
+# Option 1: Docker via Nextflow (recommended)
+nextflow run nextflow/main.nf -params-file config/pipeline_D_params.yaml -profile docker
+
+# Option 2: WSL2 (Ubuntu)
+wsl -d Ubuntu
+# Then run Nextflow or Rscript as normal inside WSL2
+```
+
+On Linux and macOS, the pipeline runs natively without any special configuration.
+
+### Available Parameters Reference
+
+In addition to the key parameters documented above, the following options are available:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `scale_size` | boolean | `true` | `true` = Euler (area-proportional diagrams), `false` = Venn (fixed-size circles) |
+| `idx_labels` | string | `null` | Path to a CSV with pre-computed per-event labels from Pipeline C or external clustering. Included as an additional "rater" alongside WSP gatings. |
+| `label_dict` | YAML map | *required* | Maps FlowJo gate hierarchy paths to simplified display labels. Only gates listed here are compared. |
+| `output_format_pdf` | boolean | `false` | Save plots as PDF |
+| `output_format_png` | boolean | `true` | Save plots as PNG |
+| `output_format_svg` | boolean | `false` | Save plots as SVG |
 
 ---
 
