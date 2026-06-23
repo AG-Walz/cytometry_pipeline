@@ -3,14 +3,22 @@
 
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 
-# --- Ensure R_LIBS_USER is in .libPaths() so packages install there ---
-user_lib <- Sys.getenv("R_LIBS_USER")
-if (nzchar(user_lib)) {
-  user_lib <- normalizePath(user_lib, mustWork = FALSE)
-  if (!dir.exists(user_lib)) dir.create(user_lib, recursive = TRUE)
-  .libPaths(c(user_lib, .libPaths()))
-  cat("Installing packages to:", user_lib, "\n")
+# --- Install into the ACTIVE conda environment's library, never a global lib ---
+# Installing into a shared ~/R/<version>-library would let packages built for a
+# different R version leak into (and break) this env. Force the conda env lib.
+conda_prefix <- Sys.getenv("CONDA_PREFIX")
+if (nzchar(conda_prefix)) {
+  env_lib <- file.path(conda_prefix, "lib", "R", "library")
+  if (dir.exists(env_lib)) .libPaths(env_lib)
+} else {
+  warning("CONDA_PREFIX is not set — are you inside the 'cytometry_env' ",
+          "environment? Packages may install to the wrong library.")
 }
+if (!startsWith(normalizePath(.libPaths()[1]), normalizePath(file.path(conda_prefix, "lib")))) {
+  warning("Install target ", .libPaths()[1], " is outside the conda env. ",
+          "Check for a global ~/.Rprofile / ~/.Renviron pinning .libPaths().")
+}
+cat("Installing packages to:", .libPaths()[1], "\n")
 
 # 1. Install packages missing from Conda/CRAN
 # (Certain packages like sBIC might be on CRAN but tricky in Conda)

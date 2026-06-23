@@ -47,9 +47,11 @@ dependencies:
   - r-future
   - r-future.apply
   - r-progress
+  - r-optparse     # CLI arg parsing (nextflow/bin/*_cli.R, scripts/umap_from_flowjo.R)
   
   # Bioconductor Packages (bioconductor- prefix)
   - bioconductor-opencyto
+  - bioconductor-cytoml      # FlowJo .wsp parsing (open_flowjo_xml, flowjo_to_gatingset)
   - bioconductor-flowcore
   - bioconductor-flowai
   - bioconductor-peacoqc

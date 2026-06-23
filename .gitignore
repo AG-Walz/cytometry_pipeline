@@ -110,3 +110,4 @@ compare_scripts.py
 !metadata_qc/**/*.R
 !pipelines/**/*.R
 !config/**/*.R
+.claude/settings.local.json
