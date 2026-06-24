@@ -49,9 +49,10 @@ Rscript pipelines/pipeline_A_raw_fcs.R --config config/pipeline_A_config.R
 
 ### UMAP from a FlowJo workspace
 
-To go straight from a FlowJo `.wsp` + raw FCS files to a UMAP coloured by every
-marker, see the [UMAP from a FlowJo Population](docs/scripts/umap-from-flowjo.md)
-guide. After [setting up the environment](#setup):
+To go straight from a FlowJo `.wsp` + raw FCS files to a shared UMAP coloured by
+sample, by FlowJo subgate, and by every marker, see the
+[UMAP from a FlowJo Population](docs/scripts/umap-from-flowjo.md) guide. After
+[setting up the environment](#setup):
 
 ```bash
 conda activate cytometry_env
@@ -89,7 +90,7 @@ Rscript pipelines/pipeline_X_name.R --config config/pipeline_X_config.R
 | [Configuration Guide](docs/configuration.md) | Writing config files, parameter reference |
 | [File Formats](docs/file-formats.md) | Input and output file format specifications |
 | [Standalone Scripts](docs/standalone-scripts.md) | Using individual scripts outside pipelines |
-| [UMAP from a FlowJo Population](docs/scripts/umap-from-flowjo.md) | Extract a gated population from a `.wsp` + FCS, build a shared UMAP, colour by every marker (conjoint + per file) |
+| [UMAP from a FlowJo Population](docs/scripts/umap-from-flowjo.md) | Extract a gated population from a `.wsp` + FCS, build a shared UMAP, colour by sample, FlowJo subgate, and every marker (conjoint + per file) |
 | [R_shared API Reference](docs/r-shared-reference.md) | Shared utility library (8 modules, 50+ functions) |
 | [Composability Guide](docs/composability-guide.md) | Cross-pipeline data flow, format contracts, example workflows |
 | [Methods Guide](docs/methods-guide.md) | Decision flowcharts and 19 deep-dive pages with peer-reviewed references |

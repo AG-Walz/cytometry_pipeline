@@ -4,6 +4,50 @@
 # Deduplicated from: Functions.R, visualization_functions.R
 # =============================================================================
 
+# -----------------------------------------------------------------------------
+# Font workaround.
+#
+# On some conda envs `systemfonts::match_fonts()` resolves EVERY family
+# (including the device default) to a stray decorative web-font, so all plot
+# text renders as empty boxes ("tofu"). To stay robust we resolve a real
+# sans-serif font FILE from the systemfonts catalogue (which is reliable) and
+# register it under a fixed family name, then stamp that family onto each plot
+# before saving. Cached so the lookup runs at most once per session.
+# -----------------------------------------------------------------------------
+.plot_font_family <- local({
+  resolved <- NULL  # NULL = not yet attempted; "" = attempted, unavailable
+  function() {
+    if (!is.null(resolved)) return(resolved)
+    resolved <<- ""  # pessimistic default; overwritten on success
+    if (!requireNamespace("systemfonts", quietly = TRUE)) return(resolved)
+    fonts <- tryCatch(systemfonts::system_fonts(), error = function(e) NULL)
+    if (is.null(fonts) || !nrow(fonts)) return(resolved)
+    prefs <- c("DejaVu Sans", "Liberation Sans", "Arimo", "Noto Sans",
+               "Ubuntu", "FreeSans")
+    pick <- function(sub, want_bold, want_italic) {
+      is_bold <- grepl("Bold", sub$style, ignore.case = TRUE)
+      is_ital <- grepl("Italic|Oblique", sub$style, ignore.case = TRUE)
+      hit <- sub$path[is_bold == want_bold & is_ital == want_italic]
+      if (length(hit)) hit[1] else NA_character_
+    }
+    for (fam in prefs) {
+      sub <- fonts[fonts$family == fam, , drop = FALSE]
+      if (!nrow(sub)) next
+      plain <- pick(sub, FALSE, FALSE)
+      if (is.na(plain)) plain <- sub$path[1]
+      bold <- pick(sub, TRUE, FALSE);  if (is.na(bold)) bold <- plain
+      ital <- pick(sub, FALSE, TRUE);  if (is.na(ital)) ital <- plain
+      ok <- tryCatch({
+        systemfonts::register_font(name = "plotsans", plain = plain,
+                                   bold = bold, italic = ital)
+        TRUE
+      }, error = function(e) FALSE)
+      if (ok) { resolved <<- "plotsans"; break }
+    }
+    resolved
+  }
+})
+
 #' Save a ggplot in multiple formats
 #' @param plot ggplot object
 #' @param filename_base Base filename (without extension)
@@ -16,10 +60,36 @@ save_plot_formats <- function(plot, filename_base,
                               width = 14, height = 10,
                               formats = list(pdf = TRUE, png = TRUE, svg = TRUE),
                               png_dpi = 200) {
+  # Stamp a known-good font family on the plot so text does not render as boxes
+  # (see .plot_font_family). No-op when no usable font could be registered.
+  fam <- .plot_font_family()
+  if (nzchar(fam) && inherits(plot, "ggplot")) {
+    plot <- plot + ggplot2::theme(text = ggplot2::element_text(family = fam))
+  }
+  # Prefer the ragg PNG device: it honours the registered font and gives a
+  # solid (non-transparent) raster. Fall back to grDevices "png" if absent.
+  png_device <- if (requireNamespace("ragg", quietly = TRUE)) {
+    ragg::agg_png
+  } else {
+    "png"
+  }
+  # ggplot2's "svg" device is svglite, which (like ragg) resolves fonts through
+  # systemfonts and so honours the registered family. Resolve it only when SVG
+  # is actually requested, and fail loudly if it is missing rather than emitting
+  # boxes via another device.
+  svg_device <- NULL
+  if (isTRUE(formats$svg)) {
+    if (!requireNamespace("svglite", quietly = TRUE)) {
+      stop("Package 'svglite' is required to write SVG plots. Install ",
+           "r-svglite or request a different output format.")
+    }
+    svg_device <- svglite::svglite
+  }
   format_configs <- list(
     pdf = list(ext = ".pdf", device = "pdf", extra_args = list()),
-    png = list(ext = ".png", device = "png", extra_args = list(dpi = png_dpi)),
-    svg = list(ext = ".svg", device = "svg", extra_args = list())
+    png = list(ext = ".png", device = png_device,
+               extra_args = list(dpi = png_dpi)),
+    svg = list(ext = ".svg", device = svg_device, extra_args = list())
   )
   formats_saved <- c()
   for (format_name in names(formats)) {
@@ -28,7 +98,7 @@ save_plot_formats <- function(plot, filename_base,
       args <- c(
         list(filename = paste0(filename_base, config$ext),
              plot = plot, width = width, height = height,
-             device = config$device),
+             device = config$device, bg = "white"),
         config$extra_args
       )
       do.call(ggplot2::ggsave, args)

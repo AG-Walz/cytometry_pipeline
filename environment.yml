@@ -48,7 +48,10 @@ dependencies:
   - r-future.apply
   - r-progress
   - r-optparse     # CLI arg parsing (nextflow/bin/*_cli.R, scripts/umap_from_flowjo.R)
-  
+  - r-ragg         # PNG device with reliable font rendering (save_plot_formats)
+  - r-svglite      # SVG device that honours the registered font (save_plot_formats)
+  - r-systemfonts  # Font discovery/registration for the ragg/svglite devices
+
   # Bioconductor Packages (bioconductor- prefix)
   - bioconductor-opencyto
   - bioconductor-cytoml      # FlowJo .wsp parsing (open_flowjo_xml, flowjo_to_gatingset)
