@@ -1,34 +1,6 @@
 #!/usr/bin/env Rscript
-# =============================================================================
-# scripts/umap_from_flowjo.R — CLI wrapper for the FlowJo-population UMAP
-# =============================================================================
-# Thin standalone wrapper (no Nextflow). Parses CLI options, locates the repo
-# 'src' directory, sources the R_shared utilities and the analysis module
-# (src/visualization/umap_from_flowjo.R), and calls umap_from_flowjo(). All of
-# the analysis/plotting logic lives in that shared module — keep this file thin.
-#
-# Example:
-#   Rscript scripts/umap_from_flowjo.R \
-#     --wsp data/Killing_AML.wsp --fcs_dir data \
-#     --population "Lymphocytes/Single Cells/Viable cells" \
-#     --output_dir results/umap_viable
-#
-#   # List the gating tree, then exit (so you can pick a population):
-#   Rscript scripts/umap_from_flowjo.R --wsp data/Killing_AML.wsp \
-#     --fcs_dir data --list_populations
-# =============================================================================
+library(optparse)
 
-suppressPackageStartupMessages({
-  library(optparse)
-})
-
-# -----------------------------------------------------------------------------
-# CLI options
-#
-# Defaults for --wsp / --fcs_dir / --population point at the known on-disk data
-# (data/Killing_AML.wsp, data/, and the target "Viable cells" population), so a
-# bare `Rscript scripts/umap_from_flowjo.R` targets the intended analysis.
-# -----------------------------------------------------------------------------
 option_list <- list(
   make_option("--wsp", type = "character", default = "data/Killing_AML.wsp",
               help = "Path to the FlowJo .wsp workspace file [default %default]"),
@@ -98,10 +70,7 @@ option_list <- list(
   make_option("--plot_width", type = "double", default = 10,
               help = "Plot width (inches) [default %default]"),
   make_option("--plot_height", type = "double", default = 8,
-              help = "Plot height (inches) [default %default]"),
-  make_option("--src_dir", type = "character", default = NULL,
-              help = paste0("Path to the repo 'src' directory. Default: ",
-                            "auto-detected relative to this script."))
+              help = "Plot height (inches) [default %default]")
 )
 
 opt <- parse_args(OptionParser(
@@ -111,47 +80,8 @@ opt <- parse_args(OptionParser(
     "samples and plot it by sample, by subpopulation, and by every marker.\n")
 ))
 
-# -----------------------------------------------------------------------------
-# Locate the repo 'src' dir, set the shared_dir/src_dir globals (CLI convention),
-# and source the shared utilities + analysis module in dependency order.
-# -----------------------------------------------------------------------------
-find_script_path <- function() {
-  # Works under Rscript (--file=) and source().
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) == 1) {
-    return(normalizePath(sub("^--file=", "", file_arg), mustWork = FALSE))
-  }
-  if (!is.null(sys.function(1)) && !is.null(attr(body(sys.function(1)), "srcfile"))) {
-    sf <- attr(body(sys.function(1)), "srcfile")
-    if (!is.null(sf$filename)) return(normalizePath(sf$filename, mustWork = FALSE))
-  }
-  NA_character_
-}
-
-resolve_src_dir <- function(user_src) {
-  if (!is.null(user_src)) {
-    sd <- normalizePath(user_src, mustWork = FALSE)
-    if (!dir.exists(sd)) stop("--src_dir does not exist: ", sd)
-    return(sd)
-  }
-  sp <- find_script_path()
-  if (!is.na(sp)) {
-    # script is repo/scripts/umap_from_flowjo.R -> repo/src
-    cand <- file.path(dirname(dirname(sp)), "src")
-    if (dir.exists(cand)) return(normalizePath(cand))
-  }
-  # Fallback: relative to current working directory (repo root).
-  cand <- file.path(getwd(), "src")
-  if (dir.exists(cand)) return(normalizePath(cand))
-  stop("Could not locate the 'src' directory. Pass --src_dir explicitly.")
-}
-
-src_dir    <<- resolve_src_dir(opt$src_dir)
+src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
-if (!dir.exists(shared_dir)) {
-  stop("R_shared directory not found at: ", shared_dir)
-}
 
 source(file.path(shared_dir, "io_utils.R"))        # make_outdir
 source(file.path(shared_dir, "plot_utils.R"))      # save_plot_formats, create_safe_filename
@@ -159,10 +89,6 @@ source(file.path(shared_dir, "stats_utils.R"))     # run_umap
 source(file.path(shared_dir, "flowframe_utils.R")) # explore_data
 source(file.path(src_dir, "visualization", "umap_from_flowjo.R"))  # umap_from_flowjo
 
-# -----------------------------------------------------------------------------
-# Parse the comma-separated CLI strings into the structured values the analysis
-# module expects, then hand off. All analysis/plotting logic lives in the module.
-# -----------------------------------------------------------------------------
 split_csv <- function(s) {
   if (is.null(s)) return(NULL)
   v <- trimws(strsplit(s, ",")[[1]])
@@ -198,3 +124,4 @@ umap_from_flowjo(
   output_formats   = parse_formats(opt$output_formats),
   list_populations = opt$list_populations
 )
+cat("FlowJo UMAP plots ->", opt$output_dir, "\n")

@@ -2,11 +2,6 @@
 # Cytometry Pipeline .gitignore
 # =============================================================================
 
-# ======================== CLAUDE / AI FILES =================================
-CLAUDE.md
-**/CLAUDE.md
-.claude/
-
 # ======================== R-SPECIFIC IGNORES ================================
 .Rhistory
 .RData
@@ -110,4 +105,9 @@ compare_scripts.py
 !metadata_qc/**/*.R
 !pipelines/**/*.R
 !config/**/*.R
-.claude/settings.local.json
+
+
+# ======================== CLAUDE / AI FILES =================================
+CLAUDE.md
+**/CLAUDE.md
+.claude/

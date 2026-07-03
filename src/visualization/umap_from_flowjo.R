@@ -18,7 +18,7 @@
 # give the legend its own space instead.
 #
 # This file holds only function definitions (no top-level side effects). The
-# caller (scripts/umap_from_flowjo.R, or a CLI wrapper) is responsible for
+# caller (nextflow/bin/umap_from_flowjo_cli.R) is responsible for
 # sourcing the R_shared utilities it relies on — run_umap (stats_utils.R),
 # save_plot_formats + create_safe_filename (plot_utils.R), make_outdir
 # (io_utils.R), explore_data (flowframe_utils.R) — before calling

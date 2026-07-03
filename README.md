@@ -56,10 +56,11 @@ sample, by FlowJo subgate, and by every marker, see the
 
 ```bash
 conda activate cytometry_env
+export CYTOMETRY_SRC="$PWD/src"   # tell the CLI wrapper where src/ lives
 # List the gating tree, then pick a population:
-Rscript scripts/umap_from_flowjo.R --wsp data/Killing_AML.wsp --fcs_dir data --list_populations
+Rscript nextflow/bin/umap_from_flowjo_cli.R --wsp data/Killing_AML.wsp --fcs_dir data --list_populations
 # Build the UMAP for one population:
-Rscript scripts/umap_from_flowjo.R --population "Lymphocytes/Single Cells/Viable cells" --output_dir results/umap_viable
+Rscript nextflow/bin/umap_from_flowjo_cli.R --population "Lymphocytes/Single Cells/Viable cells" --output_dir results/umap_viable
 ```
 
 ---

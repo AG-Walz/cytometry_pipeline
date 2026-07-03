@@ -2,12 +2,13 @@
 
 # UMAP from a FlowJo Workspace Population
 
-`scripts/umap_from_flowjo.R` turns a FlowJo workspace plus its raw FCS files into
-a single shared UMAP, coloured by sample, by **FlowJo subgate**, and by every
-marker.
+`nextflow/bin/umap_from_flowjo_cli.R` turns a FlowJo workspace plus its raw FCS
+files into a single shared UMAP, coloured by sample, by **FlowJo subgate**, and
+by every marker.
 
-The script itself is a thin CLI wrapper: it parses options, locates the repo,
-and calls **`umap_from_flowjo()`** in
+The script itself is a thin CLI wrapper: it parses options, reads the repo `src`
+location from the `CYTOMETRY_SRC` environment variable, and calls
+**`umap_from_flowjo()`** in
 [`src/visualization/umap_from_flowjo.R`](../../src/visualization/umap_from_flowjo.R),
 where all the analysis and plotting logic lives. See
 [Calling it from R](#calling-it-from-r) to use that function directly.
@@ -64,12 +65,19 @@ conda activate cytometry_env
 
 ## Usage
 
-Always run from the repository root with the environment activated.
+Always run from the repository root with the environment activated. The CLI
+wrapper lives in `nextflow/bin/` and locates the shared R code via the
+`CYTOMETRY_SRC` environment variable — point it at this repo's `src/` once per
+shell:
+
+```bash
+export CYTOMETRY_SRC="$PWD/src"
+```
 
 **1. List the gating tree so you can pick a population:**
 
 ```bash
-Rscript scripts/umap_from_flowjo.R \
+Rscript nextflow/bin/umap_from_flowjo_cli.R \
   --wsp data/Killing_AML.wsp \
   --fcs_dir data \
   --list_populations
@@ -81,7 +89,7 @@ This prints every population path in the workspace and exits.
 the `Lymphocytes/Single Cells/Viable cells` population):
 
 ```bash
-Rscript scripts/umap_from_flowjo.R \
+Rscript nextflow/bin/umap_from_flowjo_cli.R \
   --wsp data/Killing_AML.wsp \
   --fcs_dir data \
   --population "Lymphocytes/Single Cells/Viable cells" \
@@ -95,17 +103,17 @@ A leading `/` on `--population` is optional, and a unique suffix
 
 ```bash
 # Restrict to / reorder a subset of markers (must be common to both files)
-Rscript scripts/umap_from_flowjo.R --markers "CD3,CD4,CD8,CD19" \
+Rscript nextflow/bin/umap_from_flowjo_cli.R --markers "CD3,CD4,CD8,CD19" \
   --output_dir results/umap_tcells
 
 # Colour the subpopulation plot by the CD4+/CD8+ lineage split only
-Rscript scripts/umap_from_flowjo.R --subpop_mode cd4cd8
+Rscript nextflow/bin/umap_from_flowjo_cli.R --subpop_mode cd4cd8
 
 # Cap cells per sample AFTER gating (faster UMAP on large populations)
-Rscript scripts/umap_from_flowjo.R --downsample 20000
+Rscript nextflow/bin/umap_from_flowjo_cli.R --downsample 20000
 
 # z-score each marker before the UMAP, also emit PDF + PNG
-Rscript scripts/umap_from_flowjo.R --normalize zscore \
+Rscript nextflow/bin/umap_from_flowjo_cli.R --normalize zscore \
   --output_formats png,pdf,svg --n_neighbors 30 --min_dist 0.3
 ```
 
@@ -143,7 +151,7 @@ legend reports the cell count per label.
 the bare gate name:
 
 ```bash
-Rscript scripts/umap_from_flowjo.R --subpop_select \
+Rscript nextflow/bin/umap_from_flowjo_cli.R --subpop_select \
   "CD107a+IFNg+IL2+TNF+,CD107a+IFNg+IL2+TNF-,...,CD107a-IFNg-IL2-TNF-"
 ```
 
@@ -183,7 +191,7 @@ Rscript scripts/umap_from_flowjo.R --subpop_select \
 | `--plot_height` | `8` | Plot height (inches) |
 | `--src_dir` | auto | Path to the repo `src` directory (auto-detected from the script location) |
 
-Run `Rscript scripts/umap_from_flowjo.R --help` for the same list at the
+Run `Rscript nextflow/bin/umap_from_flowjo_cli.R --help` for the same list at the
 command line.
 
 ---
