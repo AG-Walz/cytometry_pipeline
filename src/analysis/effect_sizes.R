@@ -7,7 +7,26 @@
 # intervals and standard interpretations.
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 
 #' Compute effect sizes for marker expression between conditions
@@ -296,18 +315,4 @@ run_effect_sizes <- function(input_csv,
   if (abs_delta < 0.33) return("small")
   if (abs_delta < 0.474) return("medium")
   return("large")
-}
-
-# --- CLI execution ---
-if (sys.nframe() == 0) {
-  args <- commandArgs(trailingOnly = TRUE)
-  if (length(args) < 2) {
-    cat("Usage: Rscript effect_sizes.R <input_csv> <output_dir> [condition_col]\n")
-    quit(status = 1)
-  }
-  run_effect_sizes(
-    input_csv = args[1],
-    output_dir = args[2],
-    condition_col = if (length(args) >= 3) args[3] else "condition"
-  )
 }

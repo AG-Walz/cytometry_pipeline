@@ -1,11 +1,30 @@
 library(testthat)
 
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
 # ---------------------------------------------------------------------------
 # Helpers: resolve shared and metadata_qc source directories
 # ---------------------------------------------------------------------------
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
-mqc_dir    <- file.path(dirname(getwd()), "src", "metadata_qc")
-test_data  <- file.path(dirname(getwd()), "test_data")
+shared_dir <- cyto_shared_dir()
+mqc_dir    <- file.path(cyto_src_root(), "metadata_qc")
+test_data  <- file.path(cyto_repo_root(), "test_data")
 
 # Source shared utilities
 source(file.path(shared_dir, "io_utils.R"))

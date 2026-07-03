@@ -7,7 +7,25 @@
 # median and optimal (maxstat) cutpoints for dichotomizing abundance.
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "plot_utils.R"))
 
@@ -314,23 +332,4 @@ run_survival_analysis <- function(abundance_matrix,
                     width = 12, height = max(6, nrow(plot_data) * 0.4))
   cat("Forest plot saved to:", output_dir, "\n")
   invisible(p)
-}
-
-# --- CLI execution ---
-if (sys.nframe() == 0) {
-  args <- commandArgs(trailingOnly = TRUE)
-  if (length(args) < 3) {
-    cat("Usage: Rscript survival_analysis.R <abundance_csv> <clinical_csv> <output_dir> [method] [split_method]\n")
-    quit(status = 1)
-  }
-
-  require(data.table)
-  abundance <- as.data.frame(fread(args[1]))
-  run_survival_analysis(
-    abundance_matrix = abundance,
-    clinical_csv = args[2],
-    output_dir = args[3],
-    method = if (length(args) >= 4) args[4] else "both",
-    split_method = if (length(args) >= 5) args[5] else "median"
-  )
 }

@@ -5,7 +5,25 @@
 # Refactored from: R_scripts/05_analysis/Compare_gatings.R
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "cluster_utils.R"))
 
@@ -30,12 +48,16 @@ compare_gatings <- function(pop_strings_list, target_fcs, label_dict,
 
   # Source visualization functions using shared_dir pattern
   if (!exists("shared_dir")) {
-    shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+    shared_dir <- cyto_shared_dir()
   }
   viz_dir <- file.path(dirname(shared_dir), "visualization")
   source(file.path(viz_dir, "venn_diagrams.R"))
 
   make_outdir(output_dir)
+
+  # Workspace sample names are stored as basenames (e.g. "sample.fcs_<id>"),
+  # so match on the basename whether a full path or a bare filename was given.
+  target_fcs <- basename(target_fcs)
 
   # Check target FCS presence in all workspaces
   missing <- sapply(pop_strings_list, function(x) {
@@ -105,9 +127,12 @@ compare_gatings <- function(pop_strings_list, target_fcs, label_dict,
   for (population in unique_pops) {
     if (is.na(population) || population == "") next
     cat("Plotting:", population, "\n")
+    # Population names are gating paths (e.g. "/Lymphocytes/Single Cells");
+    # strip path separators so they don't create bogus sub-directories on save.
+    safe_pop <- gsub("[/\\\\]", "_", population)
     plot_and_save_venn(
       lists = label_lists, population = population,
-      filename = paste0("subsetted ", population, "_", target_fcs),
+      filename = paste0("subsetted ", safe_pop, "_", target_fcs),
       output_dir = output_dir, scale_size = scale_size,
       custom_name = custom_name
     )

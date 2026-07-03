@@ -6,16 +6,35 @@
 # Refactored from: R_scripts/02_preprocessing/Preprocess.R
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+shared_dir <- cyto_shared_dir()
 tryCatch(source(file.path(shared_dir, "io_utils.R")),
          error = function(e) stop("Failed to load io_utils: ", e$message))
 tryCatch(source(file.path(shared_dir, "flowframe_utils.R")),
          error = function(e) stop("Failed to load flowframe_utils: ", e$message))
-tryCatch(source(file.path(dirname(getwd()), "src", "preprocessing", "quality_control.R")),
+tryCatch(source(file.path(cyto_src_root(), "preprocessing", "quality_control.R")),
          error = function(e) stop("Failed to load quality_control module: ", e$message))
-tryCatch(source(file.path(dirname(getwd()), "src", "preprocessing", "transformation.R")),
+tryCatch(source(file.path(cyto_src_root(), "preprocessing", "transformation.R")),
          error = function(e) stop("Failed to load transformation module: ", e$message))
-tryCatch(source(file.path(dirname(getwd()), "src", "preprocessing", "normalization.R")),
+tryCatch(source(file.path(cyto_src_root(), "preprocessing", "normalization.R")),
          error = function(e) stop("Failed to load normalization module: ", e$message))
 
 #' Run the full preprocessing pipeline on a list of flowFrames

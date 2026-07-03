@@ -11,6 +11,25 @@
 #                        sample_labels = labels, params = list(perplexity = 30))
 # =============================================================================
 
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
 # %||% polyfill for R < 4.0
 if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -43,7 +62,7 @@ run_dimred <- function(expr_matrix, method = "umap",
   if (exists("shared_dir")) {
     viz_dir <- file.path(dirname(shared_dir), "visualization")
   } else {
-    viz_dir <- file.path(dirname(getwd()), "src", "visualization")
+    viz_dir <- file.path(cyto_src_root(), "visualization")
   }
 
   # Common output format params

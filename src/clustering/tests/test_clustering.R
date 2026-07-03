@@ -1,21 +1,30 @@
 library(testthat)
 
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
 # ---------------------------------------------------------------------------
 # Helper: resolve paths relative to the project root so tests work both
 # when run via testthat::test_dir() and from the repo root.
 # ---------------------------------------------------------------------------
 find_shared_dir <- function() {
-  # When run via testthat::test_dir("tests/"), getwd() is the tests/ dir.
-  # Walk up until we find src/R_shared.
-  candidates <- c(
-    file.path(dirname(getwd()), "src", "R_shared"),
-    file.path(getwd(), "..", "..", "R_shared"),
-    file.path(getwd(), "..", "R_shared")
-  )
-  for (d in candidates) {
-    if (dir.exists(d)) return(normalizePath(d))
-  }
-  stop("Cannot locate src/R_shared from working directory: ", getwd())
+  cyto_shared_dir()
 }
 
 shared_dir  <- find_shared_dir()

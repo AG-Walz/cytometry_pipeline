@@ -7,7 +7,26 @@
 # or limma/LMM statistical frameworks.
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "flowframe_utils.R"))
 
@@ -295,13 +314,4 @@ run_diffcyt_and_save <- function(flow_frames,
     contrast[2] <- 1
   }
   contrast
-}
-
-# --- CLI execution ---
-if (sys.nframe() == 0) {
-  cat("diffcyt_analysis.R: This script is intended to be sourced and called\n")
-  cat("programmatically with flowFrame objects. See run_diffcyt() documentation.\n")
-  cat("\nExample usage:\n")
-  cat("  source('diffcyt_analysis.R')\n")
-  cat("  result <- run_diffcyt(flow_frames, experiment_info, markers)\n")
 }

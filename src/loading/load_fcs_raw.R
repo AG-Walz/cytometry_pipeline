@@ -5,8 +5,27 @@
 # Refactored from: R_scripts/01_loading/Load_raw.R + Load_fcs.R
 # =============================================================================
 
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
 # Source shared utilities
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "fcs_utils.R"))
 source(file.path(shared_dir, "flowframe_utils.R"))
@@ -81,19 +100,4 @@ load_fcs_raw <- function(input_dir,
     sample_names = sample_names,
     input_files = input_fcs_files
   )
-}
-
-# --- CLI execution ---
-if (sys.nframe() == 0) {
-  args <- commandArgs(trailingOnly = TRUE)
-  if (length(args) < 1) {
-    cat("Usage: Rscript load_fcs_raw.R <input_dir> [output_dir]\n")
-    quit(status = 1)
-  }
-  result <- load_fcs_raw(
-    input_dir = args[1],
-    output_dir = if (length(args) >= 2) args[2] else NULL,
-    extract_csv = length(args) >= 2
-  )
-  cat("\nLoaded", length(result$flow_frames), "FCS files successfully.\n")
 }
