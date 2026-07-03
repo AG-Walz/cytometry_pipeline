@@ -14,7 +14,7 @@ process COMPARE_GATINGS {
     script:
     def label_dict_str = params.label_dict ?: '{}'
     def names_arg = params.wsp_names ? "--custom_name '${params.wsp_names}'" : ""
-    def target_arg = params.target_fcs ? "--target_fcs ${params.target_fcs}" : ""
+    def target_arg = params.target_fcs ? "--target_fcs '${params.target_fcs}'" : ""
     """
     compare_gatings_cli.R \
         --pop_strings_rds ${pop_strings_rds} \

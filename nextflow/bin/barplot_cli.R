@@ -13,6 +13,7 @@ shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "plot_utils.R"))
 source(file.path(src_dir, "visualization", "barplots.R"))
+source(file.path(src_dir, "analysis", "cluster_splitting.R"))  # tracking_matrix_to_long()
 
 split_result <- readRDS(opt$split_result_rds)
 

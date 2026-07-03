@@ -17,11 +17,14 @@ source(file.path(shared_dir, "plot_utils.R"))
 source(file.path(src_dir, "visualization", "heatmaps.R"))
 
 data <- readRDS(opt$expr_rds)
-# Handle both raw matrix and expr_data list
+# Handle raw matrix, expr_data list, or a named list of per-sample tables
 if (is.list(data) && !is.null(data$combined_matrix)) {
   mat <- data$combined_matrix
+} else if (is.list(data) && !is.data.frame(data)) {
+  # named list of per-sample expression tables (e.g. from load_csv_expression)
+  mat <- do.call(rbind, lapply(data, as.matrix))
 } else {
-  mat <- data
+  mat <- as.matrix(data)
 }
 
 # Sample cells if needed

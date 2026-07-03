@@ -85,8 +85,12 @@ save_plot_formats <- function(plot, filename_base,
     }
     svg_device <- svglite::svglite
   }
+  # cairo_pdf (not grDevices "pdf") resolves fonts through fontconfig/systemfonts,
+  # so it honours the registered "plotsans" family. The base "pdf" device does
+  # not and raises "invalid font type" once a custom family is stamped on the plot.
+  pdf_device <- if (capabilities("cairo")) grDevices::cairo_pdf else "pdf"
   format_configs <- list(
-    pdf = list(ext = ".pdf", device = "pdf", extra_args = list()),
+    pdf = list(ext = ".pdf", device = pdf_device, extra_args = list()),
     png = list(ext = ".png", device = png_device,
                extra_args = list(dpi = png_dpi)),
     svg = list(ext = ".svg", device = svg_device, extra_args = list())

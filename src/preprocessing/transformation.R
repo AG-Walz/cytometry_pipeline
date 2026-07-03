@@ -18,6 +18,10 @@ transform_flowframe <- function(flowframe, sample_name,
                                 markers_of_interest,
                                 offset_list, width_list,
                                 transform_type = "arcsinh") {
+  # Default to per-marker standard parameters when not supplied
+  # (offset 0, width 5 -> arcsinh cofactor 5, the common flow-cytometry default)
+  if (is.null(offset_list)) offset_list <- rep(0, length(markers_of_interest))
+  if (is.null(width_list))  width_list  <- rep(5, length(markers_of_interest))
   if (length(markers_of_interest) != length(offset_list)) {
     stop("Marker and offset lists must have the same length.")
   }

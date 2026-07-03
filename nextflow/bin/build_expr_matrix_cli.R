@@ -9,6 +9,8 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+suppressPackageStartupMessages(library(flowCore))
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
