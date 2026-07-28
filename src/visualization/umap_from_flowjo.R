@@ -200,29 +200,23 @@ get_subpop_membership <- function(gh, viable_idx, subpop_paths) {
 }
 
 # -----------------------------------------------------------------------------
-# Extract one sample: returns list(mtx = cells x markers, subpop = per-cell
-# subgate label). Both are row-aligned to gh_pop_get_data(gh, population); the
-# subpop vector is built from the SAME population indices so it stays aligned
-# through downsampling and rbind.
+# Decide which columns of one flowFrame are biological markers.
 #
 # We use explore_data(ff)$markers (per-column marker names, "" when none) for
 # consistency with the rest of the repo. A channel is kept as a biological
 # marker only when it has a non-empty marker name AND its CHANNEL name does not
 # match the scatter/Time exclusion regex (applied to the CHANNEL name only, so a
 # legitimate antibody whose marker string contains "FSC"/"Time" is not dropped).
-# Kept columns are renamed to their MARKER name.
+#
+# Returns list(keep = logical per column, markers = per-column marker names,
+# dropped = human-readable "channel [marker]" strings for the excluded columns).
+# Shared by extract_population_sample() and gs_common_markers() so the marker set
+# reported by list_populations mode can never drift from the one a run uses.
 # -----------------------------------------------------------------------------
-extract_population_sample <- function(gh, population, subpop_paths, subpop_depths,
-                                      subpop_labels, assignment = "depth",
-                                      exclude_pattern = "Time|FSC|SSC|scatter") {
-  # NOTE: data is already compensated + transformed in the FlowJo working space.
-  # We take exprs() AS-IS, no further transform.
-  ff   <- flowWorkspace::gh_pop_get_data(gh, y = population)
-  expr <- flowCore::exprs(ff)
-  info <- explore_data(ff)          # dyes (channels), markers, mcols
-
-  channels <- colnames(expr)
-  markers  <- info$markers          # length == ncol(expr)
+marker_columns <- function(ff, exclude_pattern = "Time|FSC|SSC|scatter") {
+  info     <- explore_data(ff)      # dyes (channels), markers, mcols
+  channels <- colnames(flowCore::exprs(ff))
+  markers  <- info$markers          # length == number of columns
 
   keep <- vapply(seq_along(channels), function(i) {
     m <- markers[i]
@@ -232,14 +226,65 @@ extract_population_sample <- function(gh, population, subpop_paths, subpop_depth
     TRUE
   }, logical(1))
 
-  # Log excluded channels (channel + marker) so a wrongly-dropped biological
-  # channel is visible to the user.
-  if (any(!keep)) {
-    dropped <- vapply(which(!keep), function(i) {
+  dropped <- if (any(!keep)) {
+    vapply(which(!keep), function(i) {
       sprintf("%s [%s]", channels[i],
               if (is.na(markers[i]) || markers[i] == "") "<no marker>" else markers[i])
     }, character(1))
-    cat("    excluded channels:", paste(dropped, collapse = ", "), "\n")
+  } else {
+    character(0)
+  }
+
+  list(keep = keep, markers = markers, dropped = dropped)
+}
+
+# -----------------------------------------------------------------------------
+# Marker names common to ALL samples of a GatingSet, evaluated at the ROOT node.
+# Markers are a property of the channels, not of a gate, so this is the same set
+# a run would end up with — it just does not require a population to be chosen
+# yet. Order follows the first sample (deterministic), matching the run path.
+# Used by list_populations mode so a caller (e.g. the Dash app) can offer a
+# marker picker from a single workspace load.
+# -----------------------------------------------------------------------------
+gs_common_markers <- function(gs, sample_names,
+                              exclude_pattern = "Time|FSC|SSC|scatter") {
+  per_sample <- lapply(sample_names, function(s) {
+    # ff[0, ] keeps the parameter metadata (channel and marker names) while
+    # dropping every event. marker_columns() reads only that metadata, but it
+    # goes through explore_data(), which materialises exprs() once per column —
+    # affordable on a gated population, wasteful on a whole file at the root.
+    ff  <- flowWorkspace::gh_pop_get_data(gs[[s]], y = "root")[0, ]
+    sel <- marker_columns(ff, exclude_pattern)
+    sel$markers[sel$keep]
+  })
+  if (length(per_sample) == 0) return(character(0))
+  common <- Reduce(intersect, per_sample)
+  # Preserve first-sample ordering for determinism (as the run path does).
+  per_sample[[1]][per_sample[[1]] %in% common]
+}
+
+# -----------------------------------------------------------------------------
+# Extract one sample: returns list(mtx = cells x markers, subpop = per-cell
+# subgate label). Both are row-aligned to gh_pop_get_data(gh, population); the
+# subpop vector is built from the SAME population indices so it stays aligned
+# through downsampling and rbind. Kept columns are renamed to their MARKER name.
+# -----------------------------------------------------------------------------
+extract_population_sample <- function(gh, population, subpop_paths, subpop_depths,
+                                      subpop_labels, assignment = "depth",
+                                      exclude_pattern = "Time|FSC|SSC|scatter") {
+  # NOTE: data is already compensated + transformed in the FlowJo working space.
+  # We take exprs() AS-IS, no further transform.
+  ff   <- flowWorkspace::gh_pop_get_data(gh, y = population)
+  expr <- flowCore::exprs(ff)
+
+  sel     <- marker_columns(ff, exclude_pattern)
+  keep    <- sel$keep
+  markers <- sel$markers
+
+  # Log excluded channels (channel + marker) so a wrongly-dropped biological
+  # channel is visible to the user.
+  if (length(sel$dropped) > 0) {
+    cat("    excluded channels:", paste(sel$dropped, collapse = ", "), "\n")
   }
 
   if (!any(keep)) {
@@ -428,14 +473,29 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
 
   all_pops <- flowWorkspace::gs_get_pop_paths(gs, path = "full")
 
-  # --- 2. list_populations mode: print the tree and return. ------------------
+  # --- 2. list_populations mode: print the tree + markers, then return. ------
+  # This is the "inspect" entry point: one workspace load reports everything a
+  # caller needs to configure a run (samples above, populations and the common
+  # marker panel here). The block headers below are a stable, parseable contract
+  # relied on by app/ (the Dash front-end) — change them and update that too.
   if (isTRUE(list_populations)) {
     cat("\nPopulation tree (", length(all_pops), " nodes):\n", sep = "")
     for (p in all_pops) cat("  ", p, "\n", sep = "")
+
+    # Markers are a channel property, so they are evaluated at the root node and
+    # do not depend on which population is eventually selected.
+    common_markers <- gs_common_markers(gs, sample_names)
+    cat("\nCommon markers (", length(common_markers), "):\n", sep = "")
+    for (m in common_markers) cat("  ", m, "\n", sep = "")
+    if (length(common_markers) == 0) {
+      cat("  (no marker common to all samples — check the panel / group)\n")
+    }
+
     cat("\nSelect one with population = (leading '/' optional), e.g.:\n")
     cat("  population = \"", sub("^/", "", all_pops[length(all_pops)]),
         "\"\n", sep = "")
-    return(invisible(all_pops))
+    return(invisible(list(populations = all_pops, samples = sample_names,
+                          markers = common_markers)))
   }
 
   if (is.null(population) || !nzchar(population)) {
