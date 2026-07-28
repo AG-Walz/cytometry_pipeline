@@ -4,6 +4,7 @@ File names come from ``create_safe_filename()`` on the R side, which composes
 them as::
 
     umap_<pop>_by_file.<ext>
+    umap_<pop>_by_workspace.<ext>          (only when >1 workspace was loaded)
     umap_<pop>_by_subpopulation.<ext>
     umap_<pop>_marker_<M>_ALL.<ext>
     umap_<pop>_marker_<M>_file_<sample>.<ext>
@@ -86,6 +87,8 @@ def _classify(stem: str) -> tuple[str, str, str, str]:
     """Map a file stem to ``(section, marker, sample, title)``."""
     if stem.endswith("_by_file"):
         return "overview", "", "", "Coloured by source file"
+    if stem.endswith("_by_workspace"):
+        return "overview", "", "", "Coloured by FlowJo workspace"
     if stem.endswith("_by_subpopulation"):
         return "overview", "", "", "Coloured by FlowJo subpopulation"
 
@@ -157,8 +160,17 @@ def scan(output_dir: str | os.PathLike) -> Results:
         samples.update(per_sample)
     results.samples = sorted(samples)
 
-    # "by_file" before "by_subpopulation" reads more naturally than alphabetical.
-    results.overview.sort(key=lambda p: 0 if p.key.endswith("_by_file") else 1)
+    # Sample, then workspace, then subpopulation reads more naturally than
+    # alphabetical — it goes from the finest grouping to the coarsest.
+    _overview_order = ("_by_file", "_by_workspace", "_by_subpopulation")
+
+    def _overview_rank(plot: Plot) -> int:
+        for i, suffix in enumerate(_overview_order):
+            if plot.key.endswith(suffix):
+                return i
+        return len(_overview_order)
+
+    results.overview.sort(key=_overview_rank)
     return results
 
 

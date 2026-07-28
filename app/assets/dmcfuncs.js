@@ -49,13 +49,17 @@ dmcfuncs.fsNode = function (payload) {
     }
 
     function iconFor() {
-        if (isSentinel) return icon('tabler:dots');
         if (hasChildren) {
             return icon(expanded ? 'tabler:folder-open' : 'tabler:folder', '#f59f00');
         }
-        var lower = value.toLowerCase();
+        // "::info::" rows are real files listed inside a *directory* picker for
+        // orientation. They are sentinels (not selectable) but they still get a
+        // file icon, so the extension is read past the prefix.
+        var lower = value.toLowerCase().replace(/^::info::/, '');
+        if (isSentinel && lower === value.toLowerCase()) return icon('tabler:dots');
         if (lower.endsWith('.wsp')) return icon('tabler:file-analytics', '#4dabf7');
         if (lower.endsWith('.fcs')) return icon('tabler:file-analytics', '#69db7c');
+        if (isSentinel) return icon('tabler:dots');
         return icon('tabler:file', '#adb5bd');
     }
 

@@ -64,7 +64,7 @@ Each subproject reference documents every function in that module: its signature
 
 | Module | Scripts | Reference | What It Does |
 |--------|---------|-----------|--------------|
-| `src/loading/` | 6 scripts | [Loading Reference](subprojects/loading.md) | Load data from FCS files, CSV files, FlowJo workspaces, and manual gating exports |
+| `src/loading/` | 7 scripts | [Loading Reference](subprojects/loading.md) | Load data from FCS files, CSV files, FlowJo workspaces, and manual gating exports |
 | `src/preprocessing/` | 5 scripts | [Preprocessing Reference](subprojects/preprocessing.md) | Quality control (PeacoQC, flowAI), transformation (arcsinh, logicle), downsampling, normalization |
 | `src/harmonization/` | 3 scripts | [Harmonization Reference](subprojects/harmonization.md) | Compare marker panels across samples, unify to a common marker set, correct batch effects with Harmony |
 | `src/clustering/` | 3 scripts | [Clustering Reference](subprojects/clustering.md) | Leiden community detection on expression data, FlowJo gate import, unified cluster assignment interface |
@@ -120,7 +120,7 @@ cytometry/
 │       ├── analysis.md
 │       ├── visualization.md
 │       └── metadata-qc.md
-├── src/                      Source code (8 subprojects, 43 scripts)
+├── src/                      Source code (8 subprojects, 44 scripts)
 │   ├── R_shared/                 Shared utility library (8 modules)
 │   ├── loading/                  Data loaders (FCS, CSV, FlowJo WSP)
 │   ├── preprocessing/            QC, transformation, downsampling, normalization

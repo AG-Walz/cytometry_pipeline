@@ -1,0 +1,373 @@
+#!/usr/bin/env Rscript
+# =============================================================================
+# test_data/test_umap_multi_wsp.R — Multi-workspace discovery and pairing tests
+# =============================================================================
+# Covers the pure helpers behind "one UMAP over many FlowJo workspaces":
+# workspace discovery, the recursive FCS index, filename pairing, group
+# resolution, sample-label disambiguation, and subgate-candidate merging.
+#
+# These deliberately need NEITHER CytoML NOR any real .wsp/.fcs file — the
+# workspace reader is injected — so they run on any machine with base R, which
+# is the point: the parts that can be tested without the cytometry stack are.
+# What they cannot cover is CytoML's own behaviour; that needs a real workspace
+# on an analysis host.
+#
+# Run from the project root:
+#   Rscript test_data/test_umap_multi_wsp.R
+# =============================================================================
+
+cat("=== Multi-workspace FlowJo discovery tests ===\n\n")
+
+.ofile <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
+if (is.null(.ofile)) .ofile <- "test_data/test_umap_multi_wsp.R"
+base_dir <- normalizePath(file.path(dirname(.ofile), ".."))
+if (!dir.exists(file.path(base_dir, "src"))) base_dir <- getwd()
+
+source(file.path(base_dir, "src", "loading", "discover_flowjo_workspaces.R"))
+
+# umap_from_flowjo.R is sourced for the pure helpers only. It has no top-level
+# side effects and does not load CytoML at source time (only inside the main
+# function), so this is safe without the cytometry stack.
+source(file.path(base_dir, "src", "visualization", "umap_from_flowjo.R"))
+
+# --- tiny test harness -------------------------------------------------------
+.pass <- 0L
+.fail <- 0L
+
+ok <- function(label, cond) {
+  if (isTRUE(cond)) {
+    .pass <<- .pass + 1L
+    cat("  PASS  ", label, "\n", sep = "")
+  } else {
+    .fail <<- .fail + 1L
+    cat("  FAIL  ", label, "\n", sep = "")
+  }
+}
+
+eq <- function(label, actual, expected) {
+  same <- isTRUE(all.equal(actual, expected))
+  if (!same) {
+    cat("  FAIL  ", label, "\n",
+        "        expected: ", paste(format(expected), collapse = " | "), "\n",
+        "        actual:   ", paste(format(actual), collapse = " | "), "\n",
+        sep = "")
+    .fail <<- .fail + 1L
+  } else {
+    .pass <<- .pass + 1L
+    cat("  PASS  ", label, "\n", sep = "")
+  }
+}
+
+throws <- function(label, expr, pattern = NULL) {
+  msg <- tryCatch({ force(expr); NULL },
+                  error = function(e) conditionMessage(e))
+  if (is.null(msg)) {
+    ok(label, FALSE)
+  } else if (!is.null(pattern) && !grepl(pattern, msg, fixed = FALSE)) {
+    cat("  FAIL  ", label, "\n        message did not match '", pattern,
+        "':\n        ", msg, "\n", sep = "")
+    .fail <<- .fail + 1L
+  } else {
+    ok(label, TRUE)
+  }
+}
+
+# --- a fake data layout ------------------------------------------------------
+# Deliberately awkward: workspaces at two depths, two of them sharing a base
+# name, FCS files spread over nested subfolders, one duplicated file name, and
+# one workspace whose files are split across two directories.
+root <- file.path(tempdir(), paste0("multiwsp_", Sys.getpid()))
+unlink(root, recursive = TRUE)
+
+wsp_root <- file.path(root, "workspaces")
+fcs_root <- file.path(root, "fcs")
+
+mk <- function(...) dir.create(file.path(...), recursive = TRUE,
+                               showWarnings = FALSE)
+touch <- function(path) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  file.create(path)
+  invisible(path)
+}
+
+touch(file.path(wsp_root, "runA.wsp"))
+touch(file.path(wsp_root, "2025", "runB.wsp"))
+touch(file.path(wsp_root, "2025", "runC.wsp"))
+touch(file.path(wsp_root, "archive", "runC.wsp"))   # base-name collision
+touch(file.path(wsp_root, "notes.txt"))             # must be ignored
+
+touch(file.path(fcs_root, "2024", "runA", "Pool_001.fcs"))
+touch(file.path(fcs_root, "2024", "runA", "Pool_002.fcs"))
+touch(file.path(fcs_root, "2025", "Pool_003.fcs"))
+touch(file.path(fcs_root, "2025", "extra", "Pool_004.fcs"))
+touch(file.path(fcs_root, "dup", "left", "Shared.fcs"))
+touch(file.path(fcs_root, "dup", "right", "Shared.fcs"))  # ambiguous
+touch(file.path(fcs_root, "2024", "runA", "readme.md"))   # must be ignored
+
+on.exit(unlink(root, recursive = TRUE), add = TRUE)
+
+# --- find_workspace_files ----------------------------------------------------
+cat("\nfind_workspace_files()\n")
+
+found <- find_workspace_files(wsp_root)
+eq("finds every .wsp recursively", sort(basename(found)),
+   c("runA.wsp", "runB.wsp", "runC.wsp", "runC.wsp"))
+ok("returns them in a stable path order", !is.unsorted(found))
+ok("ignores non-.wsp files", !any(grepl("notes.txt", found)))
+
+single <- find_workspace_files(file.path(wsp_root, "runA.wsp"))
+eq("a single .wsp file still works", basename(single), "runA.wsp")
+
+throws("a non-.wsp file is rejected",
+       find_workspace_files(file.path(wsp_root, "notes.txt")),
+       "Not a .wsp file")
+throws("a missing path is rejected",
+       find_workspace_files(file.path(root, "nope")), "not found")
+mk(root, "empty")
+throws("a folder with no workspace is rejected",
+       find_workspace_files(file.path(root, "empty")), "No .wsp workspace")
+
+# --- workspace_labels --------------------------------------------------------
+cat("\nworkspace_labels()\n")
+
+eq("unique base names are left alone",
+   workspace_labels(c("/w/runA.wsp", "/w/2025/runB.wsp")),
+   c("runA", "runB"))
+eq("colliding base names are qualified by their parent folder",
+   workspace_labels(c("/w/2025/runC.wsp", "/w/archive/runC.wsp",
+                      "/w/runA.wsp")),
+   c("2025/runC", "archive/runC", "runA"))
+eq("a still-colliding label falls back to the full path",
+   workspace_labels(c("/a/x/runC.wsp", "/b/x/runC.wsp")),
+   c("/a/x/runC.wsp", "/b/x/runC.wsp"))
+eq("extension matching is case-insensitive",
+   workspace_labels("/w/runA.WSP"), "runA")
+
+# --- index_fcs_dir -----------------------------------------------------------
+cat("\nindex_fcs_dir()\n")
+
+idx <- index_fcs_dir(fcs_root)
+eq("indexes every .fcs by lower-cased name",
+   sort(names(idx)),
+   c("pool_001.fcs", "pool_002.fcs", "pool_003.fcs", "pool_004.fcs",
+     "shared.fcs"))
+eq("a duplicated name keeps both paths", length(idx[["shared.fcs"]]), 2L)
+ok("non-.fcs files are not indexed", is.null(idx[["readme.md"]]))
+ok("nested files are found",
+   grepl("2025/extra", idx[["pool_004.fcs"]][1], fixed = TRUE))
+throws("a folder with no FCS is rejected",
+       index_fcs_dir(file.path(root, "empty")), "No .fcs file")
+
+# --- resolve_fcs_names -------------------------------------------------------
+cat("\nresolve_fcs_names()\n")
+
+r <- resolve_fcs_names(c("Pool_001.fcs", "Pool_003.fcs"), idx)
+eq("resolves plain names to full paths", basename(r$file),
+   c("Pool_001.fcs", "Pool_003.fcs"))
+eq("pairs each file with its own directory", basename(dirname(r$file)),
+   c("runA", "2025"))
+ok("nothing missing", length(r$missing) == 0)
+ok("nothing ambiguous", length(r$ambiguous) == 0)
+
+eq("matches case-insensitively",
+   basename(resolve_fcs_names("POOL_001.FCS", idx)$file), "Pool_001.fcs")
+eq("matches a name with the extension omitted",
+   basename(resolve_fcs_names("Pool_002", idx)$file), "Pool_002.fcs")
+eq("matches a stored Windows path by its base name",
+   basename(resolve_fcs_names("C:\\\\Data\\\\Pool_003.fcs", idx)$file),
+   "Pool_003.fcs")
+
+r <- resolve_fcs_names(c("Pool_001.fcs", "Nope.fcs", "Shared.fcs"), idx)
+eq("reports the unmatched name", r$missing, "Nope.fcs")
+eq("reports the ambiguous name", names(r$ambiguous), "Shared.fcs")
+eq("lists every ambiguous candidate", length(r$ambiguous[["Shared.fcs"]]), 2L)
+ok("an unresolved slot stays NA", is.na(r$file[2]) && is.na(r$file[3]))
+ok("resolved slots survive alongside failures", !is.na(r$file[1]))
+
+# --- resolve_group -----------------------------------------------------------
+cat("\nresolve_group()\n")
+
+tbl <- data.frame(
+  index     = 1:3,
+  groupName = c("All Samples", "Controls", "Killing"),
+  n_samples = c(6L, 0L, 4L),
+  stringsAsFactors = FALSE
+)
+
+eq("an integer index still works (unchanged behaviour)",
+   resolve_group("1", tbl)$name, "All Samples")
+eq("a group name resolves to its index",
+   resolve_group("Killing", tbl)$index, 3L)
+eq("a name carries its sample count",
+   resolve_group("Killing", tbl)$n_samples, 4L)
+eq("surrounding whitespace is tolerated",
+   resolve_group("  Killing  ", tbl)$index, 3L)
+throws("an out-of-range index is rejected, listing the groups",
+       resolve_group("9", tbl), "out of range")
+throws("an unknown name is rejected, listing the groups",
+       resolve_group("Nonsense", tbl), "not a sample group")
+throws("an empty group is rejected", resolve_group("Controls", tbl), "is empty")
+throws("the workspace is named in the message",
+       resolve_group("Nonsense", tbl, where = "runB"), "workspace 'runB'")
+
+# --- resolve_workspace_specs (CytoML injected) -------------------------------
+cat("\nresolve_workspace_specs()\n")
+
+# Stand-in workspace reader: the "workspace" is just its path, the group table
+# is fixed, and the sample list is looked up per workspace.
+fake_samples <- list(
+  runA = c("Pool_001.fcs", "Pool_002.fcs"),
+  runB = c("Pool_003.fcs", "Pool_004.fcs"),   # split across two directories
+  runC = c("Pool_001.fcs", "Nope.fcs"),       # one missing
+  runD = c("Shared.fcs")                      # ambiguous
+)
+fake_open <- function(p) sub("\\.wsp$", "", basename(p))
+fake_read <- function(ws, idx) {
+  nm <- fake_samples[[ws]]
+  data.frame(sampleID = as.character(seq_along(nm)), name = nm,
+             stringsAsFactors = FALSE)
+}
+# wsp_group_table() is the one CytoML touch point left in the orchestration, so
+# it is stubbed for the duration of this block.
+.real_group_table <- wsp_group_table
+wsp_group_table <- function(ws) tbl
+
+paths  <- paste0("/w/", c("runA", "runB", "runC", "runD"), ".wsp")
+labels <- workspace_labels(paths)
+res <- resolve_workspace_specs(paths, labels, idx, "All Samples",
+                               open_ws = fake_open, read_samples = fake_read)
+
+eq("clean workspaces become specs", names(res$specs), c("runA", "runB"))
+eq("broken workspaces become problems", names(res$problems), c("runC", "runD"))
+eq("a spec resolves every file",
+   basename(res$specs$runA$files$file), c("Pool_001.fcs", "Pool_002.fcs"))
+eq("a spec records the single directory its files live in",
+   length(res$specs$runA$dirs), 1L)
+eq("a split workspace records both directories",
+   length(res$specs$runB$dirs), 2L)
+eq("the resolved group is carried on the spec",
+   res$specs$runA$group_name, "All Samples")
+eq("a missing file is recorded", res$problems$runC$missing, "Nope.fcs")
+eq("an ambiguous file is recorded", names(res$problems$runD$ambiguous),
+   "Shared.fcs")
+
+bad <- resolve_workspace_specs(paths[1], "runA", idx, "Controls",
+                               open_ws = fake_open, read_samples = fake_read)
+ok("a group error is captured, not thrown",
+   length(bad$specs) == 0 && grepl("is empty", bad$problems$runA$error))
+
+wsp_group_table <- .real_group_table
+
+# --- format_resolution_report ------------------------------------------------
+cat("\nformat_resolution_report()\n")
+
+eq("no problems means no message", format_resolution_report(list()), "")
+
+report <- format_resolution_report(res$problems, fcs_root = fcs_root)
+ok("names every failing workspace",
+   grepl("runC", report) && grepl("runD", report))
+ok("reports the missing file", grepl("missing:\\s+Nope.fcs", report))
+ok("reports every ambiguous candidate",
+   grepl("ambiguous", report) &&
+   length(grep("Shared.fcs", strsplit(report, "\n")[[1]])) >= 1 &&
+   length(grep("dup/(left|right)", strsplit(report, "\n")[[1]])) == 2)
+ok("says nothing was loaded", grepl("Nothing was loaded", report))
+ok("echoes the FCS root that was searched", grepl(fcs_root, report,
+                                                  fixed = TRUE))
+
+# --- disambiguate_sample_labels ----------------------------------------------
+cat("\ndisambiguate_sample_labels()\n")
+
+eq("unique names are left exactly as they are",
+   disambiguate_sample_labels(c("Pool_001", "Pool_002", "Pool_003"),
+                              c("runA", "runA", "runB")),
+   c("Pool_001", "Pool_002", "Pool_003"))
+eq("only the colliding names are qualified",
+   disambiguate_sample_labels(c("Pool_001", "Pool_002", "Pool_001"),
+                              c("runA", "runA", "runB")),
+   c("runA: Pool_001", "Pool_002", "runB: Pool_001"))
+eq("a single-workspace run is untouched",
+   disambiguate_sample_labels(c("A", "B"), c("runA", "runA")), c("A", "B"))
+eq("an empty run is handled",
+   disambiguate_sample_labels(character(0), character(0)), character(0))
+throws("mismatched lengths are caught",
+       disambiguate_sample_labels(c("A", "B"), "runA"))
+
+# --- population resolution ---------------------------------------------------
+cat("\ntry_resolve_population()\n")
+
+pops_a <- c("/Lymphocytes", "/Lymphocytes/Single Cells",
+            "/Lymphocytes/Single Cells/Viable cells",
+            "/Lymphocytes/Single Cells/Viable cells/CD4+")
+pops_b <- c("/Lymph", "/Lymph/Singlets", "/Lymph/Singlets/Viable cells")
+
+eq("an exact path resolves",
+   try_resolve_population("/Lymphocytes/Single Cells", pops_a)$path,
+   "/Lymphocytes/Single Cells")
+eq("a leading slash is optional",
+   try_resolve_population("Lymphocytes/Single Cells", pops_a)$path,
+   "/Lymphocytes/Single Cells")
+eq("a unique suffix resolves",
+   try_resolve_population("Viable cells", pops_a)$path,
+   "/Lymphocytes/Single Cells/Viable cells")
+eq("the same suffix resolves to a different absolute path elsewhere",
+   try_resolve_population("Viable cells", pops_b)$path,
+   "/Lymph/Singlets/Viable cells")
+ok("a missing population reports rather than throws",
+   !try_resolve_population("CD4+", pops_b)$ok)
+ok("a missing population explains itself",
+   grepl("not found", try_resolve_population("CD4+", pops_b)$reason))
+ok("an ambiguous population is reported",
+   grepl("ambiguous",
+         try_resolve_population("Cells", c("/A/Cells", "/B/Cells"))$reason))
+throws("resolve_population() still throws for its existing callers",
+       resolve_population("CD4+", pops_b), "not found")
+
+# --- merge_subgate_candidates ------------------------------------------------
+cat("\nmerge_subgate_candidates()\n")
+
+# Two workspaces whose population resolves to DIFFERENT absolute paths but
+# whose relative subgate labels overlap — the case the merge exists for.
+cand_a <- flowjo_subgate_candidates(
+  c("/Lymphocytes/Single Cells/Viable cells/CD4+",
+    "/Lymphocytes/Single Cells/Viable cells/CD8+",
+    "/Lymphocytes/Single Cells/Viable cells/CD4+/IFNg+"),
+  pops_a, "/Lymphocytes/Single Cells/Viable cells", mode = "furthest")
+cand_b <- flowjo_subgate_candidates(
+  c("/Lymph/Singlets/Viable cells/CD4+",
+    "/Lymph/Singlets/Viable cells/NK"),
+  pops_b, "/Lymph/Singlets/Viable cells", mode = "furthest")
+
+merged <- merge_subgate_candidates(list(runA = cand_a, runB = cand_b))
+eq("labels are the union, first-appearance ordered",
+   merged$labels, c("CD4+", "CD4+/IFNg+", "CD8+", "NK"))
+eq("depth comes from the relative label", merged$depths, c(1L, 2L, 1L, 1L))
+eq("each workspace keeps its own absolute paths, column-aligned",
+   merged$paths$runA,
+   c("/Lymphocytes/Single Cells/Viable cells/CD4+",
+     "/Lymphocytes/Single Cells/Viable cells/CD4+/IFNg+",
+     "/Lymphocytes/Single Cells/Viable cells/CD8+",
+     NA_character_))
+eq("a gate absent from a workspace becomes an NA column there",
+   merged$paths$runB,
+   c("/Lymph/Singlets/Viable cells/CD4+", NA_character_, NA_character_,
+     "/Lymph/Singlets/Viable cells/NK"))
+eq("the mode tag survives", merged$tag, "furthest")
+eq("an empty candidate set merges to nothing",
+   length(merge_subgate_candidates(list())$labels), 0L)
+
+# --- get_subpop_membership tolerates the NA columns --------------------------
+cat("\nget_subpop_membership() with absent gates\n")
+
+# gh is stubbed: this checks the column alignment contract, which is what the
+# NA paths above feed into, without needing flowWorkspace.
+fake_gh <- structure(list(), class = "fakeGatingHierarchy")
+membership <- get_subpop_membership(fake_gh, c(TRUE, TRUE, FALSE),
+                                    rep(NA_character_, 4))
+eq("all-absent gates give an all-FALSE matrix of the right shape",
+   dim(membership), c(2L, 4L))
+ok("and it really is all FALSE", !any(membership))
+
+# --- summary -----------------------------------------------------------------
+cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
+if (.fail > 0) quit(status = 1)

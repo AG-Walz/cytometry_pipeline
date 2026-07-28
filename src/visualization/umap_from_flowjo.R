@@ -2,15 +2,24 @@
 # =============================================================================
 # visualization/umap_from_flowjo.R — Shared UMAP from a FlowJo workspace population
 # =============================================================================
-# Core logic for the FlowJo-population UMAP analysis. Opens a FlowJo .wsp, builds
-# a GatingSet over a directory of FCS files, extracts the cells of ONE selected
-# population from each sample (data is already compensated + transformed in the
-# FlowJo working space, so NO further transform is applied), concatenates the
-# per-sample expression matrices, OPTIONALLY normalizes each marker using
-# statistics computed from those concatenated cells, computes a SINGLE shared
-# UMAP embedding, and plots that embedding coloured by sample, by the FlowJo
-# subgates found under the selected population (one colour per subgate; see
-# `subpop_mode`), and by every marker (conjoint + per-file).
+# Core logic for the FlowJo-population UMAP analysis. Opens ONE OR MANY FlowJo
+# .wsp workspaces, builds a GatingSet per workspace over the FCS files it
+# references, extracts the cells of ONE selected population from each sample
+# (data is already compensated + transformed in the FlowJo working space, so NO
+# further transform is applied), concatenates the per-sample expression
+# matrices, OPTIONALLY normalizes each marker using statistics computed from
+# those concatenated cells, computes a SINGLE shared UMAP embedding, and plots
+# that embedding coloured by sample, by workspace, by the FlowJo subgates found
+# under the selected population (one colour per subgate; see `subpop_mode`), and
+# by every marker (conjoint + per-file).
+#
+# Many workspaces go into ONE embedding, so their coordinates are comparable.
+# Workspace discovery and the pairing of each workspace to its FCS files live in
+# src/loading/discover_flowjo_workspaces.R; the two gating trees are reconciled
+# through the gate paths RELATIVE to the selected population, which is the only
+# key comparable across workspaces that name their ancestors differently.
+# NOTHING here corrects for batch effects between workspaces (see
+# src/harmonization/); the by-workspace plot is what makes them visible.
 #
 # Every plot uses an EQUAL-ASPECT coordinate system (coord_fixed, ratio = 1), so
 # the embedding is never geometrically distorted and a wide legend (e.g. long
@@ -25,9 +34,13 @@
 # umap_from_flowjo().
 #
 # Index-alignment contract (CRITICAL):
-#   combined_matrix   : rows = cells (sample 1 stacked on top of sample 2)
+#   combined_matrix   : rows = cells (sample 1 stacked on top of sample 2,
+#                       workspace after workspace)
 #   file_labels       : length == nrow(combined_matrix); file_labels[i] is the
 #                       source file of combined_matrix row i
+#   wsp_labels_per_cell : length == nrow(combined_matrix); owning workspace of
+#                       row i. Built from the SAME per-sample order and row
+#                       counts as file_labels, so the two cannot drift.
 #   combined_subpop   : length == nrow(combined_matrix); subgate label of row i
 #   umap_coords       : same row order as combined_matrix (UMAP is row-stable)
 #   per-marker colour : combined_matrix[, marker] -> same row order
@@ -44,12 +57,18 @@
 # -----------------------------------------------------------------------------
 # Resolve the requested population to a path that exists in the gating tree.
 # Accept with/without leading '/', and also match by basename or suffix.
+#
+# Non-throwing: returns list(ok, path, reason). With several workspaces the
+# same request has to be resolved against several trees, and every failure
+# should be reported together rather than one stop() at a time — so the caller
+# decides when to give up. resolve_population() below keeps the throwing
+# behaviour its existing callers rely on.
 # -----------------------------------------------------------------------------
-resolve_population <- function(requested, available) {
+try_resolve_population <- function(requested, available) {
   req <- requested
   cand <- unique(c(req, sub("^/", "", req), paste0("/", sub("^/", "", req))))
   hit <- cand[cand %in% available]
-  if (length(hit) >= 1) return(hit[1])
+  if (length(hit) >= 1) return(list(ok = TRUE, path = hit[1], reason = ""))
   # suffix match (e.g. user gave 'Lymphocytes/Single Cells/Viable cells')
   norm_req <- sub("^/", "", req)
   suffix_hits <- available[
@@ -57,14 +76,26 @@ resolve_population <- function(requested, available) {
       endsWith(sub("^/", "", p), norm_req)
     }, logical(1))
   ]
-  if (length(suffix_hits) == 1) return(suffix_hits[1])
-  if (length(suffix_hits) > 1) {
-    stop("Population '", requested, "' is ambiguous; matches:\n  ",
-         paste(suffix_hits, collapse = "\n  "),
-         "\nRe-run with the full path.")
+  if (length(suffix_hits) == 1) {
+    return(list(ok = TRUE, path = suffix_hits[1], reason = ""))
   }
-  stop("Population '", requested, "' not found. Run with ",
-       "list_populations = TRUE to see the available paths.")
+  if (length(suffix_hits) > 1) {
+    return(list(ok = FALSE, path = NA_character_, reason = paste0(
+      "population '", requested, "' is ambiguous; it matches:\n      ",
+      paste(suffix_hits, collapse = "\n      "),
+      "\n    Re-run with the full path.")))
+  }
+  list(ok = FALSE, path = NA_character_, reason = paste0(
+    "population '", requested, "' not found."))
+}
+
+resolve_population <- function(requested, available) {
+  res <- try_resolve_population(requested, available)
+  if (!res$ok) {
+    stop(sub("^population", "Population", res$reason),
+         " Run with list_populations = TRUE to see the available paths.")
+  }
+  res$path
 }
 
 # -----------------------------------------------------------------------------
@@ -88,7 +119,8 @@ resolve_population <- function(requested, available) {
 # matched against the relative path or the bare gate name.
 # -----------------------------------------------------------------------------
 flowjo_subgate_candidates <- function(pop_paths_union, all_pops, population,
-                                      mode = "cd4cd8", select = NULL) {
+                                      mode = "cd4cd8", select = NULL,
+                                      warn = TRUE) {
   prefix    <- paste0(population, "/")
   desc      <- pop_paths_union[startsWith(pop_paths_union, prefix)]
   rel       <- substring(desc, nchar(prefix) + 1L)
@@ -99,7 +131,10 @@ flowjo_subgate_candidates <- function(pop_paths_union, all_pops, population,
     keep <- rel %in% select | base_name %in% select
     matched <- unique(c(rel[keep], base_name[keep]))
     missing_sel <- setdiff(select, matched)
-    if (length(missing_sel)) {
+    # warn = FALSE when several workspaces are being merged: a gate absent from
+    # THIS workspace may well exist in another, so the warning is only correct
+    # once the candidate sets have been merged (see merge_subgate_candidates).
+    if (warn && length(missing_sel)) {
       warning("subpop_select entries not found under ", population, ": ",
               paste(missing_sel, collapse = ", "))
     }
@@ -122,6 +157,48 @@ flowjo_subgate_candidates <- function(pop_paths_union, all_pops, population,
   # extras absent from the gs-level path list), so colours follow the gating tree.
   ord <- order(match(paths, all_pops, nomatch = length(all_pops) + 1L), labels)
   list(paths = paths[ord], labels = labels[ord], depths = depths[ord], tag = tag)
+}
+
+# -----------------------------------------------------------------------------
+# Merge the per-workspace candidate sets into ONE colour partition.
+#
+# Across workspaces the ABSOLUTE gate paths cannot be compared: two workspaces
+# may gate the same biology under differently-named ancestors, so --population
+# legitimately resolves to '/Lymphocytes/Single Cells/Viable cells' in one and
+# '/Lymph/Singlets/Viable cells' in another. What IS comparable — and what the
+# colour actually means — is the path RELATIVE to the selected population. So
+# the relative label is the merge key, and depth is derived from it.
+#
+# Returns list(labels, depths, paths, tag) where `paths` is a named list, one
+# absolute-path vector per workspace, COLUMN-ALIGNED to `labels`. A gate that a
+# workspace does not have is NA there; get_subpop_membership() leaves those
+# columns all-FALSE, exactly as it already does for a gate missing from one
+# sample's tree.
+#
+# Label order is first-appearance across workspaces, so each workspace's own
+# gating-tree order is preserved as far as possible and the legend is stable.
+# -----------------------------------------------------------------------------
+merge_subgate_candidates <- function(cands) {
+  cands <- cands[!vapply(cands, is.null, logical(1))]
+  if (length(cands) == 0) {
+    return(list(labels = character(0), depths = integer(0),
+                paths = list(), tag = "none"))
+  }
+
+  labels <- unique(unlist(lapply(cands, function(c) c$labels), use.names = FALSE))
+  if (is.null(labels)) labels <- character(0)
+  depths <- lengths(strsplit(labels, "/", fixed = TRUE))
+
+  paths <- lapply(cands, function(c) {
+    out <- rep(NA_character_, length(labels))
+    hit <- match(labels, c$labels)
+    out[!is.na(hit)] <- c$paths[hit[!is.na(hit)]]
+    out
+  })
+  names(paths) <- names(cands)
+
+  list(labels = labels, depths = as.integer(depths), paths = paths,
+       tag = cands[[1]]$tag)
 }
 
 # -----------------------------------------------------------------------------
@@ -183,13 +260,18 @@ assign_subpop <- function(mem, subpop_depths, subpop_labels,
 # (cells-in-`population` x candidate-gate) logical membership for one sample,
 # row-aligned to gh_pop_get_data(gh, population). Columns are aligned to the
 # `subpop_paths` order; gates absent from THIS sample's tree stay all-FALSE.
+#
+# An NA entry in `subpop_paths` means the gate belongs to a different workspace
+# (see merge_subgate_candidates) and is likewise left all-FALSE.
 # -----------------------------------------------------------------------------
 get_subpop_membership <- function(gh, viable_idx, subpop_paths) {
   nv <- sum(viable_idx)
   M  <- matrix(FALSE, nrow = nv, ncol = length(subpop_paths))
-  if (length(subpop_paths) == 0L || nv == 0L) return(M)
+  if (length(subpop_paths) == 0L || nv == 0L || all(is.na(subpop_paths))) {
+    return(M)
+  }
   gh_nodes <- flowWorkspace::gh_get_pop_paths(gh, path = "full")
-  present  <- subpop_paths %in% gh_nodes
+  present  <- !is.na(subpop_paths) & subpop_paths %in% gh_nodes
   if (any(present)) {
     mat <- flowWorkspace::gh_pop_get_indices_mat(gh, y = subpop_paths[present])
     if (is.null(dim(mat))) mat <- matrix(mat, ncol = sum(present))
@@ -393,15 +475,29 @@ distinct_palette <- function(n) {
 }
 
 # =============================================================================
-# Main entry point: compute and plot a shared UMAP over one FlowJo population.
+# Main entry point: compute and plot a shared UMAP over one FlowJo population,
+# across ONE OR MANY FlowJo workspaces.
 #
-# @param wsp_path Path to the FlowJo .wsp workspace file.
-# @param fcs_dir Directory containing the FCS files referenced by the wsp.
+# With several workspaces every cell still goes into ONE embedding, so the
+# coordinates are comparable across workspaces; workspace simply becomes another
+# grouping level alongside sample, with its own categorical plot. Note that
+# pooling workspaces from different acquisition batches will show batch effects
+# — nothing here corrects for them (see src/harmonization/ for that); the
+# by-workspace plot is what makes them visible.
+#
+# @param wsp_path A .wsp file, or a DIRECTORY searched recursively for .wsp
+#   files. Each workspace is paired with its FCS files by file name.
+# @param fcs_dir Directory holding the FCS files, searched recursively.
 # @param population Population path to extract (leading '/' optional; a suffix
 #   such as 'Single Cells/Viable cells' is matched against the gating tree).
+#   Resolved independently in each workspace, so workspaces whose gating trees
+#   differ above the population still line up.
 # @param output_dir Output directory for plots.
-# @param group FlowJo workspace group index to load (flowjo_to_gatingset name=).
-# @param expected_samples If > 0, warn when the loaded group lacks this many.
+# @param group FlowJo sample group to load: an integer index, or a group NAME
+#   (which is what lets one value cover workspaces that order groups
+#   differently).
+# @param expected_samples If > 0, warn when the run does not total this many
+#   samples across all workspaces.
 # @param markers Optional character vector subset of marker names (NULL = all
 #   common non-scatter markers).
 # @param subpop_mode One of 'cd4cd8', 'direct', 'deepest', 'none'.
@@ -420,7 +516,7 @@ distinct_palette <- function(n) {
 umap_from_flowjo <- function(wsp_path, fcs_dir,
                              population = "Lymphocytes/Single Cells/Viable cells",
                              output_dir = "umap_flowjo",
-                             group = 1L, expected_samples = 0L,
+                             group = "1", expected_samples = 0L,
                              markers = NULL, subpop_mode = "furthest",
                              subpop_select = NULL, normalize = "none",
                              downsample = 0L, n_neighbors = 15L, min_dist = 0.1,
@@ -449,71 +545,198 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
          " (got '", subpop_mode, "').")
   }
 
-  if (!file.exists(wsp_path)) stop("wsp file not found: ", wsp_path)
-  if (!dir.exists(fcs_dir))   stop("fcs_dir not found: ", fcs_dir)
-  wsp_path <- normalizePath(wsp_path, mustWork = TRUE)
-  fcs_dir  <- normalizePath(fcs_dir,  mustWork = TRUE)
+  group <- as.character(group)
+  if (!dir.exists(fcs_dir)) stop("fcs_dir not found: ", fcs_dir)
+  fcs_dir <- normalizePath(fcs_dir, mustWork = TRUE)
 
-  # --- 1. Open workspace and build the GatingSet over the FCS dir. -----------
-  cat("Opening FlowJo workspace:", wsp_path, "\n")
-  ws <- CytoML::open_flowjo_xml(wsp_path)
-  cat("Building GatingSet from FCS dir:", fcs_dir,
-      "(group index =", group, ")\n")
-  gs <- CytoML::flowjo_to_gatingset(ws, name = group, path = fcs_dir)
+  # --- 1. Discover the workspaces and pair each with its FCS files. ----------
+  # Everything is resolved BEFORE any GatingSet is built, so a mislaid file or a
+  # bad --group is reported for every workspace at once instead of one slow load
+  # at a time. See src/loading/discover_flowjo_workspaces.R.
+  wsp_paths <- find_workspace_files(wsp_path)
+  wsp_names <- workspace_labels(wsp_paths)
+  n_wsp     <- length(wsp_paths)
 
-  sample_names <- flowWorkspace::sampleNames(gs)
-  cat("Samples in loaded group (", length(sample_names), "):\n", sep = "")
-  for (s in sample_names) cat("  -", s, "\n")
-  if (expected_samples > 0 && length(sample_names) != expected_samples) {
-    warning(sprintf(
-      "Loaded group %d has %d sample(s) but expected_samples=%d. The wrong ",
-      group, length(sample_names), expected_samples),
-      "workspace group may be selected; re-check group or list_populations.")
+  cat("Workspaces found (", n_wsp, "):\n", sep = "")
+  for (i in seq_len(n_wsp)) cat("  - ", wsp_names[i], "  ", wsp_paths[i], "\n",
+                                sep = "")
+  cat("Indexing FCS files under:", fcs_dir, "(recursive)\n")
+  fcs_index <- index_fcs_dir(fcs_dir)
+  cat("  ", length(fcs_index), " distinct FCS file name(s) indexed\n", sep = "")
+
+  cat("Resolving ", n_wsp, " workspace(s) (group = \"", group, "\") ...\n",
+      sep = "")
+  resolved <- resolve_workspace_specs(wsp_paths, wsp_names, fcs_index, group)
+  report   <- format_resolution_report(resolved$problems, fcs_root = fcs_dir)
+  if (nzchar(report)) stop(report)
+  specs <- resolved$specs
+
+  # --- 1b. Build one GatingSet per workspace. --------------------------------
+  gs_list <- list()
+  for (label in names(specs)) {
+    spec <- specs[[label]]
+    cat(sprintf("\nBuilding GatingSet for '%s' — group %d (\"%s\"), %d sample(s)\n",
+                label, spec$group_index, spec$group_name, nrow(spec$files)))
+    gs_list[[label]] <- build_workspace_gatingset(spec)
   }
 
-  all_pops <- flowWorkspace::gs_get_pop_paths(gs, path = "full")
+  # Sample display labels across the WHOLE run. Names are kept exactly as they
+  # were unless two workspaces genuinely collide, so a single-workspace run
+  # produces the same legends and the same file names as it always did.
+  sample_index <- do.call(rbind, lapply(names(gs_list), function(w) {
+    raw <- flowWorkspace::sampleNames(gs_list[[w]])
+    data.frame(workspace = rep(w, length(raw)), raw = raw,
+               clean = clean_sample_label(raw), stringsAsFactors = FALSE)
+  }))
+  sample_index$display <- disambiguate_sample_labels(sample_index$clean,
+                                                     sample_index$workspace)
+  if (anyDuplicated(sample_index$display)) {
+    warning("Sample labels still collide after cleaning; falling back to the ",
+            "raw sample names for display.")
+    sample_index$display <- paste0(sample_index$workspace, ": ",
+                                   sample_index$raw)
+  }
+
+  cat("\nSamples in loaded group (", nrow(sample_index), "):\n", sep = "")
+  for (s in sample_index$display) cat("  -", s, "\n")
+  if (expected_samples > 0 && nrow(sample_index) != expected_samples) {
+    warning(sprintf(
+      paste0("The %d loaded workspace(s) total %d sample(s) but ",
+             "expected_samples=%d. The wrong sample group may be selected; ",
+             "re-check group or list_populations."),
+      n_wsp, nrow(sample_index), expected_samples))
+  }
+
+  # Gating tree of each workspace. They can differ, so they are kept apart and
+  # only reconciled through the RELATIVE paths under the selected population.
+  pops_by_wsp <- lapply(gs_list, function(gs)
+    flowWorkspace::gs_get_pop_paths(gs, path = "full"))
+  # Gates present in EVERY workspace, in the first workspace's tree order. This
+  # is the set a run can actually use: --population must resolve everywhere.
+  shared_pops <- Reduce(intersect, pops_by_wsp)
+  shared_pops <- pops_by_wsp[[1]][pops_by_wsp[[1]] %in% shared_pops]
 
   # --- 2. list_populations mode: print the tree + markers, then return. ------
   # This is the "inspect" entry point: one workspace load reports everything a
   # caller needs to configure a run (samples above, populations and the common
   # marker panel here). The block headers below are a stable, parseable contract
   # relied on by app/ (the Dash front-end) — change them and update that too.
+  # The two extra blocks at the end are indented FOUR spaces, so the existing
+  # two-space item patterns cannot swallow them.
   if (isTRUE(list_populations)) {
-    cat("\nPopulation tree (", length(all_pops), " nodes):\n", sep = "")
-    for (p in all_pops) cat("  ", p, "\n", sep = "")
+    cat("\nPopulation tree (", length(shared_pops), " nodes):\n", sep = "")
+    for (p in shared_pops) cat("  ", p, "\n", sep = "")
+    if (length(shared_pops) == 0) {
+      cat("  (no gate is shared by all workspaces — see the divergence list ",
+          "below)\n", sep = "")
+    }
 
     # Markers are a channel property, so they are evaluated at the root node and
-    # do not depend on which population is eventually selected.
-    common_markers <- gs_common_markers(gs, sample_names)
+    # do not depend on which population is eventually selected. Intersected
+    # across every workspace as well as every sample.
+    markers_by_wsp <- lapply(names(gs_list), function(w)
+      gs_common_markers(gs_list[[w]], flowWorkspace::sampleNames(gs_list[[w]])))
+    common_markers <- Reduce(intersect, markers_by_wsp)
+    common_markers <- markers_by_wsp[[1]][markers_by_wsp[[1]] %in% common_markers]
     cat("\nCommon markers (", length(common_markers), "):\n", sep = "")
     for (m in common_markers) cat("  ", m, "\n", sep = "")
     if (length(common_markers) == 0) {
       cat("  (no marker common to all samples — check the panel / group)\n")
     }
 
+    cat("\nWorkspaces resolved (", length(specs), "):\n", sep = "")
+    for (label in names(specs)) {
+      spec <- specs[[label]]
+      cat(sprintf("    %s | %s | group %d \"%s\" | %d sample(s)\n",
+                  label, spec$wsp, spec$group_index, spec$group_name,
+                  nrow(spec$files)))
+    }
+
+    divergent <- setdiff(unique(unlist(pops_by_wsp, use.names = FALSE)),
+                         shared_pops)
+    cat("\nPopulations not shared by all workspaces (", length(divergent),
+        "):\n", sep = "")
+    for (p in divergent) {
+      absent <- names(pops_by_wsp)[!vapply(pops_by_wsp,
+                                           function(x) p %in% x, logical(1))]
+      cat(sprintf("    %s   [missing in: %s]\n", p,
+                  paste(absent, collapse = ", ")))
+    }
+    if (length(divergent) == 0 && n_wsp > 1) {
+      cat("    (none — every workspace has the same gating tree)\n")
+    }
+
     cat("\nSelect one with population = (leading '/' optional), e.g.:\n")
-    cat("  population = \"", sub("^/", "", all_pops[length(all_pops)]),
-        "\"\n", sep = "")
-    return(invisible(list(populations = all_pops, samples = sample_names,
-                          markers = common_markers)))
+    if (length(shared_pops)) {
+      cat("  population = \"", sub("^/", "", shared_pops[length(shared_pops)]),
+          "\"\n", sep = "")
+    }
+    return(invisible(list(populations = shared_pops,
+                          samples = sample_index$display,
+                          markers = common_markers,
+                          workspaces = names(specs))))
   }
 
   if (is.null(population) || !nzchar(population)) {
     stop("population is required (or use list_populations = TRUE to see options).")
   }
 
-  population <- resolve_population(population, all_pops)
+  # --- 2a. Resolve the population in EVERY workspace. ------------------------
+  # Resolved independently per workspace (the trees can differ above the
+  # population), and every failure is reported together — pooling cells from
+  # gates that are not the same gate would be a silent scientific error, so a
+  # population missing anywhere is fatal.
+  resolutions <- lapply(pops_by_wsp, function(p)
+    try_resolve_population(population, p))
+  failed <- names(resolutions)[!vapply(resolutions, function(r) r$ok, logical(1))]
+  if (length(failed)) {
+    detail <- vapply(failed, function(w) sprintf(
+      "  %s (%s)\n    %s", w, specs[[w]]$wsp, resolutions[[w]]$reason),
+      character(1))
+    stop("--population could not be resolved in every workspace.\n\n",
+         paste(detail, collapse = "\n"),
+         "\n\nRun with list_populations = TRUE to see the gates shared by all ",
+         "workspaces, or drop the odd workspace out of the --wsp folder.")
+  }
+  pop_by_wsp <- vapply(resolutions, function(r) r$path, character(1))
+  population <- pop_by_wsp[[1]]   # display / file-name form
   cat("\nTarget population resolved to:", population, "\n")
+  if (n_wsp > 1 && length(unique(pop_by_wsp)) > 1) {
+    cat("  (it resolves to a different absolute path in some workspaces:\n")
+    for (w in names(pop_by_wsp)) cat("     ", w, ": ", pop_by_wsp[[w]], "\n",
+                                     sep = "")
+    cat("   they are treated as the same population.)\n")
+  }
 
   # --- 2b. Discover the FlowJo subgates UNDER `population` to colour by. ------
-  pop_paths_union <- unique(unlist(lapply(sample_names, function(s)
-    flowWorkspace::gh_get_pop_paths(gs[[s]], path = "full"))))
-  cand <- flowjo_subgate_candidates(pop_paths_union, all_pops, population,
-                                    mode = subpop_mode, select = subpop_select)
-  subpop_paths  <- cand$paths
+  # Per workspace, then merged on the RELATIVE path (the only key comparable
+  # across workspaces whose ancestors are named differently).
+  cands <- lapply(names(gs_list), function(w) {
+    gs <- gs_list[[w]]
+    pop_paths_union <- unique(unlist(lapply(
+      flowWorkspace::sampleNames(gs),
+      function(s) flowWorkspace::gh_get_pop_paths(gs[[s]], path = "full"))))
+    flowjo_subgate_candidates(pop_paths_union, pops_by_wsp[[w]],
+                              pop_by_wsp[[w]], mode = subpop_mode,
+                              select = subpop_select, warn = FALSE)
+  })
+  names(cands) <- names(gs_list)
+  cand <- merge_subgate_candidates(cands)
+
   subpop_labels <- cand$labels
   subpop_depths <- cand$depths
+  subpop_paths_by_wsp <- cand$paths
   subpop_mode_tag <- cand$tag
+
+  # A --subpop_select entry is only genuinely missing when NO workspace has it.
+  if (!is.null(subpop_select)) {
+    matched <- unique(c(subpop_labels, basename(subpop_labels)))
+    missing_sel <- setdiff(subpop_select, matched)
+    if (length(missing_sel)) {
+      warning("subpop_select entries not found under ", population,
+              " in any workspace: ", paste(missing_sel, collapse = ", "))
+    }
+  }
 
   # 'furthest' labels each cell by the most specific (smallest) gate it reaches;
   # the other modes assign by path depth (ties -> "(multiple)").
@@ -523,12 +746,12 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     "depth"
   }
 
-  do_subpop <- length(subpop_paths) > 0
+  do_subpop <- length(subpop_labels) > 0
   subpop_requested <- !is.null(subpop_select) || subpop_mode != "none"
   if (subpop_requested) {
     if (do_subpop) {
       cat(sprintf("\nSubpopulation colouring (%s): %d candidate subgate(s) under %s\n",
-                  subpop_mode_tag, length(subpop_paths), population))
+                  subpop_mode_tag, length(subpop_labels), population))
     } else {
       cat(sprintf(
         "\nSubpopulation colouring requested (%s) but no matching subgates exist under %s; skipping.\n",
@@ -541,28 +764,41 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
 
   per_sample_mtx    <- list()
   per_sample_subpop <- list()
-  for (s in sample_names) {
-    res <- extract_population_sample(gs[[s]], population, subpop_paths,
-                                     subpop_depths, subpop_labels,
-                                     assignment = subpop_assignment)
-    mtx <- res$mtx
-    sp  <- res$subpop
+  per_sample_wsp    <- character(0)
+  for (w in names(gs_list)) {
+    gs <- gs_list[[w]]
+    if (n_wsp > 1) cat(sprintf("\n[%s]\n", w))
+    for (s in flowWorkspace::sampleNames(gs)) {
+      # The display label is the key everywhere downstream (legends, file
+      # names, per-file subsetting), so switch to it here and never look back.
+      display <- sample_index$display[sample_index$workspace == w &
+                                        sample_index$raw == s]
+      res <- extract_population_sample(gs[[s]], pop_by_wsp[[w]],
+                                       subpop_paths_by_wsp[[w]],
+                                       subpop_depths, subpop_labels,
+                                       assignment = subpop_assignment)
+      mtx <- res$mtx
+      sp  <- res$subpop
 
-    # Optional per-sample downsampling AFTER gating. The SAME row index subsets
-    # the subpopulation labels so they stay aligned to mtx.
-    if (downsample > 0 && nrow(mtx) > downsample) {
-      idx <- sort(sample(nrow(mtx), downsample))
-      mtx <- mtx[idx, , drop = FALSE]
-      sp  <- sp[idx]
-    }
+      # Optional per-sample downsampling AFTER gating. The SAME row index
+      # subsets the subpopulation labels so they stay aligned to mtx.
+      if (downsample > 0 && nrow(mtx) > downsample) {
+        idx <- sort(sample(nrow(mtx), downsample))
+        mtx <- mtx[idx, , drop = FALSE]
+        sp  <- sp[idx]
+      }
 
-    cat(sprintf("  %s: %d cells x %d markers\n", s, nrow(mtx), ncol(mtx)))
-    if (nrow(mtx) == 0) {
-      warning("Sample '", s, "' has 0 cells in population '", population,
-              "' after gating/downsampling; it will not contribute rows.")
+      cat(sprintf("  %s: %d cells x %d markers\n", display, nrow(mtx),
+                  ncol(mtx)))
+      if (nrow(mtx) == 0) {
+        warning("Sample '", display, "' has 0 cells in population '",
+                pop_by_wsp[[w]],
+                "' after gating/downsampling; it will not contribute rows.")
+      }
+      per_sample_mtx[[display]]    <- mtx
+      per_sample_subpop[[display]] <- sp
+      per_sample_wsp[display]      <- w
     }
-    per_sample_mtx[[s]]    <- mtx
-    per_sample_subpop[[s]] <- sp
   }
 
   # Drop samples that contributed no cells (keeps alignment + plotting sane).
@@ -572,6 +808,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   }
   per_sample_mtx    <- per_sample_mtx[nonempty]
   per_sample_subpop <- per_sample_subpop[nonempty]
+  per_sample_wsp    <- per_sample_wsp[names(per_sample_mtx)]
 
   # Intersect markers common to ALL (non-empty) samples.
   common_markers <- Reduce(intersect, lapply(per_sample_mtx, colnames))
@@ -603,27 +840,29 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   per_sample_mtx <- lapply(per_sample_mtx, function(m) m[, use_markers, drop = FALSE])
 
   # --- 5. Concatenate. file_labels / combined_subpop align to matrix rows. ---
-  raw_names   <- names(per_sample_mtx)
-  clean_names <- clean_sample_label(raw_names)
-  if (anyDuplicated(clean_names)) {
-    warning("Cleaned sample labels collide; keeping raw sample names for display.")
-    clean_names <- raw_names
-  }
-  names(clean_names) <- raw_names  # raw -> display lookup
+  # Names are already the run-wide display labels (see disambiguate_sample_
+  # labels above), so no further cleaning happens here.
+  sample_labels <- names(per_sample_mtx)
+  n_cells_per   <- vapply(per_sample_mtx, nrow, integer(1))
 
   combined_matrix <- do.call(rbind, per_sample_mtx)
-  file_labels     <- rep(clean_names[raw_names],
-                         vapply(per_sample_mtx, nrow, integer(1)))
+  file_labels     <- rep(sample_labels, n_cells_per)
   stopifnot(length(file_labels) == nrow(combined_matrix))
+
+  # Workspace of each cell, built from the SAME per-sample order and counts, so
+  # it is row-aligned to combined_matrix exactly as file_labels is.
+  wsp_labels_per_cell <- rep(unname(per_sample_wsp[sample_labels]), n_cells_per)
+  stopifnot(length(wsp_labels_per_cell) == nrow(combined_matrix))
 
   # Subpopulation labels, concatenated in the SAME sample order as
   # combined_matrix (the two lists are filtered/ordered identically).
-  combined_subpop <- unlist(per_sample_subpop[raw_names], use.names = FALSE)
+  combined_subpop <- unlist(per_sample_subpop[sample_labels], use.names = FALSE)
   stopifnot(length(combined_subpop) == nrow(combined_matrix))
 
-  cat(sprintf("\nConcatenated matrix: %d cells x %d markers (%d samples)\n",
+  cat(sprintf("\nConcatenated matrix: %d cells x %d markers (%d samples, %d workspace(s))\n",
               nrow(combined_matrix), ncol(combined_matrix),
-              length(per_sample_mtx)))
+              length(per_sample_mtx),
+              length(unique(wsp_labels_per_cell))))
 
   # --- 5b. Optional per-marker normalization. --------------------------------
   if (normalize != "none") {
@@ -660,10 +899,11 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
 
   # Master data frame: one row per cell, aligned to combined_matrix.
   umap_df <- data.frame(
-    UMAP1  = umap_coords[, 1],
-    UMAP2  = umap_coords[, 2],
-    file   = file_labels,
-    subpop = combined_subpop,
+    UMAP1     = umap_coords[, 1],
+    UMAP2     = umap_coords[, 2],
+    file      = file_labels,
+    workspace = wsp_labels_per_cell,
+    subpop    = combined_subpop,
     stringsAsFactors = FALSE
   )
 
@@ -738,6 +978,42 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                    legend_strings = c(file_levels, "File"),
                    ncol = file_ncol)
   cat("Saved: by-file categorical plot\n")
+
+  # 7a-ter. Categorical plot coloured by WORKSPACE (all cells, same embedding).
+  # Only when more than one workspace contributed — a single-workspace run would
+  # otherwise gain a one-colour plot and a file that did not exist before.
+  #
+  # This is also the plot to read for batch effects: nothing here corrects for
+  # them, so workspaces separating into their own islands means the embedding is
+  # partly driven by acquisition, not biology.
+  wsp_levels <- unique(wsp_labels_per_cell)
+  if (length(wsp_levels) > 1) {
+    wsp_counts <- table(factor(umap_df$workspace, levels = wsp_levels))
+    wsp_lab <- sprintf("%s (n=%d)", wsp_levels,
+                       as.integer(wsp_counts[wsp_levels]))
+    wsp_cols <- stats::setNames(distinct_palette(length(wsp_levels)), wsp_levels)
+
+    df_ws <- umap_df
+    df_ws$workspace <- factor(df_ws$workspace, levels = wsp_levels)
+
+    wsp_ncol <- legend_ncol(length(wsp_levels), plot_height)
+    p_ws <- ggplot(df_ws, aes(x = UMAP1, y = UMAP2, color = workspace)) +
+      geom_point(size = pt_size, alpha = pt_alpha) +
+      scale_color_manual(values = wsp_cols, breaks = wsp_levels,
+                         labels = wsp_lab, drop = FALSE) +
+      umap_coord() +
+      base_umap_theme +
+      guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
+                                  ncol = wsp_ncol)) +
+      labs(title = paste0("UMAP - ", population, " - by workspace"),
+           color = "Workspace")
+    save_categorical(
+      p_ws, create_safe_filename(paste0("umap_", pop_tag, "_by_workspace")),
+      legend_strings = c(wsp_lab, "Workspace"),
+      ncol = wsp_ncol)
+    cat(sprintf("Saved: by-workspace categorical plot (%d workspaces)\n",
+                length(wsp_levels)))
+  }
 
   # 7a-bis. Categorical plot coloured by FlowJo subgate (all cells, same
   # embedding). Colours follow the gating tree; the catch-all
@@ -837,5 +1113,6 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
 
   cat("\nDone. Plots written to:", normalizePath(output_dir), "\n")
   invisible(list(umap_coords = umap_coords, umap_df = umap_df,
+                 workspaces = names(gs_list),
                  output_dir = normalizePath(output_dir)))
 }

@@ -283,4 +283,6 @@ def register_callbacks() -> None:
         extensions = tuple(cfg.get("extensions") or ()) or None
         chosen = (selected or [None])[0]
         ok, message = fs_tree.validate_selection(chosen, dirs_only, extensions)
-        return message, ("dimmed" if not ok else None), not ok
+        # Both branches must be a colour STRING: None reaches Mantine as JSON
+        # null, which it rejects with "Failed to parse color … got object".
+        return message, ("green" if ok else "dimmed"), not ok

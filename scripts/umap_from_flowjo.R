@@ -13,6 +13,14 @@
 #     --population "Lymphocytes/Single Cells/Viable cells" \
 #     --output_dir results/umap_viable
 #
+#   # Many workspaces in one shared embedding: --wsp is a FOLDER, searched
+#   # recursively, and each workspace is paired with its FCS files by name.
+#   Rscript scripts/umap_from_flowjo.R \
+#     --wsp data/workspaces --fcs_dir data/fcs \
+#     --group "All Samples" \
+#     --population "Single Cells/Viable cells" \
+#     --output_dir results/umap_cohort
+#
 #   # List the gating tree, then exit (so you can pick a population):
 #   Rscript scripts/umap_from_flowjo.R --wsp data/Killing_AML.wsp \
 #     --fcs_dir data --list_populations
@@ -31,9 +39,16 @@ suppressPackageStartupMessages({
 # -----------------------------------------------------------------------------
 option_list <- list(
   make_option("--wsp", type = "character", default = "data/Killing_AML.wsp",
-              help = "Path to the FlowJo .wsp workspace file [default %default]"),
+              help = paste0("A FlowJo .wsp file, OR a DIRECTORY searched ",
+                            "recursively for .wsp files. With several ",
+                            "workspaces all their cells go into ONE shared ",
+                            "UMAP, and an extra 'by workspace' plot is ",
+                            "written. [default %default]")),
   make_option("--fcs_dir", type = "character", default = "data",
-              help = "Directory containing the FCS files referenced by the wsp [default %default]"),
+              help = paste0("Directory holding the FCS files, searched ",
+                            "RECURSIVELY. Each workspace is paired with its ",
+                            "own files by file name, so subfolders need no ",
+                            "particular layout. [default %default]")),
   make_option("--population", type = "character",
               default = "Lymphocytes/Single Cells/Viable cells",
               help = paste0("Population path to extract. A leading '/' is ",
@@ -41,12 +56,17 @@ option_list <- list(
                             "is matched against the gating tree. [default %default]")),
   make_option("--list_populations", action = "store_true", default = FALSE,
               help = "Print the population tree (gs_get_pop_paths) and exit."),
-  make_option("--group", type = "integer", default = 1,
-              help = paste0("FlowJo workspace group index to load ",
-                            "(flowjo_to_gatingset name=) [default %default]")),
+  make_option("--group", type = "character", default = "1",
+              help = paste0("FlowJo sample group to load: an index (e.g. 1) ",
+                            "or a group NAME (e.g. \"All Samples\"). A name ",
+                            "is what lets one value cover several workspaces ",
+                            "that order their groups differently. ",
+                            "--list_populations prints each workspace's ",
+                            "groups. [default %default]")),
   make_option("--expected_samples", type = "integer", default = 0,
-              help = paste0("If > 0, warn when the loaded group does not ",
-                            "contain exactly this many samples [default %default]")),
+              help = paste0("If > 0, warn when the run does not total exactly ",
+                            "this many samples across all workspaces ",
+                            "[default %default]")),
   make_option("--markers", type = "character", default = NULL,
               help = paste0("Optional comma-separated subset of marker names to ",
                             "use/plot. Default: all common non-scatter markers.")),
@@ -157,6 +177,8 @@ source(file.path(shared_dir, "io_utils.R"))        # make_outdir
 source(file.path(shared_dir, "plot_utils.R"))      # save_plot_formats, create_safe_filename
 source(file.path(shared_dir, "stats_utils.R"))     # run_umap
 source(file.path(shared_dir, "flowframe_utils.R")) # explore_data
+# find_workspace_files, index_fcs_dir, resolve_workspace_specs, ...
+source(file.path(src_dir, "loading", "discover_flowjo_workspaces.R"))
 source(file.path(src_dir, "visualization", "umap_from_flowjo.R"))  # umap_from_flowjo
 
 # -----------------------------------------------------------------------------

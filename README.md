@@ -49,8 +49,8 @@ Rscript pipelines/pipeline_A_raw_fcs.R --config config/pipeline_A_config.R
 
 ### UMAP from a FlowJo workspace
 
-To go straight from a FlowJo `.wsp` + raw FCS files to a shared UMAP coloured by
-sample, by FlowJo subgate, and by every marker, see the
+To go straight from FlowJo `.wsp` workspaces + raw FCS files to a shared UMAP
+coloured by sample, by workspace, by FlowJo subgate, and by every marker, see the
 [UMAP from a FlowJo Population](docs/scripts/umap-from-flowjo.md) guide. After
 [setting up the environment](#setup):
 
@@ -60,6 +60,11 @@ conda activate cytometry_env
 Rscript scripts/umap_from_flowjo.R --wsp data/Killing_AML.wsp --fcs_dir data --list_populations
 # Build the UMAP for one population:
 Rscript scripts/umap_from_flowjo.R --population "Lymphocytes/Single Cells/Viable cells" --output_dir results/umap_viable
+# Many workspaces in ONE shared embedding: --wsp is a folder, searched
+# recursively, and each workspace is paired with its FCS files by name.
+Rscript scripts/umap_from_flowjo.R --wsp data/workspaces --fcs_dir data/fcs \
+  --group "All Samples" --population "Single Cells/Viable cells" \
+  --output_dir results/umap_cohort
 ```
 
 Prefer a GUI? [`app/`](app/README.md) is a Dash front-end for exactly this

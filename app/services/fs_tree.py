@@ -17,6 +17,10 @@ from pathlib import Path
 PLACEHOLDER_PREFIX = "::placeholder::"
 ERROR_PREFIX = "::error::"
 EMPTY_PREFIX = "::empty::"
+#: A file shown for orientation inside a *directory* picker. You are choosing a
+#: folder, but seeing the .wsp files in it is how you know it is the right one,
+#: so they are listed and not selectable.
+INFO_PREFIX = "::info::"
 
 
 def is_sentinel(value: str | None) -> bool:
@@ -76,17 +80,56 @@ def list_children(
     dirs.sort(key=lambda x: x.name.lower())
     files.sort(key=lambda x: x.name.lower())
 
+    if extensions:
+        wanted = tuple(e.lower() for e in extensions)
+        files = [f for f in files if f.suffix.lower() in wanted]
+
     nodes = [_dir_node(d) for d in dirs]
     if not dirs_only:
-        if extensions:
-            wanted = tuple(e.lower() for e in extensions)
-            files = [f for f in files if f.suffix.lower() in wanted]
         nodes.extend(_file_node(f) for f in files)
+    elif extensions:
+        # Directory mode with a filter: show the matching files so you can tell
+        # you are standing in the right folder, but keep them unselectable —
+        # is_sentinel() and validate_selection() both key on the "::" prefix.
+        nodes.extend(
+            {"value": INFO_PREFIX + str(f), "label": f.name} for f in files
+        )
 
     if not nodes:
         label = "(no subdirectories)" if dirs_only else "(nothing matching here)"
         return [{"value": EMPTY_PREFIX + str(p), "label": label}]
     return nodes
+
+
+def find_files(
+    root: str, extensions: tuple[str, ...], limit: int = 500
+) -> tuple[list[str], bool]:
+    """Every file under ``root`` matching ``extensions``, searched recursively.
+
+    Mirrors what the R side does with ``--wsp`` and ``--fcs_dir`` so the form
+    can show you what a folder contains *before* you spend a workspace load
+    finding out. Returns ``(paths, truncated)``; ``root`` may also be a single
+    matching file, which comes back as a one-element list.
+
+    Unreadable subdirectories are skipped rather than raising — the browser is
+    rooted at ``/`` and will meet plenty of them.
+    """
+    p = Path(root)
+    wanted = tuple(e.lower() for e in extensions)
+    if p.is_file():
+        return ([str(p)] if p.suffix.lower() in wanted else [], False)
+    if not p.is_dir():
+        return [], False
+
+    found: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(p, onerror=lambda _e: None):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.lower().endswith(wanted):
+                found.append(os.path.join(dirpath, name))
+                if len(found) > limit:
+                    return sorted(found[:limit]), True
+    return sorted(found), False
 
 
 def root_data() -> list[dict]:
@@ -176,6 +219,8 @@ def validate_selection(value: str, dirs_only: bool, extensions: tuple[str, ...] 
     Returns ``(ok, message)`` — ``message`` explains the rejection, or describes
     the accepted selection.
     """
+    if value and value.startswith(INFO_PREFIX):
+        return False, "That is a file — select the folder that contains it."
     if not value or is_sentinel(value):
         return False, "Select a " + ("directory" if dirs_only else "file") + "."
     p = Path(value)

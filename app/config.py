@@ -42,7 +42,8 @@ OUTPUT_FORMATS = ("svg", "png", "pdf")
 DEFAULTS: dict = {
     "wsp": "",
     "fcs_dir": "",
-    "group": 1,
+    # Text, not a number: the R side takes an index OR a sample-group name.
+    "group": "1",
     "expected_samples": 0,
     "population": "",
     "markers": [],

@@ -2,7 +2,7 @@
 
 # src/loading/ -- Data Loading
 
-Six scripts for ingesting flow cytometry data from FCS files, CSV expression matrices, FlowJo workspaces, and manual gating labels. Every script defines one or more functions that you call after sourcing. All scripts load shared utilities from `src/R_shared/`.
+Seven scripts for ingesting flow cytometry data from FCS files, CSV expression matrices, FlowJo workspaces, and manual gating labels. Every script defines one or more functions that you call after sourcing. All scripts load shared utilities from `src/R_shared/`.
 
 ## Summary Table
 
@@ -12,6 +12,7 @@ Six scripts for ingesting flow cytometry data from FCS files, CSV expression mat
 | `load_csv_expression.R` | `load_csv_expression()` | Load CSV expression matrices into data.tables |
 | `load_csv_gating.R` | `load_csv_gating()`, `process_single_csv_gating()`, `create_safe_filename()` | Load CSV+FCS gating data, split by population |
 | `load_flowjo_wsp.R` | `load_flowjo_wsp()`, `get_population_stats()`, `get_population_strings_list()`, `summarize_population_counts()`, `save_population_strings()`, `load_multiple_workspaces()` | Load FlowJo workspaces and extract gating data |
+| `discover_flowjo_workspaces.R` | `find_workspace_files()`, `workspace_labels()`, `index_fcs_dir()`, `resolve_fcs_names()`, `wsp_group_table()`, `wsp_sample_files()`, `resolve_group()`, `resolve_workspace_specs()`, `format_resolution_report()`, `build_workspace_gatingset()`, `disambiguate_sample_labels()` | Find many `.wsp` under a folder and pair each with its FCS files by name |
 | `load_manual_gating.R` | `load_manual_gating()` | Load manual gating labels from CSVs |
 | `create_flowframes.R` | `create_flowframes_from_matrices()`, `create_merged_flowset()` | Create flowFrame/flowSet objects from matrices |
 
@@ -360,6 +361,46 @@ pop_strings_list <- load_multiple_workspaces(wsp_paths, names = names)
 ```
 
 **Dependencies:** `io_utils`, `flowframe_utils`. Requires `flowWorkspace` and `CytoML` packages.
+
+---
+
+## discover_flowjo_workspaces.R
+
+Turns two **folder roots** — one holding `.wsp` workspaces, one holding `.fcs` files, both searched recursively — into ready-to-load workspace specs. Used by [`umap_from_flowjo()`](../scripts/umap-from-flowjo.md#many-workspaces-at-once) to put many workspaces into one shared embedding.
+
+**Why it exists.** A `.wsp` records a full `uri` per sample, but it is the path on the Windows machine that built the workspace, so it does not exist on the analysis host. What a workspace reliably gives is the **list of FCS file names** — so those are read out of the XML first, the FCS root is indexed recursively by file name, and the two are matched. No directory convention is imposed on the data, and one workspace's files may live in several directories.
+
+Everything is resolved **before any GatingSet is built**, and problems across all workspaces are reported together: a GatingSet load is slow, so discovering one mislaid file per load is not a workflow.
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `find_workspace_files()` | `(root)` | Character vector of `.wsp` paths. `root` may be a `.wsp` file or a directory searched recursively |
+| `workspace_labels()` | `(wsp_paths)` | Short display label per workspace; colliding base names are qualified by parent directory, then by full path |
+| `index_fcs_dir()` | `(root)` | Named list: lower-cased file name -> every full path carrying it. Built once, shared by all workspaces |
+| `resolve_fcs_names()` | `(names, fcs_index)` | `list(file, missing, ambiguous)`. Matching is case-insensitive, tolerates an omitted `.fcs`, and reduces Windows paths to their base name. Pure — no CytoML, no file system |
+| `wsp_group_table()` | `(ws)` | `data.frame(index, groupName, n_samples)`. Isolates the CytoML accessor |
+| `wsp_sample_files()` | `(ws, group_index)` | `data.frame(sampleID, name)` for one group |
+| `resolve_group()` | `(group, group_table, where = "")` | `list(index, name, n_samples)`. `group` is an integer index **or** a group name |
+| `resolve_workspace_specs()` | `(wsp_paths, labels, fcs_index, group, open_ws = NULL, read_samples = NULL)` | `list(specs, problems)` — never stops on failure. `open_ws`/`read_samples` are injectable, so the orchestration is testable without CytoML |
+| `format_resolution_report()` | `(problems, fcs_root = "")` | One consolidated error message, or `""` when nothing is wrong |
+| `build_workspace_gatingset()` | `(spec)` | A `GatingSet`. Passes a directory when the workspace's files share one, else a per-sample `data.frame(sampleID, file)` path map |
+| `disambiguate_sample_labels()` | `(clean_names, wsp_labels)` | Display labels: unchanged when unique across the run, `"<wsp>: <sample>"` only for names that actually collide |
+
+```r
+source("src/loading/discover_flowjo_workspaces.R")
+
+wsp    <- find_workspace_files("data/workspaces")   # recursive
+labels <- workspace_labels(wsp)
+index  <- index_fcs_dir("data/fcs")                 # recursive
+
+res <- resolve_workspace_specs(wsp, labels, index, group = "All Samples")
+report <- format_resolution_report(res$problems, fcs_root = "data/fcs")
+if (nzchar(report)) stop(report)
+
+gs_list <- lapply(res$specs, build_workspace_gatingset)
+```
+
+**Dependencies:** none for the discovery, indexing and labelling helpers (base R only, which is what makes them unit-testable in `test_data/test_umap_multi_wsp.R`). `wsp_group_table()`, `wsp_sample_files()` and `build_workspace_gatingset()` require `flowWorkspace` and `CytoML`.
 
 ---
 

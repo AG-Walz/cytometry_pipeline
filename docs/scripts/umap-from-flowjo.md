@@ -2,9 +2,9 @@
 
 # UMAP from a FlowJo Workspace Population
 
-`scripts/umap_from_flowjo.R` turns a FlowJo workspace plus its raw FCS files into
-a single shared UMAP, coloured by sample, by **FlowJo subgate**, and by every
-marker.
+`scripts/umap_from_flowjo.R` turns one **or many** FlowJo workspaces plus their
+raw FCS files into a single shared UMAP, coloured by sample, by **workspace**,
+by **FlowJo subgate**, and by every marker.
 
 The script itself is a thin CLI wrapper: it parses options, locates the repo,
 and calls **`umap_from_flowjo()`** in
@@ -14,7 +14,8 @@ where all the analysis and plotting logic lives. See
 
 It:
 
-1. Opens a FlowJo `.wsp` and builds a `GatingSet` over a directory of FCS files.
+1. Opens every FlowJo `.wsp` it is pointed at and builds a `GatingSet` per
+   workspace over the FCS files that workspace references.
 2. Extracts the cells of **one selected gated population** from each sample.
    The data is taken **as-is** from FlowJo's working space (already compensated
    and transformed), so **no further transform is applied**.
@@ -22,11 +23,12 @@ It:
    subpopulation label (see [Subpopulation colouring](#subpopulation-colouring)).
 4. Concatenates the per-sample expression matrices, optionally normalising each
    marker (`--normalize`).
-5. Computes a **single shared UMAP embedding** over the concatenated data.
-6. Plots that embedding coloured by **sample**, by **subpopulation**, and by
-   **every marker** — markers both **conjointly** (all files together) and
-   **per file** (each file on the same coordinates, with a shared colour scale
-   for direct comparison).
+5. Computes a **single shared UMAP embedding** over the concatenated data —
+   one embedding for everything, however many workspaces contributed.
+6. Plots that embedding coloured by **sample**, by **workspace** (when there is
+   more than one), by **subpopulation**, and by **every marker** — markers both
+   **conjointly** (all files together) and **per file** (each file on the same
+   coordinates, with a shared colour scale for direct comparison).
 
 It reuses the repo's shared utilities (`run_umap`, `save_plot_formats`,
 `create_safe_filename`, `make_outdir`, `explore_data`) rather than
@@ -98,7 +100,9 @@ Common markers (12):
 Markers are a property of the channels rather than of a gate, so they are
 evaluated at the root node and are the same set a real run would use. These
 three block headers are a stable format that [the Dash front-end](../../app/README.md)
-parses — if you change them, update `app/services/rscript.py` too.
+parses — if you change them, update `app/services/rscript.py` too. With several
+workspaces two further blocks follow, indented four spaces so those parsers
+cannot swallow them; see [Gating trees that differ](#gating-trees-that-differ).
 
 **2. Run the analysis** (defaults already target the bundled example data and
 the `Lymphocytes/Single Cells/Viable cells` population):
@@ -131,6 +135,129 @@ Rscript scripts/umap_from_flowjo.R --downsample 20000
 Rscript scripts/umap_from_flowjo.R --normalize zscore \
   --output_formats png,pdf,svg --n_neighbors 30 --min_dist 0.3
 ```
+
+---
+
+## Many workspaces at once
+
+`--wsp` also takes a **folder**, searched recursively for `.wsp`. Every
+workspace it finds contributes its cells to **one shared embedding**, so their
+coordinates are directly comparable, and an extra `..._by_workspace` plot
+colours the embedding by which workspace each cell came from.
+
+```bash
+Rscript scripts/umap_from_flowjo.R \
+  --wsp  data/workspaces \
+  --fcs_dir data/fcs \
+  --group "All Samples" \
+  --population "Single Cells/Viable cells" \
+  --output_dir results/umap_cohort
+```
+
+> **Batch effects.** Pooling workspaces from different acquisition runs into one
+> embedding does **not** correct for batch — nothing here does. If the
+> `..._by_workspace` plot shows each workspace on its own island, the embedding
+> is partly driven by acquisition rather than biology; see
+> [`src/harmonization/`](../../src/harmonization/) (ComBat, CytoNorm) for
+> correction, applied before this step.
+
+### How workspaces are paired with their FCS files
+
+A `.wsp` records a full `uri` per sample, but it is the path on the Windows
+machine that built the workspace, so it does not exist on the analysis host.
+What a workspace reliably gives is the **list of FCS file names** — so those are
+read out of the XML first, `--fcs_dir` is indexed **recursively** by file name,
+and the two are matched.
+
+That means **no directory convention is imposed on your data**. A flat dump,
+mirrored subfolders and a messy mix all work, and one workspace's files may even
+live in several directories:
+
+```
+--wsp data/workspaces          --fcs_dir data/fcs
+  workspaces/runA.wsp            fcs/2024/runA/Pool_001.fcs
+  workspaces/2025/runB.wsp       fcs/2024/runA/Pool_002.fcs
+                                 fcs/2025/Pool_003.fcs
+```
+
+Name matching is tolerant: case-insensitive, with `.fcs` added if the workspace
+omitted it, and Windows backslash paths reduced to their base name.
+
+Everything is resolved **before any GatingSet is built**, and every problem in
+every workspace is reported together — a GatingSet load is slow, and finding one
+mislaid file per load is not a workflow:
+
+```
+Error: could not build the workspace set.
+
+  runB (/data/workspaces/2025/runB.wsp)
+    missing:   Pool_007.fcs, Pool_008.fcs
+  runC (/data/workspaces/runC.wsp)
+    ambiguous: Pool_001.fcs matches
+                 /data/fcs/2024/Pool_001.fcs
+                 /data/fcs/2025/Pool_001.fcs
+
+FCS root searched (recursively): /data/fcs
+Nothing was loaded. Fix the FCS root (or --group) and re-run.
+```
+
+### Sample groups across workspaces
+
+The group of interest can sit at a different index in each workspace, so
+`--group` accepts a **name** as well as an index:
+
+```bash
+--group 1               # index, as always
+--group "All Samples"   # name, resolved separately in each workspace
+```
+
+`--list_populations` prints each workspace's groups, so a name that does not
+resolve tells you what the valid ones are.
+
+### Gating trees that differ
+
+`--population` is resolved **independently in each workspace**, using the same
+suffix matching as always. Two workspaces may therefore gate the same biology
+under differently-named ancestors — `/Lymphocytes/Single Cells/Viable cells` in
+one and `/Lymph/Singlets/Viable cells` in the other — and still line up.
+
+A population that resolves in *some* workspaces but not all is a **hard error
+naming the workspace**. Pooling cells from gates that are not the same gate
+would be a silent scientific error, so it is never done quietly.
+
+Subgate colouring works the same way: the colour classes are the gate paths
+**relative to `--population`**, which is the only key comparable across
+workspaces, and they are unioned. A gate that only some workspaces have simply
+has no cells from the others.
+
+`--list_populations` reflects all of this. The `Population tree` block lists
+only the gates **shared by every workspace** — the ones a run can actually
+use — and a separate block names the ones that are not:
+
+```
+Workspaces resolved (2):
+    runA | /data/workspaces/runA.wsp | group 1 "All Samples" | 2 sample(s)
+    runB | /data/workspaces/2025/runB.wsp | group 1 "All Samples" | 2 sample(s)
+
+Populations not shared by all workspaces (2):
+    /Lymphocytes/Single Cells/Viable cells/CD8+   [missing in: runB]
+    /Lymphocytes/Single Cells/Viable cells/NK     [missing in: runA]
+```
+
+### Sample names
+
+A sample keeps its own name whenever it is unique across the whole run. Only
+names that genuinely **collide** between workspaces are qualified, so a
+single-workspace run produces exactly the legends and file names it always did:
+
+```
+no collision:            Pool_001, Pool_002, Pool_003
+Pool_001 in two wsp:     runA: Pool_001, runB: Pool_001, Pool_002
+```
+
+This matters on disk as well as in legends: two identically-named samples would
+otherwise share one set of per-file plots, the second silently overwriting the
+first.
 
 ---
 
@@ -183,12 +310,12 @@ Rscript scripts/umap_from_flowjo.R --subpop_select \
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--wsp` | `data/Killing_AML.wsp` | Path to the FlowJo `.wsp` workspace file |
-| `--fcs_dir` | `data` | Directory containing the FCS files referenced by the wsp |
-| `--population` | `Lymphocytes/Single Cells/Viable cells` | Population path to extract (leading `/` optional; suffix-matched) |
-| `--list_populations` | off | Load the workspace, print its samples, population tree and common markers, then exit (no analysis) |
-| `--group` | `1` | FlowJo workspace sample-group index to load |
-| `--expected_samples` | `0` | If `> 0`, warn when the loaded group does not contain this many samples |
+| `--wsp` | `data/Killing_AML.wsp` | A `.wsp` file, **or a folder** searched recursively for `.wsp` — see [Many workspaces at once](#many-workspaces-at-once) |
+| `--fcs_dir` | `data` | Folder holding the FCS files, searched **recursively**; each workspace is paired with its own files by name |
+| `--population` | `Lymphocytes/Single Cells/Viable cells` | Population path to extract (leading `/` optional; suffix-matched). Resolved independently in each workspace |
+| `--list_populations` | off | Load the workspace(s), print their samples, population tree, common markers and workspace/divergence blocks, then exit (no analysis) |
+| `--group` | `1` | FlowJo sample group to load: an index, **or a group name** such as `"All Samples"` |
+| `--expected_samples` | `0` | If `> 0`, warn when the run does not total this many samples across all workspaces |
 | `--markers` | all common | Comma-separated subset of marker names to use/plot |
 | `--subpop_mode` | `furthest` | Subgate set for the subpopulation plot: `furthest`, `cd4cd8`, `direct`, `deepest`, `none` (see [above](#subpopulation-colouring)) |
 | `--subpop_select` | — | Comma-separated explicit gate list (relative path or bare name) used as the colour partition, overriding `--subpop_mode` |
@@ -219,6 +346,7 @@ background grid. File names are sanitised from the population and marker names.
 | File | Content |
 |------|---------|
 | `umap_<pop>_by_file.<fmt>` | Shared embedding, points coloured categorically by source file |
+| `umap_<pop>_by_workspace.<fmt>` | Shared embedding, points coloured by source **workspace**. Only written when more than one workspace was loaded — see [Many workspaces at once](#many-workspaces-at-once) |
 | `umap_<pop>_by_subpopulation.<fmt>` | Shared embedding, points coloured by FlowJo subgate (per `--subpop_mode`); omitted when `--subpop_mode none` finds no subgates |
 | `umap_<pop>_marker_<M>_ALL.<fmt>` | **Conjoint** plot per marker `M` — all cells, viridis-coloured by expression |
 | `umap_<pop>_marker_<M>_file_<sample>.<fmt>` | **Per-file** plot per marker `M` — that file's cells on the shared coordinates and colour scale |
@@ -258,10 +386,11 @@ source(file.path(shared_dir, "io_utils.R"))        # make_outdir
 source(file.path(shared_dir, "plot_utils.R"))      # save_plot_formats, create_safe_filename
 source(file.path(shared_dir, "stats_utils.R"))     # run_umap
 source(file.path(shared_dir, "flowframe_utils.R")) # explore_data
+source("src/loading/discover_flowjo_workspaces.R") # workspace discovery/pairing
 source("src/visualization/umap_from_flowjo.R")     # umap_from_flowjo
 
 umap_from_flowjo(
-  wsp_path   = "data/Killing_AML.wsp",
+  wsp_path   = "data/Killing_AML.wsp",   # or a folder of .wsp files
   fcs_dir    = "data",
   population = "Lymphocytes/Single Cells/Viable cells",
   output_dir = "results/umap_viable",
@@ -269,6 +398,10 @@ umap_from_flowjo(
   output_formats = list(pdf = FALSE, png = FALSE, svg = TRUE)
 )
 ```
+
+`src/loading/discover_flowjo_workspaces.R` must be sourced too: it holds the
+workspace discovery and FCS pairing (`find_workspace_files`, `index_fcs_dir`,
+`resolve_workspace_specs`, …) that `umap_from_flowjo()` calls.
 
 `umap_from_flowjo()` parameters mirror the CLI options (e.g. `markers` and
 `subpop_select` take character vectors rather than comma-separated strings).
@@ -289,7 +422,18 @@ returns (invisibly) the `umap_coords`, the master `umap_df`, and the resolved
 - **Wrong / too few samples loaded.** A workspace can contain several sample
   groups; only `--group` is loaded. The script logs the loaded sample list;
   set `--expected_samples 2` to get a warning if the count is unexpected, or
-  change `--group`.
+  change `--group`. With several workspaces the count is the **total** across
+  them, and `--list_populations` prints each workspace's groups by name.
+- **"could not build the workspace set."** One or more FCS files a workspace
+  references could not be found under `--fcs_dir`, or the same file name exists
+  in two places under it. The message names every workspace and every file; fix
+  the FCS root (it is searched recursively) and re-run. Nothing is loaded until
+  all of them resolve.
+- **"--population could not be resolved in every workspace."** The gate exists
+  in some workspaces but not all. Run `--list_populations` to see the gates they
+  share — those are the only ones a run can use — and the block listing which
+  workspace lacks which gate. Pooling cells from gates that are not the same
+  gate is never done silently.
 - **Markers silently missing.** Only channels with a non-empty marker name are
   kept, and only markers **common to all samples** are used. Scatter/`Time`
   channels are excluded by channel name. Excluded channels are logged per
@@ -304,9 +448,27 @@ returns (invisibly) the `umap_coords`, the master `umap_df`, and the resolved
 
 ---
 
+## Tests
+
+The workspace discovery and pairing logic is pure base R, so it can be checked
+on any machine — no conda environment, no CytoML, no `.wsp` file needed:
+
+```bash
+Rscript test_data/test_umap_multi_wsp.R
+```
+
+It builds a fake directory tree and covers recursive `.wsp` discovery, the FCS
+index, name matching (including missing and ambiguous files), group resolution
+by index and by name, sample-label collision handling, population resolution
+across differing trees, and subgate merging. What it cannot cover is CytoML's
+own behaviour — that needs a real workspace on an analysis host.
+
+---
+
 ## Related
 
 - [FlowJo → UMAP Dash app](../../app/README.md) — a GUI over this script
+- [`src/loading/discover_flowjo_workspaces.R`](../subprojects/loading.md#discover_flowjo_workspacesr) — the workspace discovery and FCS pairing functions
 - [Getting Started](../getting-started.md) — environment setup
 - [Pipeline D — FlowJo Comparison](../pipelines/pipeline-D-flowjo-comparison.md) — inter-rater gating comparison from `.wsp` files
 - [Pipeline E — Preprocessed UMAP](../pipelines/pipeline-E-preprocessed-umap.md) — UMAP/clustering from preprocessed FCS (no gating)
