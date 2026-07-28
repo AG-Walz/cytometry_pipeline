@@ -94,3 +94,4 @@ dependencies:
       - dash>=3.0
       - dash-mantine-components>=2.0
       - dash-iconify
+      - gunicorn        # WSGI server used by app/run.sh (single worker)

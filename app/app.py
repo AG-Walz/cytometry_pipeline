@@ -54,6 +54,19 @@ def create_app() -> Dash:
     return app
 
 
+#: Built at import so a WSGI server can find it, and reused by main().
+APP = create_app()
+
+#: WSGI entry point, e.g. ``gunicorn --workers 1 --threads 8 app.app:server``.
+#:
+#: ONE worker only. The active run lives in a module-level object
+#: (services.runner.RUNNER), so a second worker would own a second, unrelated
+#: runner: the browser would poll whichever process the request landed in and
+#: see an idle app while a run was in progress elsewhere. Threads, not workers,
+#: are what this app scales with — and it is a single-user tool regardless.
+server = APP.server
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1",
@@ -70,9 +83,8 @@ def main() -> None:
             "the cytometry_pipeline repository."
         )
 
-    app = create_app()
     print(f"FlowJo → UMAP app on http://{args.host}:{args.port}")
-    app.run(host=args.host, port=args.port, debug=args.debug)
+    APP.run(host=args.host, port=args.port, debug=args.debug)
 
 
 if __name__ == "__main__":

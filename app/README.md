@@ -41,6 +41,39 @@ gets a filesystem browser and a job runner.
 
 ---
 
+## Serving it from PBIAppLauncher
+
+`app/run.sh <port>` activates the environment and starts gunicorn on
+`0.0.0.0:<port>`:
+
+```json
+{
+  "name": "FlowJo UMAP",
+  "start_cmd": "cd /mnt/volume/apps/cytometry_pipeline && git pull origin main && exec bash app/run.sh {port}",
+  "hosts": ["highmem1", "highmem2"]
+}
+```
+
+Two constraints that are not negotiable:
+
+* **One gunicorn worker.** The active run lives in a module-level object, so a
+  second worker would own a second, unrelated runner and the browser would poll
+  whichever process its request reached. `run.sh` sets `--workers 1`;
+  concurrency comes from threads.
+* **The environment must be *activated*, not just referenced.** Calling
+  `$CONDA_PREFIX/bin/gunicorn` directly skips the activation hook that
+  `setup_env.sh` installs, and the `Rscript` subprocess then finds the system R
+  (no CytoML) or loads ABI-incompatible packages from a global `~/R`.
+
+**Serving it this way makes it network-reachable, which the app is not designed
+for.** The file browser is rooted at `/` with no confinement and no
+authentication, and anyone who can reach the port can start jobs. It is also
+single-user: two people using one instance share one runner and one log. Only
+put it behind the launcher on a trusted network, and preferably one at a time
+per host.
+
+---
+
 ## The four steps
 
 The order is enforced, because it has to be: the gating tree and the marker
