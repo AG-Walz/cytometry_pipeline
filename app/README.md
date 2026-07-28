@@ -77,12 +77,18 @@ per host.
 ## The four steps
 
 The order is enforced, because it has to be: the gating tree and the marker
-panel do not exist until the workspace has been read.
+panel do not exist until the workspaces have been read.
 
-**1 — Data.** Pick the `.wsp` file and the FCS directory, either by typing a
-path or through the Browse tree, then **Load workspace**. That runs
-`--list_populations`, which builds the full `GatingSet`; on a large workspace it
-takes a while, and the Log tab shows it happening.
+**1 — Data.** Pick the **folder** holding your workspaces and the **folder**
+holding the FCS files, either by typing a path or through the Browse tree, then
+**Load workspaces**. Both are searched recursively: the workspace field shows
+how many `.wsp` it found before you commit to a load, and each workspace is
+paired with its own FCS files by file name, so the folders need no particular
+layout. A single `.wsp` file still works. **Sample group** takes an index or a
+group name such as `All Samples` — a name is what covers several workspaces that
+order their groups differently. Loading runs `--list_populations`, which builds
+a full `GatingSet` per workspace; on large workspaces it takes a while, and the
+Log tab shows it happening.
 
 **2 — Population & markers.** Click a node in the gating tree to set
 `--population`. Below it, either pick a `--subpop_mode`, or turn on **explicit
@@ -90,6 +96,12 @@ gate set** to get checkboxes and tick the gates you want as the colour
 partition (`--subpop_select`). The badges under the tree always show exactly
 what will be passed. Markers come from the same load; leaving the field empty
 means "every marker common to all samples", which is the script's own default.
+
+With more than one workspace, the tree and the marker list are the
+**intersection** across them — gates and markers every workspace has. That is
+not a display choice: the R side refuses a `--population` it cannot resolve in
+every workspace, so anything outside the intersection could not be run anyway.
+The Log tab names the gates that were left out and which workspace lacks them.
 
 **3 — Parameters.** UMAP and plot options. Anything left at its default is
 omitted from the command line, so the printed command stays readable.
@@ -110,7 +122,8 @@ process group. Only one thing runs at a time, inspect included.
 The gallery reads the output directory rather than tracking what the script
 said it wrote, so it shows the truth on disk. Files are grouped into:
 
-* **Overview** — `by_file` and `by_subpopulation`
+* **Overview** — `by_file`, `by_workspace` (only when several workspaces were
+  loaded) and `by_subpopulation`
 * **Markers — all samples** — one conjoint plot per marker
 * **Markers — per sample** — one accordion per marker, whose images are only
   loaded once you open it. A full panel across several samples is hundreds of
@@ -150,11 +163,16 @@ app/
 ### The one dependency on the R side
 
 Step 2 needs the marker panel, which only R can compute. `--list_populations`
-therefore prints three parseable blocks — `Samples in loaded group (N):`,
-`Population tree (N nodes):` and `Common markers (N):` — and
-`services/rscript.py` reads them. Both sides carry a comment saying the format
-is a shared contract. If you change those headers in
+therefore prints four parseable blocks — `Samples in loaded group (N):`,
+`Population tree (N nodes):`, `Common markers (N):` and `Workspaces resolved
+(N):` — and `services/rscript.py` reads them. Both sides carry a comment saying
+the format is a shared contract. If you change those headers in
 `src/visualization/umap_from_flowjo.R`, change the parser too.
+
+The last block, and the `Populations not shared by all workspaces` block after
+it, are indented **four** spaces rather than two. That is load-bearing: the
+first three blocks are collected by two-space item patterns, and a two-space
+indent here would let the population parser swallow the divergence list.
 
 ---
 

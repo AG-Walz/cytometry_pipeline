@@ -27,12 +27,17 @@ def _base_argv() -> list[str]:
     )
 
 
-def inspect_argv(wsp: str, fcs_dir: str, group: int) -> list[str]:
-    """Argv that loads the workspace and prints samples/populations/markers."""
+def inspect_argv(wsp: str, fcs_dir: str, group: str) -> list[str]:
+    """Argv that loads the workspace(s) and prints samples/populations/markers.
+
+    ``group`` is passed through as text: the R side takes either an index or a
+    sample-group *name*, which is what lets one value cover a folder of
+    workspaces that order their groups differently.
+    """
     return _base_argv() + [
         "--wsp", wsp,
         "--fcs_dir", fcs_dir,
-        "--group", str(int(group)),
+        "--group", str(group).strip(),
         "--list_populations",
     ]
 
@@ -55,7 +60,9 @@ def run_argv(params: dict) -> list[str]:
         if value is not None and value != default:
             argv.extend([flag, str(value)])
 
-    add("--group", params.get("group"), config.DEFAULTS["group"])
+    group = params.get("group")
+    add("--group", str(group).strip() if group is not None else None,
+        config.DEFAULTS["group"])
     add("--expected_samples", params.get("expected_samples"),
         config.DEFAULTS["expected_samples"])
 
@@ -100,10 +107,14 @@ def command_string(argv: list[str]) -> str:
 _SAMPLES_HEADER = re.compile(r"^Samples in loaded group \(\s*(\d+)\s*\):\s*$")
 _POPS_HEADER = re.compile(r"^Population tree \(\s*(\d+)\s* nodes\):\s*$")
 _MARKERS_HEADER = re.compile(r"^Common markers \(\s*(\d+)\s*\):\s*$")
+_WORKSPACES_HEADER = re.compile(r"^Workspaces resolved \(\s*(\d+)\s*\):\s*$")
 
 _SAMPLE_ITEM = re.compile(r"^  - (.+?)\s*$")
 _POP_ITEM = re.compile(r"^  (/.*?)\s*$")
 _MARKER_ITEM = re.compile(r"^  (\S.*?)\s*$")
+# Four-space indent, deliberately: it keeps the two-space item patterns above
+# from swallowing this block, which is printed after them.
+_WORKSPACE_ITEM = re.compile(r"^    (\S.*?)\s*$")
 
 
 def _collect(lines: list[str], start: int, item_re: re.Pattern) -> list[str]:
@@ -118,14 +129,20 @@ def _collect(lines: list[str], start: int, item_re: re.Pattern) -> list[str]:
 
 
 def parse_inspect(stdout: str) -> dict:
-    """Extract samples, populations and markers from the inspect output.
+    """Extract samples, populations, markers and workspaces from inspect output.
 
     Missing blocks come back as empty lists rather than raising: the caller
     decides what is fatal (no populations is; an empty marker list is only a
     warning, since the R side prints an explanatory line in that case).
+
+    With several workspaces the samples are the run-wide display labels and the
+    populations are the gates *shared by every workspace* — the only ones a run
+    can use, since the R side refuses a population it cannot resolve everywhere.
     """
     lines = stdout.splitlines()
-    result: dict[str, list[str]] = {"samples": [], "populations": [], "markers": []}
+    result: dict[str, list] = {
+        "samples": [], "populations": [], "markers": [], "workspaces": []
+    }
 
     for i, raw in enumerate(lines):
         line = raw.rstrip("\n")
@@ -138,4 +155,28 @@ def parse_inspect(stdout: str) -> dict:
             # The R side prints an explanatory parenthetical when the set is
             # empty; that is prose, not a marker name.
             result["markers"] = [m for m in markers if not m.startswith("(")]
+        elif _WORKSPACES_HEADER.match(line):
+            result["workspaces"] = [
+                _parse_workspace_row(row)
+                for row in _collect(lines, i + 1, _WORKSPACE_ITEM)
+            ]
     return result
+
+
+def _parse_workspace_row(row: str) -> dict:
+    """One ``label | path | group N "name" | K sample(s)`` row.
+
+    Anything unexpected degrades to a label-only entry rather than raising —
+    this block is for display, and a formatting drift should not break a load
+    that otherwise succeeded.
+    """
+    parts = [p.strip() for p in row.split("|")]
+    entry = {"label": parts[0] if parts else row, "wsp": "", "group": "",
+             "samples": ""}
+    if len(parts) >= 2:
+        entry["wsp"] = parts[1]
+    if len(parts) >= 3:
+        entry["group"] = parts[2]
+    if len(parts) >= 4:
+        entry["samples"] = parts[3]
+    return entry

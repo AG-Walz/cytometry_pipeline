@@ -50,7 +50,7 @@ def register_callbacks() -> None:
         prevent_initial_call=True,
     )
     def start_inspect(_clicks, wsp, fcs_dir, group):
-        form = {"wsp": wsp, "fcs_dir": fcs_dir}
+        form = {"wsp": wsp, "fcs_dir": fcs_dir, "group": group}
         problems = common.validate_inspect(form)
         if problems:
             return _alert(
@@ -63,7 +63,7 @@ def register_callbacks() -> None:
                 color="yellow",
             )
 
-        argv = rscript.inspect_argv(wsp.strip(), fcs_dir.strip(), int(group or 1))
+        argv = rscript.inspect_argv(wsp.strip(), fcs_dir.strip(), group)
         ok, message = RUNNER.start(
             argv, cwd=str(config.REPO_ROOT), kind="inspect",
             meta={"wsp": wsp, "fcs_dir": fcs_dir, "group": group},
@@ -71,8 +71,8 @@ def register_callbacks() -> None:
         if not ok:
             return _alert(f"Could not start R: {message}")
         return _alert(
-            "Loading the workspace — this builds the full GatingSet and can "
-            "take a while on large files. Watch the Log tab.",
+            "Loading — this builds a full GatingSet per workspace and can take "
+            "a while on large files. Watch the Log tab.",
             color="blue",
         )
 
@@ -165,9 +165,15 @@ def register_callbacks() -> None:
             if status == DONE:
                 parsed = rscript.parse_inspect(snap["log"])
                 if not parsed["populations"]:
+                    n_wsp = len(parsed.get("workspaces") or [])
                     feedback = _alert(
+                        "The workspaces loaded but no usable gate was "
+                        "reported — with several workspaces the tree is the "
+                        "gates they all share, so this means their gating "
+                        "trees have nothing in common. See the Log tab."
+                        if n_wsp > 1 else
                         "The workspace loaded but no gating populations were "
-                        "reported. Check the Log tab and the group index."
+                        "reported. Check the Log tab and the sample group."
                     )
                 else:
                     remembered = session_state.load().get("population") or ""
@@ -184,8 +190,10 @@ def register_callbacks() -> None:
                             " No marker is common to all samples — the marker "
                             "picker will be empty."
                         )
+                    n_wsp = len(parsed.get("workspaces") or [])
+                    where = f" across {n_wsp} workspaces" if n_wsp > 1 else ""
                     feedback = _alert(
-                        f"Loaded {len(parsed['samples'])} sample(s) and "
+                        f"Loaded {len(parsed['samples'])} sample(s){where} and "
                         f"{len(parsed['populations'])} gate(s)."
                         f"{note} Continue to step 2.",
                         color="green",

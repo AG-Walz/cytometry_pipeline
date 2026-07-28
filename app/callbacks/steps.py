@@ -10,7 +10,7 @@ from dash import ALL, Input, Output, State, callback, ctx, html, no_update
 
 from app import config
 from app.callbacks import common
-from app.services import gating, rscript, session_state
+from app.services import fs_tree, gating, rscript, session_state
 
 #: Last state written to the session file, so it is only rewritten on a change.
 _last_saved: dict | None = None
@@ -45,6 +45,51 @@ def _problem_list(problems: list[str]):
 
 
 def register_callbacks() -> None:
+    # -- step 1: what is in the workspace folder ---------------------------
+
+    @callback(
+        Output("wsp-scan-preview", "children"),
+        Input({"comp": "fb-input", "bid": "wsp"}, "value"),
+    )
+    def preview_workspaces(wsp):
+        """Show what a --wsp folder actually contains, before loading it.
+
+        A pure Python glob, so it is instant: it costs nothing to be told "4
+        workspaces found" here rather than after a multi-minute GatingSet build.
+        """
+        wsp = (wsp or "").strip()
+        if not wsp:
+            return None
+        problem = common.workspace_problem(wsp)
+        if problem:
+            return _alert(problem, color="yellow")
+
+        found, truncated = fs_tree.find_files(wsp, config.WSP_EXTENSIONS)
+        root = Path(wsp)
+        base = root if root.is_dir() else root.parent
+        names = [str(Path(f).relative_to(base)) for f in found]
+        if len(names) == 1:
+            return dmc.Text(f"1 workspace: {names[0]}", size="xs", c="dimmed")
+        return dmc.Alert(
+            [
+                dmc.Text(
+                    f"{len(names)} workspaces found"
+                    + (" (list truncated)" if truncated else "")
+                    + " — all of them go into one shared UMAP.",
+                    size="sm",
+                    fw=600,
+                ),
+                dmc.Space(h=4),
+                dmc.Group(
+                    [dmc.Badge(n, variant="light", size="sm", tt="none")
+                     for n in names],
+                    gap=4,
+                ),
+            ],
+            color="blue",
+            variant="light",
+        )
+
     # -- stepper navigation ------------------------------------------------
 
     @callback(
@@ -149,20 +194,45 @@ def register_callbacks() -> None:
 
         samples = inspect.get("samples") or []
         markers = inspect.get("markers") or []
-        summary = dmc.Alert(
-            [
-                dmc.Text(
-                    f"{len(samples)} sample(s), {len(populations)} gate(s), "
-                    f"{len(markers)} common marker(s).",
-                    size="sm",
-                    fw=600,
-                ),
+        workspaces = inspect.get("workspaces") or []
+        multi = len(workspaces) > 1
+        body = [
+            dmc.Text(
+                (f"{len(workspaces)} workspace(s), " if multi else "")
+                + f"{len(samples)} sample(s), {len(populations)} gate(s), "
+                f"{len(markers)} common marker(s).",
+                size="sm",
+                fw=600,
+            ),
+        ]
+        if multi:
+            # With several workspaces the gate list is their INTERSECTION, and
+            # saying so here saves you hunting for a gate that only one of them
+            # has. The R side refuses a population it cannot resolve in all.
+            body += [
                 dmc.Space(h=4),
-                dmc.Text(", ".join(samples) or "—", size="xs", c="dimmed"),
-            ],
+                dmc.Text(
+                    "The tree below shows only the gates shared by every "
+                    "workspace — those are the ones a run can use.",
+                    size="xs",
+                ),
+                dmc.Space(h=6),
+                dmc.Group(
+                    [dmc.Badge(w.get("label", "?"), variant="light", size="sm",
+                               tt="none")
+                     for w in workspaces],
+                    gap=4,
+                ),
+            ]
+        body += [
+            dmc.Space(h=4),
+            dmc.Text(", ".join(samples) or "—", size="xs", c="dimmed"),
+        ]
+        summary = dmc.Alert(
+            body,
             color="green",
             variant="light",
-            title="Workspace loaded",
+            title="Workspaces loaded" if multi else "Workspace loaded",
         )
         return (
             data,

@@ -23,9 +23,11 @@ def _number(id_: str, label: str, value, **kwargs) -> dmc.NumberInput:
 def _step_data(state: dict) -> list:
     return [
         dmc.Text(
-            "Point at a FlowJo workspace and the directory holding its FCS "
-            "files, then load it. The gating tree and marker panel only exist "
-            "once the workspace has been read, so steps 2–4 stay locked until "
+            "Point at the folder holding your FlowJo workspaces and the folder "
+            "holding the FCS files, then load them. Both are searched "
+            "recursively, and each workspace is paired with its own FCS files "
+            "by file name. The gating tree and marker panel only exist once "
+            "the workspaces have been read, so steps 2–4 stay locked until "
             "this succeeds.",
             size="sm",
             c="dimmed",
@@ -33,18 +35,20 @@ def _step_data(state: dict) -> list:
         dmc.Space(h=14),
         browser_field(
             "wsp",
-            "FlowJo workspace (.wsp)",
-            "The workspace whose gating you want to use",
-            mode="file",
+            "FlowJo workspace folder",
+            "Searched recursively for .wsp — a single .wsp file also works",
+            mode="dir",
             extensions=config.WSP_EXTENSIONS,
-            placeholder="/path/to/workspace.wsp",
+            placeholder="/path/to/workspaces",
             value=state["wsp"],
         ),
+        dmc.Space(h=6),
+        html.Div(id="wsp-scan-preview"),
         dmc.Space(h=12),
         browser_field(
             "fcs",
-            "FCS directory",
-            "Directory containing the FCS files the workspace references",
+            "FCS folder",
+            "Searched recursively; subfolders need no particular layout",
             mode="dir",
             placeholder="/path/to/fcs",
             value=state["fcs_dir"],
@@ -52,14 +56,12 @@ def _step_data(state: dict) -> list:
         dmc.Space(h=12),
         dmc.Group(
             [
-                _number(
-                    "in-group",
-                    "Workspace group",
-                    state["group"],
-                    min=1,
-                    step=1,
-                    allowDecimal=False,
-                    description="Sample group index to load",
+                dmc.TextInput(
+                    id="in-group",
+                    label="Sample group",
+                    value=str(state["group"]),
+                    description='Index (1) or name ("All Samples")',
+                    placeholder="1",
                     style={"flex": 1},
                 ),
                 _number(
@@ -69,7 +71,7 @@ def _step_data(state: dict) -> list:
                     min=0,
                     step=1,
                     allowDecimal=False,
-                    description="0 = no check; warns on mismatch",
+                    description="0 = no check; total across workspaces",
                     style={"flex": 1},
                 ),
             ],
@@ -78,7 +80,7 @@ def _step_data(state: dict) -> list:
         ),
         dmc.Space(h=16),
         dmc.Button(
-            "Load workspace",
+            "Load workspaces",
             id="btn-inspect",
             leftSection=dmc.Text("▸", size="sm"),
             fullWidth=True,
