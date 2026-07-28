@@ -62,6 +62,16 @@ Rscript scripts/umap_from_flowjo.R --wsp data/Killing_AML.wsp --fcs_dir data --l
 Rscript scripts/umap_from_flowjo.R --population "Lymphocytes/Single Cells/Viable cells" --output_dir results/umap_viable
 ```
 
+Prefer a GUI? [`app/`](app/README.md) is a Dash front-end for exactly this
+script — pick the paths in a file browser, click a gate in the workspace's own
+gating tree, watch the log, and browse the plots it wrote. It runs the same
+command line and shows it to you before running it.
+
+```bash
+conda activate cytometry_env
+python app/app.py    # -> http://127.0.0.1:8050
+```
+
 ---
 
 ## Choosing a Pipeline
@@ -91,6 +101,7 @@ Rscript pipelines/pipeline_X_name.R --config config/pipeline_X_config.R
 | [File Formats](docs/file-formats.md) | Input and output file format specifications |
 | [Standalone Scripts](docs/standalone-scripts.md) | Using individual scripts outside pipelines |
 | [UMAP from a FlowJo Population](docs/scripts/umap-from-flowjo.md) | Extract a gated population from a `.wsp` + FCS, build a shared UMAP, colour by sample, FlowJo subgate, and every marker (conjoint + per file) |
+| [FlowJo → UMAP Dash app](app/README.md) | Browser front-end for that script: file/gate pickers, live log, results gallery |
 | [R_shared API Reference](docs/r-shared-reference.md) | Shared utility library (8 modules, 50+ functions) |
 | [Composability Guide](docs/composability-guide.md) | Cross-pipeline data flow, format contracts, example workflows |
 | [Methods Guide](docs/methods-guide.md) | Decision flowcharts and 19 deep-dive pages with peer-reviewed references |

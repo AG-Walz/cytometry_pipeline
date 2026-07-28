@@ -31,6 +31,7 @@ If you are **looking for a specific utility function** (CSV I/O, memory manageme
 | [File Formats](file-formats.md) | Input and output format specifications for all pipelines (FCS, CSV, WSP, plots) |
 | [Standalone Scripts](standalone-scripts.md) | Using individual module functions outside of pipelines, with signatures and examples |
 | [UMAP from a FlowJo Population](scripts/umap-from-flowjo.md) | Extract a gated population from a `.wsp` + FCS, build a shared UMAP, and colour it by every marker (conjoint + per file) |
+| [FlowJo → UMAP Dash app](../app/README.md) | Browser front-end for that script: file and gate pickers, live log, results gallery |
 | [R_shared API Reference](r-shared-reference.md) | Complete function reference for all 8 shared utility modules (io, gui, memory, cluster, plot, flowframe, fcs, stats) |
 | [Composability Guide](composability-guide.md) | Data flow contracts, format specs, and 8 example cross-pipeline workflows |
 | [Methods Guide](methods-guide.md) | Decision flowcharts and 19 deep-dive pages on every statistical, clustering, transformation, and QC method |
@@ -103,6 +104,8 @@ cytometry/
 │   ├── methods/                 Per-method deep-dive pages (peer-reviewed refs)
 │   ├── scripts/                  Standalone helper-script guides
 │   │   └── umap-from-flowjo.md   FlowJo population -> shared UMAP by marker
+├── app/                      Dash front-end for umap_from_flowjo.R
+│   └── README.md                 Running it, the four steps, layout
 │   ├── pipelines/                Per-pipeline deep-dive guides
 │   │   ├── pipeline-A-raw-fcs.md
 │   │   ├── pipeline-B-csv-expression.md

@@ -66,7 +66,7 @@ conda activate cytometry_env
 
 Always run from the repository root with the environment activated.
 
-**1. List the gating tree so you can pick a population:**
+**1. Inspect the workspace so you can pick a population:**
 
 ```bash
 Rscript scripts/umap_from_flowjo.R \
@@ -75,7 +75,30 @@ Rscript scripts/umap_from_flowjo.R \
   --list_populations
 ```
 
-This prints every population path in the workspace and exits.
+This loads the workspace once and prints everything you need to configure a
+run — the samples in the group, every population path, and the marker panel
+common to all samples — then exits without analysing anything:
+
+```
+Samples in loaded group (2):
+  - Killing_AML_Pool_001.fcs_0
+  - Killing_AML_Pool_002.fcs_1
+
+Population tree (37 nodes):
+  /Lymphocytes
+  /Lymphocytes/Single Cells
+  ...
+
+Common markers (12):
+  CD3
+  CD4
+  ...
+```
+
+Markers are a property of the channels rather than of a gate, so they are
+evaluated at the root node and are the same set a real run would use. These
+three block headers are a stable format that [the Dash front-end](../../app/README.md)
+parses — if you change them, update `app/services/rscript.py` too.
 
 **2. Run the analysis** (defaults already target the bundled example data and
 the `Lymphocytes/Single Cells/Viable cells` population):
@@ -163,7 +186,7 @@ Rscript scripts/umap_from_flowjo.R --subpop_select \
 | `--wsp` | `data/Killing_AML.wsp` | Path to the FlowJo `.wsp` workspace file |
 | `--fcs_dir` | `data` | Directory containing the FCS files referenced by the wsp |
 | `--population` | `Lymphocytes/Single Cells/Viable cells` | Population path to extract (leading `/` optional; suffix-matched) |
-| `--list_populations` | off | Print the population tree and exit (no analysis) |
+| `--list_populations` | off | Load the workspace, print its samples, population tree and common markers, then exit (no analysis) |
 | `--group` | `1` | FlowJo workspace sample-group index to load |
 | `--expected_samples` | `0` | If `> 0`, warn when the loaded group does not contain this many samples |
 | `--markers` | all common | Comma-separated subset of marker names to use/plot |
@@ -249,9 +272,10 @@ umap_from_flowjo(
 
 `umap_from_flowjo()` parameters mirror the CLI options (e.g. `markers` and
 `subpop_select` take character vectors rather than comma-separated strings).
-With `list_populations = TRUE` it prints the gating tree and returns the
-population paths; otherwise it returns (invisibly) the `umap_coords`, the master
-`umap_df`, and the resolved `output_dir`.
+With `list_populations = TRUE` it prints the inspect blocks and returns
+(invisibly) a list of `populations`, `samples` and `markers`; otherwise it
+returns (invisibly) the `umap_coords`, the master `umap_df`, and the resolved
+`output_dir`.
 
 ---
 
@@ -282,6 +306,7 @@ population paths; otherwise it returns (invisibly) the `umap_coords`, the master
 
 ## Related
 
+- [FlowJo → UMAP Dash app](../../app/README.md) — a GUI over this script
 - [Getting Started](../getting-started.md) — environment setup
 - [Pipeline D — FlowJo Comparison](../pipelines/pipeline-D-flowjo-comparison.md) — inter-rater gating comparison from `.wsp` files
 - [Pipeline E — Preprocessed UMAP](../pipelines/pipeline-E-preprocessed-umap.md) — UMAP/clustering from preprocessed FCS (no gating)

@@ -81,3 +81,16 @@ dependencies:
   - libpng        # [linux,osx]
   - libjpeg-turbo # [linux,osx]
   # Windows users: install Rtools from https://cran.r-project.org/bin/windows/Rtools/
+
+  # --- Dash front-end (app/) -------------------------------------------------
+  # Only needed to run the FlowJo->UMAP GUI; the pipeline and the standalone
+  # scripts do not import any of this. Python lives in the SAME environment so
+  # the app can call `Rscript` directly with no cross-environment plumbing.
+  # dash-mantine-components is not packaged on conda-forge, so the three Dash
+  # packages come from pip — keeping the conda solve as small as possible.
+  - python>=3.10
+  - pip
+  - pip:
+      - dash>=3.0
+      - dash-mantine-components>=2.0
+      - dash-iconify
