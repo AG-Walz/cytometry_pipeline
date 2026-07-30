@@ -116,13 +116,22 @@ def output_dir_of(form: dict) -> str:
 
 
 def run_params(form: dict, populations: list[str]) -> dict:
-    """Everything ``rscript.run_argv`` needs, derived from the form."""
+    """Everything ``rscript.run_argv`` needs, derived from the form.
+
+    An explicit whitelist, not a copy of ``form``: gate selections and other
+    UI-only state must not reach the command line. The cost is that a NEW FORM
+    FIELD IS INVISIBLE TO THE RUN UNTIL IT IS LISTED HERE — it reaches the form
+    dict, is silently dropped on the way to the command, and the only symptom is
+    a flag that does nothing. Add the key here whenever you add one to
+    ``FORM_FIELDS``.
+    """
     return {
         "wsp": (form.get("wsp") or "").strip(),
         "fcs_dir": (form.get("fcs_dir") or "").strip(),
         "population": population_of(form),
         "output_dir": output_dir_of(form),
         "group": form.get("group"),
+        "allow_missing_samples": bool(form.get("allow_missing_samples")),
         "sample_metadata": (form.get("sample_metadata") or "").strip(),
         "sample_pattern": (form.get("sample_pattern") or "").strip(),
         "annotate": form.get("annotate") or [],
