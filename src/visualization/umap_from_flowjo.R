@@ -99,6 +99,87 @@ resolve_population <- function(requested, available) {
 }
 
 # -----------------------------------------------------------------------------
+# Parse a per-workspace population mapping: which gate each workspace
+# contributes to the shared embedding.
+#
+# Why this exists: one --population has to resolve in EVERY workspace, so a
+# study whose analysts named the same biology differently ("Live/CD3" here,
+# "Viable/CD3+" there) cannot be pooled at all — and with a generic "All
+# Samples" group the gates common to every workspace can be three nodes deep.
+# The mapping makes the pairing EXPLICIT: you say which gate in each workspace
+# is the population, and workspaces you leave out are excluded from the run.
+#
+# That explicitness is the point. Pooling cells from gates that are not the same
+# gate is a scientific error, and the only one who can say whether two
+# differently-named gates are the same biology is the person who drew them.
+#
+# Two forms, because a FlowJo gate name may contain a comma but a file never
+# has to be quoted:
+#   * a path to a two-column file (TSV, or CSV/semicolon), workspace then gate,
+#     an optional header row starting "workspace" being ignored
+#   * inline "label=/gate;label2=/other gate", split on ';' and the FIRST '='
+#
+# Returns a named character vector (names = workspace labels), or NULL for "".
+# -----------------------------------------------------------------------------
+parse_population_map <- function(spec, labels = NULL) {
+  if (is.null(spec) || !nzchar(spec)) return(NULL)
+
+  if (file.exists(spec)) {
+    txt <- readLines(spec, warn = FALSE)
+    txt <- trimws(txt)
+    txt <- txt[nzchar(txt) & !startsWith(txt, "#")]
+    if (!length(txt)) stop("population_map file is empty: ", spec)
+    sep <- if (any(grepl("\t", txt))) "\t" else if (any(grepl(";", txt))) ";" else ","
+    parts <- strsplit(txt, sep, fixed = TRUE)
+    bad <- vapply(parts, function(p) length(p) < 2L, logical(1))
+    if (any(bad)) {
+      stop("population_map file ", spec, " has ", sum(bad), " line(s) without ",
+           "two '", sep, "'-separated fields, e.g.:\n  ", txt[which(bad)[1]])
+    }
+    ws  <- trimws(vapply(parts, function(p) p[1], character(1)))
+    pop <- trimws(vapply(parts, function(p) paste(p[-1], collapse = sep),
+                         character(1)))
+    if (tolower(ws[1]) %in% c("workspace", "wsp", "label")) {
+      ws <- ws[-1]; pop <- pop[-1]
+    }
+  } else {
+    pairs <- trimws(strsplit(spec, ";", fixed = TRUE)[[1]])
+    pairs <- pairs[nzchar(pairs)]
+    if (!length(pairs)) return(NULL)
+    has_eq <- grepl("=", pairs, fixed = TRUE)
+    if (!all(has_eq)) {
+      stop("population_map entries must be 'workspace=gate' separated by ';'. ",
+           "This one has no '=':\n  ", pairs[!has_eq][1],
+           "\n(If you meant a file, it does not exist: ", spec, ")")
+    }
+    ws  <- trimws(sub("=.*$", "", pairs))
+    pop <- trimws(sub("^[^=]*=", "", pairs))
+  }
+
+  if (!length(ws)) return(NULL)
+  if (any(!nzchar(pop))) {
+    stop("population_map has no gate for workspace(s): ",
+         paste(ws[!nzchar(pop)], collapse = ", "))
+  }
+  if (anyDuplicated(ws)) {
+    dup <- unique(ws[duplicated(ws)])
+    stop("population_map names the same workspace more than once: ",
+         paste(dup, collapse = ", "),
+         "\nOne gate per workspace — pool several gates by selecting their ",
+         "common parent instead.")
+  }
+  if (!is.null(labels)) {
+    unknown <- setdiff(ws, labels)
+    if (length(unknown)) {
+      stop("population_map names workspace(s) that were not loaded: ",
+           paste(unknown, collapse = ", "),
+           "\nLoaded workspaces are:\n  ", paste(labels, collapse = "\n  "))
+    }
+  }
+  stats::setNames(pop, ws)
+}
+
+# -----------------------------------------------------------------------------
 # Discover the candidate FlowJo subgates UNDER `population` to colour by.
 #
 # `pop_paths_union` should be the UNION of paths across all samples, because a
@@ -558,7 +639,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              plot_width = 10, plot_height = 8,
                              output_formats = list(pdf = FALSE, png = FALSE, svg = TRUE),
                              list_populations = FALSE,
-                             allow_missing_samples = FALSE) {
+                             allow_missing_samples = FALSE,
+                             population_map = NULL) {
   require(CytoML)
   require(flowWorkspace)
   require(flowCore)
@@ -678,6 +760,26 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     stop("no workspace could be loaded; see the failures above.", call. = FALSE)
   }
 
+  # A population map is also a workspace SELECTION: a workspace with no entry
+  # contributes no gate and therefore no cells. Applied here, before anything
+  # downstream is derived, so sample labels, annotations and the shared-file
+  # accounting all describe the run that is actually happening.
+  pop_map <- parse_population_map(population_map, names(gs_list))
+  if (!is.null(pop_map) && !isTRUE(list_populations)) {
+    dropped_by_map <- setdiff(names(gs_list), names(pop_map))
+    gs_list <- gs_list[names(gs_list) %in% names(pop_map)]
+    specs   <- specs[names(specs) %in% names(pop_map)]
+    if (!length(gs_list)) {
+      stop("the population map excludes every workspace that loaded.",
+           call. = FALSE)
+    }
+    if (length(dropped_by_map)) {
+      cat(sprintf(
+        "\n%d workspace(s) are NOT in this UMAP because the population map gives\nthem no gate: %s\n",
+        length(dropped_by_map), paste(dropped_by_map, collapse = ", ")))
+    }
+  }
+
   # Sample display labels across the WHOLE run. Names are kept exactly as they
   # were unless two workspaces genuinely collide, so a single-workspace run
   # produces the same legends and the same file names as it always did.
@@ -770,6 +872,17 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
           "patient, timepoint, ...)\n", sep = "")
     }
 
+    # Every workspace's OWN tree, which is what a per-workspace population
+    # choice needs: the shared block above is an intersection and collapses to
+    # almost nothing when the workspaces were gated independently. Six-space
+    # indent for the gates so the two- and four-space item patterns in
+    # app/services/rscript.py cannot swallow them; part of the same contract.
+    cat("\nPopulations by workspace (", length(pops_by_wsp), "):\n", sep = "")
+    for (w in names(pops_by_wsp)) {
+      cat(sprintf("    %s | %d node(s)\n", w, length(pops_by_wsp[[w]])))
+      for (p in pops_by_wsp[[w]]) cat("      ", p, "\n", sep = "")
+    }
+
     cat("\nWorkspaces resolved (", length(specs), "):\n", sep = "")
     for (label in names(specs)) {
       spec <- specs[[label]]
@@ -797,41 +910,71 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
           "\"\n", sep = "")
     }
     return(invisible(list(populations = shared_pops,
+                          populations_by_workspace = pops_by_wsp,
                           samples = sample_index$display,
                           markers = common_markers,
                           workspaces = names(specs),
                           annotations = sample_annotations)))
   }
 
-  if (is.null(population) || !nzchar(population)) {
+  if (is.null(pop_map) && (is.null(population) || !nzchar(population))) {
     stop("population is required (or use list_populations = TRUE to see options).")
   }
 
   # --- 2a. Resolve the population in EVERY workspace. ------------------------
   # Resolved independently per workspace (the trees can differ above the
-  # population), and every failure is reported together — pooling cells from
-  # gates that are not the same gate would be a silent scientific error, so a
-  # population missing anywhere is fatal.
-  resolutions <- lapply(pops_by_wsp, function(p)
-    try_resolve_population(population, p))
+  # population). With ONE --population every failure is reported together and is
+  # fatal: pooling cells from gates that are not the same gate would be a silent
+  # scientific error, and a request that cannot be found somewhere may well have
+  # landed on the wrong gate where it was found.
+  #
+  # With a population MAP the pairing is no longer inferred from a shared name —
+  # it is stated per workspace — so differently-named gates pool by design. A
+  # mapped gate that does not resolve is still fatal, because it is an explicit
+  # instruction that could not be carried out.
+  if (!is.null(pop_map)) {
+    resolutions <- lapply(names(gs_list), function(w)
+      try_resolve_population(pop_map[[w]], pops_by_wsp[[w]]))
+    names(resolutions) <- names(gs_list)
+  } else {
+    resolutions <- lapply(pops_by_wsp, function(p)
+      try_resolve_population(population, p))
+  }
   failed <- names(resolutions)[!vapply(resolutions, function(r) r$ok, logical(1))]
   if (length(failed)) {
     detail <- vapply(failed, function(w) sprintf(
       "  %s (%s)\n    %s", w, specs[[w]]$wsp, resolutions[[w]]$reason),
       character(1))
+    if (!is.null(pop_map)) {
+      stop("the population map names a gate that does not exist in its ",
+           "workspace.\n\n", paste(detail, collapse = "\n"),
+           "\n\nRun with list_populations = TRUE to see each workspace's own ",
+           "gates, and correct the entry (or remove that workspace).",
+           call. = FALSE)
+    }
     stop("--population could not be resolved in every workspace.\n\n",
          paste(detail, collapse = "\n"),
          "\n\nRun with list_populations = TRUE to see the gates shared by all ",
-         "workspaces, or drop the odd workspace out of the --wsp folder.")
+         "workspaces, or select a gate per workspace with --population_map.")
   }
   pop_by_wsp <- vapply(resolutions, function(r) r$path, character(1))
   population <- pop_by_wsp[[1]]   # display / file-name form
-  cat("\nTarget population resolved to:", population, "\n")
-  if (n_wsp > 1 && length(unique(pop_by_wsp)) > 1) {
-    cat("  (it resolves to a different absolute path in some workspaces:\n")
+  if (!is.null(pop_map)) {
+    # Named per workspace, so the pairing being pooled is on the record next to
+    # the plots rather than only in whatever built the command.
+    cat("\nPopulation per workspace (", length(pop_by_wsp),
+        " workspace(s), paired by your choice):\n", sep = "")
     for (w in names(pop_by_wsp)) cat("     ", w, ": ", pop_by_wsp[[w]], "\n",
                                      sep = "")
-    cat("   they are treated as the same population.)\n")
+    cat("  Plots and file names use '", population, "'.\n", sep = "")
+  } else {
+    cat("\nTarget population resolved to:", population, "\n")
+    if (n_wsp > 1 && length(unique(pop_by_wsp)) > 1) {
+      cat("  (it resolves to a different absolute path in some workspaces:\n")
+      for (w in names(pop_by_wsp)) cat("     ", w, ": ", pop_by_wsp[[w]], "\n",
+                                       sep = "")
+      cat("   they are treated as the same population.)\n")
+    }
   }
 
   # --- 2b. Discover the FlowJo subgates UNDER `population` to colour by. ------
