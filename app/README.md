@@ -84,11 +84,19 @@ holding the FCS files, either by typing a path or through the Browse tree, then
 **Load workspaces**. Both are searched recursively: the workspace field shows
 how many `.wsp` it found before you commit to a load, and each workspace is
 paired with its own FCS files by file name, so the folders need no particular
-layout. A single `.wsp` file still works. **Sample group** takes an index or a
-group name such as `All Samples` — a name is what covers several workspaces that
-order their groups differently. Loading runs `--list_populations`, which builds
-a full `GatingSet` per workspace; on large workspaces it takes a while, and the
-Log tab shows it happening.
+layout. A single `.wsp` file still works. Loading runs `--list_populations`,
+which builds a full `GatingSet` per workspace; on large workspaces it takes a
+while, and the Log tab shows it happening.
+
+**Sample group** sits under **Advanced**, collapsed, because group 1 is "All
+Samples" in almost every workspace and nobody should have to think about it. It
+stays in step 1 rather than moving to Parameters for a reason: the group decides
+which samples are loaded *at all*, so it has to be set before the load that
+builds the gating tree. It accepts an index or a group name — a name is what
+covers several workspaces that order their groups differently. A value other
+than the default (or a blank one) is shown as a badge on the collapsed header,
+so a setting that changes which samples get analysed can never hide behind a
+closed panel.
 
 **2 — Population & markers.** Click a node in the gating tree to set
 `--population`. Below it, either pick a `--subpop_mode`, or turn on **explicit

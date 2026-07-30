@@ -15,7 +15,7 @@
 #
 # Many workspaces go into ONE embedding, so their coordinates are comparable.
 # Workspace discovery and the pairing of each workspace to its FCS files live in
-# src/loading/discover_flowjo_workspaces.R; the two gating trees are reconciled
+# src/loading/flowjo_workspace.R; the two gating trees are reconciled
 # through the gate paths RELATIVE to the selected population, which is the only
 # key comparable across workspaces that name their ancestors differently.
 # NOTHING here corrects for batch effects between workspaces (see
@@ -498,6 +498,17 @@ distinct_palette <- function(n) {
 #   differently).
 # @param expected_samples If > 0, warn when the run does not total this many
 #   samples across all workspaces.
+# @param sample_metadata Optional CSV keyed on sample (a `sample_id` column, or
+#   the first column) whose other columns become per-sample annotations —
+#   patient, timepoint, response, anything. Each requested column yields one
+#   plot coloured by it plus one plot per level, all on the SAME embedding.
+# @param sample_pattern Optional regex with NAMED capture groups applied to the
+#   sample name when no metadata file is given, e.g.
+#   "(?<patient>MTB[0-9]+)_(?<timepoint>TP[0-9]+)".
+# @param annotate Optional character vector naming which annotation columns to
+#   plot (default: all of them).
+# @param sample_id_column Optional name of the metadata column holding the
+#   sample identifier (default: `sample_id`, else the first column).
 # @param markers Optional character vector subset of marker names (NULL = all
 #   common non-scatter markers).
 # @param subpop_mode One of 'cd4cd8', 'direct', 'deepest', 'none'.
@@ -517,6 +528,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              population = "Lymphocytes/Single Cells/Viable cells",
                              output_dir = "umap_flowjo",
                              group = "1", expected_samples = 0L,
+                             sample_metadata = NULL, sample_pattern = NULL,
+                             annotate = NULL, sample_id_column = NULL,
                              markers = NULL, subpop_mode = "furthest",
                              subpop_select = NULL, normalize = "none",
                              downsample = 0L, n_neighbors = 15L, min_dist = 0.1,
@@ -552,7 +565,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # --- 1. Discover the workspaces and pair each with its FCS files. ----------
   # Everything is resolved BEFORE any GatingSet is built, so a mislaid file or a
   # bad --group is reported for every workspace at once instead of one slow load
-  # at a time. See src/loading/discover_flowjo_workspaces.R.
+  # at a time. See src/loading/flowjo_workspace.R.
   wsp_paths <- find_workspace_files(wsp_path)
   wsp_names <- workspace_labels(wsp_paths)
   n_wsp     <- length(wsp_paths)
@@ -571,12 +584,19 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   if (nzchar(report)) stop(report)
   specs <- resolved$specs
 
+  # Overlapping workspaces double-count cells rather than failing, so this is
+  # said loudly and early, before the slow part.
+  shared_report <- format_shared_file_report(specs)
+  if (nzchar(shared_report)) {
+    cat("\nWARNING: ", shared_report, "\n", sep = "")
+  }
+
   # --- 1b. Build one GatingSet per workspace. --------------------------------
   gs_list <- list()
   for (label in names(specs)) {
     spec <- specs[[label]]
-    cat(sprintf("\nBuilding GatingSet for '%s' — group %d (\"%s\"), %d sample(s)\n",
-                label, spec$group_index, spec$group_name, nrow(spec$files)))
+    cat(sprintf("\nBuilding GatingSet for '%s' — %s, %d sample(s)\n",
+                label, describe_group(spec), nrow(spec$files)))
     gs_list[[label]] <- build_workspace_gatingset(spec)
   }
 
@@ -595,6 +615,23 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
             "raw sample names for display.")
     sample_index$display <- paste0(sample_index$workspace, ": ",
                                    sample_index$raw)
+  }
+
+  # Per-sample annotations (patient, timepoint, ...). Resolved here, once, so a
+  # bad column name or an unmatched metadata table is reported before the slow
+  # part rather than after it.
+  sample_annotations <- resolve_sample_annotations(
+    sample_index, metadata_file = sample_metadata, pattern = sample_pattern,
+    annotate = annotate, id_column = sample_id_column)
+  annot_cols <- colnames(sample_annotations)
+  if (length(annot_cols)) {
+    cat("\nSample annotations (", length(annot_cols), "): ",
+        paste(annot_cols, collapse = ", "), "\n", sep = "")
+    for (cl in annot_cols) {
+      lv <- unique(sample_annotations[[cl]])
+      cat(sprintf("  %s: %d level(s) — %s\n", cl, length(lv),
+                  paste(utils::head(lv, 8), collapse = ", ")))
+    }
   }
 
   cat("\nSamples in loaded group (", nrow(sample_index), "):\n", sep = "")
@@ -644,12 +681,22 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       cat("  (no marker common to all samples — check the panel / group)\n")
     }
 
+    cat("\nSample annotations (", length(annot_cols), "):\n", sep = "")
+    for (cl in annot_cols) {
+      lv <- unique(sample_annotations[[cl]])
+      cat(sprintf("    %s | %d level(s) | %s\n", cl, length(lv),
+                  paste(lv, collapse = ", ")))
+    }
+    if (length(annot_cols) == 0) {
+      cat("    (none — pass sample_metadata or sample_pattern to colour by ",
+          "patient, timepoint, ...)\n", sep = "")
+    }
+
     cat("\nWorkspaces resolved (", length(specs), "):\n", sep = "")
     for (label in names(specs)) {
       spec <- specs[[label]]
-      cat(sprintf("    %s | %s | group %d \"%s\" | %d sample(s)\n",
-                  label, spec$wsp, spec$group_index, spec$group_name,
-                  nrow(spec$files)))
+      cat(sprintf("    %s | %s | %s | %d sample(s)\n",
+                  label, spec$wsp, describe_group(spec), nrow(spec$files)))
     }
 
     divergent <- setdiff(unique(unlist(pops_by_wsp, use.names = FALSE)),
@@ -674,7 +721,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     return(invisible(list(populations = shared_pops,
                           samples = sample_index$display,
                           markers = common_markers,
-                          workspaces = names(specs))))
+                          workspaces = names(specs),
+                          annotations = sample_annotations)))
   }
 
   if (is.null(population) || !nzchar(population)) {
@@ -907,6 +955,18 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     stringsAsFactors = FALSE
   )
 
+  # Annotation columns, expanded from per-SAMPLE to per-CELL through the same
+  # per-sample order and row counts as file_labels, so they cannot drift out of
+  # alignment with the coordinates. Prefixed to keep an annotation called
+  # "file" or "subpop" from colliding with the columns above.
+  annot_of <- match(sample_labels, sample_index$display)
+  stopifnot(!anyNA(annot_of))
+  for (cl in annot_cols) {
+    umap_df[[paste0("annot_", cl)]] <-
+      rep(sample_annotations[[cl]][annot_of], n_cells_per)
+  }
+  stopifnot(nrow(umap_df) == nrow(combined_matrix))
+
   # --- 7. Plotting. ----------------------------------------------------------
   make_outdir(output_dir)
   pt_size  <- point_size
@@ -1056,6 +1116,64 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       ncol = sp_ncol)
     cat(sprintf("Saved: by-subpopulation categorical plot (%d subgate(s) + %d catch-all level(s))\n",
                 length(present_real), length(catchall)))
+  }
+
+  # 7a-quater. Sample annotations: for EACH column one plot coloured by it, and
+  # then one plot per level with that level drawn over the whole embedding in
+  # grey. One embedding, many views — the grey context is the point, because an
+  # isolated subset gives you no idea where it sits relative to everything else,
+  # which is exactly what a shared embedding is for.
+  for (cl in annot_cols) {
+    values <- umap_df[[paste0("annot_", cl)]]
+    # Real levels first (sorted), the Unassigned catch-all last and in grey, so
+    # it can never take a colour a real level needs.
+    real   <- sort(setdiff(unique(values), .ANNOT_UNASSIGNED))
+    levels_all <- c(real, intersect(.ANNOT_UNASSIGNED, unique(values)))
+
+    counts <- table(factor(values, levels = levels_all))
+    lab    <- sprintf("%s (n=%d)", levels_all, as.integer(counts[levels_all]))
+    cols   <- stats::setNames(distinct_palette(length(real)), real)
+    if (.ANNOT_UNASSIGNED %in% levels_all) {
+      cols[.ANNOT_UNASSIGNED] <- "grey70"
+    }
+
+    df_a <- umap_df
+    df_a$.annot <- factor(values, levels = levels_all)
+
+    a_ncol <- legend_ncol(length(levels_all), plot_height)
+    p_a <- ggplot(df_a, aes(x = UMAP1, y = UMAP2, color = .annot)) +
+      geom_point(size = pt_size, alpha = pt_alpha) +
+      scale_color_manual(values = cols, breaks = levels_all, labels = lab,
+                         drop = FALSE) +
+      umap_coord() +
+      base_umap_theme +
+      guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
+                                  ncol = a_ncol)) +
+      labs(title = paste0("UMAP - ", population, " - by ", cl), color = cl)
+    save_categorical(
+      p_a,
+      create_safe_filename(paste0("umap_", pop_tag, "_annot_", cl, "_ALL")),
+      legend_strings = c(lab, cl), ncol = a_ncol)
+
+    # One plot per level: the whole embedding in grey, this level on top.
+    for (lv in levels_all) {
+      rows <- which(values == lv)
+      if (length(rows) == 0) next
+      p_lv <- ggplot(mapping = aes(x = UMAP1, y = UMAP2)) +
+        geom_point(data = umap_df, color = "grey88", size = pt_size,
+                   alpha = pt_alpha) +
+        geom_point(data = umap_df[rows, , drop = FALSE],
+                   color = unname(cols[lv]), size = pt_size, alpha = pt_alpha) +
+        umap_coord() +
+        base_umap_theme +
+        labs(title = paste0("UMAP - ", population, " - ", cl, ": ", lv),
+             subtitle = sprintf("%d of %d cells (grey = all cells)",
+                                length(rows), nrow(umap_df)))
+      save_one(p_lv, create_safe_filename(
+        paste0("umap_", pop_tag, "_annot_", cl, "_level_", lv)))
+    }
+    cat(sprintf("Saved: %s (1 coloured + %d level plot(s))\n", cl,
+                length(levels_all)))
   }
 
   files_unique <- unique(file_labels)

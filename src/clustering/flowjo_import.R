@@ -5,9 +5,18 @@
 # Merged from: R_scripts/04_gating/FlowJo_wsp.R + flowWorkspace.R
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# Respect a shared_dir the caller already set; only guess from the working
+# directory when there is none (see the same note in loading/load_flowjo_wsp.R).
+if (!exists("shared_dir")) {
+  shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+}
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "cluster_utils.R"))
+
+# All CytoML workspace calls live in src/loading/flowjo_workspace.R.
+if (!exists("wsp_open", mode = "function")) {
+  source(file.path(dirname(shared_dir), "loading", "flowjo_workspace.R"))
+}
 
 #' Import cluster/gate assignments from a FlowJo workspace
 #'
@@ -23,9 +32,9 @@ import_flowjo_gates <- function(wsp_path, fcs_dir = dirname(wsp_path),
 
   stopifnot(file.exists(wsp_path))
 
-  # Parse and import
-  ws <- CytoML::open_flowjo_xml(wsp_path)
-  gs <- CytoML::flowjo_to_gatingset(ws, name = 1, path = fcs_dir)
+  # Parse and import (via loading/flowjo_workspace.R)
+  ws <- wsp_open(wsp_path)
+  gs <- wsp_to_gatingset(ws, group = 1, path = fcs_dir)
 
   sample_names <- flowWorkspace::sampleNames(gs)
   all_pops <- flowWorkspace::gs_get_pop_paths(gs, path = "full")

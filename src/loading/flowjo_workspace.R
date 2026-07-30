@@ -1,9 +1,21 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# loading/discover_flowjo_workspaces.R — Find and pair many FlowJo workspaces
+# loading/flowjo_workspace.R — THE FlowJo workspace layer
 # =============================================================================
-# Turns two FOLDER ROOTS — one holding .wsp workspaces, one holding .fcs files,
-# both searched recursively — into a list of ready-to-load workspace specs.
+# Every call into CytoML/flowWorkspace for a .wsp workspace lives here and
+# nowhere else: opening a workspace, listing its sample groups, listing a
+# group's samples, and building a GatingSet. `load_flowjo_wsp.R` and
+# `clustering/flowjo_import.R` delegate to these rather than calling CytoML
+# themselves, so an API change is a fix in ONE file.
+#
+# That is not hypothetical: `fj_ws_get_sample_groups` is exported by CytoML on
+# some installs and flowWorkspace on others, and the hard-coded
+# `flowWorkspace::` form that used to appear in two files failed outright on a
+# real analysis host. See find_wsp_accessor().
+#
+# On top of that it turns two FOLDER ROOTS — one holding .wsp workspaces, one
+# holding .fcs files, both searched recursively — into a list of ready-to-load
+# workspace specs.
 #
 # Why this exists: a .wsp records a full `uri` per sample, but it is the path on
 # the (usually Windows) machine that built the workspace, so it does not exist
@@ -23,6 +35,26 @@
 # discovery, indexing and labelling helpers below deliberately need neither, so
 # they can be tested with base R alone (test_data/test_umap_multi_wsp.R).
 # =============================================================================
+
+# -----------------------------------------------------------------------------
+# The four CytoML entry points. Everything else in the repo goes through these.
+# -----------------------------------------------------------------------------
+
+#' Open a FlowJo .wsp workspace.
+wsp_open <- function(wsp_path) {
+  if (!file.exists(wsp_path)) stop("wsp file not found: ", wsp_path)
+  CytoML::open_flowjo_xml(wsp_path)
+}
+
+#' Build a GatingSet from an open workspace.
+#'
+#' @param ws An object from wsp_open().
+#' @param group Sample group: an integer index, or a group name.
+#' @param path Either a directory holding the FCS files, or a data.frame with
+#'   `sampleID` and `file` columns mapping each sample to its own file.
+wsp_to_gatingset <- function(ws, group = 1L, path, ...) {
+  CytoML::flowjo_to_gatingset(ws, name = group, path = path, ...)
+}
 
 # -----------------------------------------------------------------------------
 # Locate the .wsp workspaces under `root`.
@@ -138,44 +170,83 @@ resolve_fcs_names <- function(names, fcs_index) {
 }
 
 # -----------------------------------------------------------------------------
-# The workspace's sample groups, as a table we control the shape of.
+# Find a workspace accessor wherever the installed stack happens to export it.
 #
-# Isolates the CytoML/flowWorkspace accessor so an API difference on the
-# analysis host is a one-function fix rather than a hunt. `index` is the 1-based
-# position used by fj_ws_get_samples(group_id=) and by
+# These functions have moved between CytoML and flowWorkspace and been renamed
+# across versions (fj_ws_get_samples was getSamples; fj_ws_get_sample_groups was
+# getSampleGroups), and a hard-coded `flowWorkspace::fj_ws_get_sample_groups`
+# fails outright on installs where CytoML owns it. Both packages are searched,
+# CytoML first, then the legacy names, so one accessor moving is not fatal.
+#
+# Returns NULL rather than stopping when nothing matches, so a caller that can
+# carry on without the accessor (see resolve_group) is free to.
+# -----------------------------------------------------------------------------
+find_wsp_accessor <- function(candidates) {
+  for (pkg in c("CytoML", "flowWorkspace")) {
+    if (!requireNamespace(pkg, quietly = TRUE)) next
+    for (nm in candidates) {
+      f <- tryCatch(getExportedValue(pkg, nm), error = function(e) NULL)
+      if (is.function(f)) return(f)
+    }
+  }
+  NULL
+}
+
+# The column holding a file/group name differs across versions, so take the
+# first plausible one rather than hard-coding it.
+.first_col <- function(df, candidates, what) {
+  hit <- candidates[candidates %in% colnames(df)]
+  if (length(hit) == 0) {
+    stop("could not find the ", what, " column (saw: ",
+         paste(colnames(df), collapse = ", "), "). Update ",
+         "src/loading/flowjo_workspace.R.")
+  }
+  hit[1]
+}
+
+# -----------------------------------------------------------------------------
+# The workspace's sample groups, as a table we control the shape of.
+# `index` is the 1-based position used by fj_ws_get_samples(group_id=) and by
 # flowjo_to_gatingset(name=<integer>).
 # -----------------------------------------------------------------------------
 wsp_group_table <- function(ws) {
-  groups <- flowWorkspace::fj_ws_get_sample_groups(ws)
-  nm <- unique(as.character(groups$groupName))
+  f <- find_wsp_accessor(c("fj_ws_get_sample_groups", "getSampleGroups"))
+  if (is.null(f)) {
+    stop("neither CytoML nor flowWorkspace exports fj_ws_get_sample_groups() ",
+         "or getSampleGroups().")
+  }
+  groups <- f(ws)
+  gcol <- .first_col(groups, c("groupName", "groupname", "name"), "group-name")
+  nm <- unique(as.character(groups[[gcol]]))
   data.frame(
     index     = seq_along(nm),
     groupName = nm,
     n_samples = as.integer(vapply(
-      nm, function(g) sum(as.character(groups$groupName) == g), integer(1))),
+      nm, function(g) sum(as.character(groups[[gcol]]) == g), integer(1))),
     stringsAsFactors = FALSE
   )
 }
 
 # -----------------------------------------------------------------------------
-# The FCS file names of one group, in workspace order.
-#
-# fj_ws_get_samples() names its file-name column differently across versions, so
-# the first plausible column is used rather than a hard-coded one.
+# The FCS file names of one group, in workspace order. This one is required:
+# the whole pairing scheme is built on the names a workspace asks for.
 # -----------------------------------------------------------------------------
 wsp_sample_files <- function(ws, group_index) {
-  samples <- flowWorkspace::fj_ws_get_samples(ws, group_id = group_index)
-  cols <- c("name", "sampleName", "file", "filename")
-  hit  <- cols[cols %in% colnames(samples)]
-  if (length(hit) == 0) {
-    stop("fj_ws_get_samples() returned no recognisable file-name column ",
-         "(saw: ", paste(colnames(samples), collapse = ", "), "). ",
-         "Update wsp_sample_files() in ",
-         "src/loading/discover_flowjo_workspaces.R.")
+  f <- find_wsp_accessor(c("fj_ws_get_samples", "getSamples"))
+  if (is.null(f)) {
+    stop("neither CytoML nor flowWorkspace exports fj_ws_get_samples() or ",
+         "getSamples(); the workspace's sample list cannot be read.")
   }
+  # group_id= is the modern argument name; the legacy accessor took it
+  # positionally.
+  samples <- tryCatch(f(ws, group_id = group_index),
+                      error = function(e) f(ws, group_index))
+  ncol_ <- .first_col(samples, c("name", "sampleName", "file", "filename"),
+                      "file-name")
+  icol  <- .first_col(samples, c("sampleID", "sampleId", "id"), "sample-ID")
   data.frame(
-    sampleID = as.character(samples$sampleID),
-    name     = as.character(samples[[hit[1]]]),
+    sampleID = as.character(samples[[icol]]),
+    name     = as.character(samples[[ncol_]]),
     stringsAsFactors = FALSE
   )
 }
@@ -191,6 +262,21 @@ wsp_sample_files <- function(ws, group_index) {
 resolve_group <- function(group, group_table, where = "") {
   group <- trimws(as.character(group))
   ctx   <- if (nzchar(where)) paste0(" in workspace '", where, "'") else ""
+
+  # group_table = NULL means the group accessor was unavailable. An INDEX still
+  # works — flowjo_to_gatingset(name=<integer>) does its own lookup — so the
+  # ordinary run is not held hostage to an accessor we only need for names and
+  # for the informational listing.
+  if (is.null(group_table)) {
+    if (grepl("^[0-9]+$", group)) {
+      return(list(index = as.integer(group), name = NA_character_,
+                  n_samples = NA_integer_))
+    }
+    stop("--group \"", group, "\" is a group NAME, but this workspace's group ",
+         "list could not be read", ctx, ", so the name cannot be resolved. ",
+         "Use the group index instead (e.g. --group 1).")
+  }
+
   avail <- paste0("  ", group_table$index, "  \"", group_table$groupName,
                   "\"  (", group_table$n_samples, " sample(s))",
                   collapse = "\n")
@@ -217,6 +303,17 @@ resolve_group <- function(group, group_table, where = "") {
        n_samples = group_table$n_samples[idx])
 }
 
+# How to render a spec's group in a log line. The name is NA when the group
+# accessor was unavailable and an index was used, so it is dropped rather than
+# printed as the string "NA".
+describe_group <- function(spec) {
+  if (is.null(spec$group_name) || is.na(spec$group_name)) {
+    sprintf("group %d", spec$group_index)
+  } else {
+    sprintf("group %d \"%s\"", spec$group_index, spec$group_name)
+  }
+}
+
 # -----------------------------------------------------------------------------
 # Build one spec per workspace: which group, which files, where they live.
 #
@@ -232,7 +329,7 @@ resolve_group <- function(group, group_table, where = "") {
 # -----------------------------------------------------------------------------
 resolve_workspace_specs <- function(wsp_paths, labels, fcs_index, group,
                                     open_ws = NULL, read_samples = NULL) {
-  if (is.null(open_ws))      open_ws      <- function(p) CytoML::open_flowjo_xml(p)
+  if (is.null(open_ws))      open_ws      <- wsp_open
   if (is.null(read_samples)) read_samples <- function(ws, idx) wsp_sample_files(ws, idx)
 
   specs    <- list()
@@ -244,7 +341,9 @@ resolve_workspace_specs <- function(wsp_paths, labels, fcs_index, group,
   one <- function(path, label) {
     tryCatch({
       ws  <- open_ws(path)
-      tbl <- wsp_group_table(ws)
+      # Optional: only needed to resolve a group NAME and to report the group
+      # list. An index-based run carries on without it (see resolve_group).
+      tbl <- tryCatch(wsp_group_table(ws), error = function(e) NULL)
       grp <- resolve_group(group, tbl, where = label)
       smp <- read_samples(ws, grp$index)
       res <- resolve_fcs_names(smp$name, fcs_index)
@@ -304,6 +403,53 @@ format_resolution_report <- function(problems, fcs_root = "") {
 }
 
 # -----------------------------------------------------------------------------
+# Warn about FCS files claimed by more than one workspace.
+#
+# This checks FILE IDENTITY, not names: a repeated patient or subject ID across
+# workspaces is normal and is NOT what this reports. In a longitudinal design
+# the same subject legitimately appears many times, at different timepoints, in
+# different files — none of that trips this.
+#
+# What it reports is the same FCS FILE being pulled in by two workspaces, which
+# does happen: a workspace saved twice under slightly different names, or one
+# sample re-gated in a combined workspace as well as its own. Each such file
+# contributes its cells to the pooled embedding ONCE PER WORKSPACE, silently
+# over-weighting that sample.
+#
+# Deliberately a warning, not an error: re-gating one file in two workspaces is
+# a legitimate thing to compare. The caller decides.
+# Returns "" when every file belongs to exactly one workspace.
+# -----------------------------------------------------------------------------
+format_shared_file_report <- function(specs, max_show = 10L) {
+  if (length(specs) < 2L) return("")
+
+  owners <- list()
+  for (spec in specs) {
+    for (f in spec$files$file) {
+      owners[[f]] <- c(owners[[f]], spec$label)
+    }
+  }
+  shared <- owners[vapply(owners, function(x) length(unique(x)) > 1L, logical(1))]
+  if (length(shared) == 0L) return("")
+
+  lines <- c(sprintf(
+    paste0("%d FCS file(s) are referenced by more than one workspace, so their ",
+           "cells enter the shared embedding ONCE PER WORKSPACE and those ",
+           "samples are over-weighted. This is about the same FILE being used ",
+           "twice, not about a subject appearing at several timepoints:"),
+    length(shared)))
+  for (f in utils::head(names(shared), max_show)) {
+    lines <- c(lines, sprintf("    %s  <- %s", basename(f),
+                              paste(unique(shared[[f]]), collapse = ", ")))
+  }
+  if (length(shared) > max_show) {
+    lines <- c(lines, sprintf("    ... and %d more",
+                              length(shared) - max_show))
+  }
+  paste(lines, collapse = "\n")
+}
+
+# -----------------------------------------------------------------------------
 # Build the GatingSet for one spec.
 #
 # When every one of the workspace's files lives in ONE directory we pass that
@@ -318,11 +464,10 @@ format_resolution_report <- function(problems, fcs_root = "") {
 # independently — a disagreement would otherwise load the wrong group silently.
 # -----------------------------------------------------------------------------
 build_workspace_gatingset <- function(spec) {
-  ws <- CytoML::open_flowjo_xml(spec$wsp)
+  ws <- wsp_open(spec$wsp)
 
   if (length(spec$dirs) == 1L) {
-    gs <- CytoML::flowjo_to_gatingset(ws, name = spec$group_index,
-                                      path = spec$dirs)
+    gs <- wsp_to_gatingset(ws, group = spec$group_index, path = spec$dirs)
   } else {
     cat(sprintf(
       "    %s: FCS files span %d directories; using a per-sample path map.\n",
@@ -331,7 +476,7 @@ build_workspace_gatingset <- function(spec) {
                       file     = spec$files$file,
                       stringsAsFactors = FALSE)
     gs <- tryCatch(
-      CytoML::flowjo_to_gatingset(ws, name = spec$group_index, path = map),
+      wsp_to_gatingset(ws, group = spec$group_index, path = map),
       error = function(e) {
         stop("Workspace '", spec$label, "' has FCS files in ",
              length(spec$dirs), " different directories, and this CytoML ",
@@ -346,11 +491,10 @@ build_workspace_gatingset <- function(spec) {
   loaded <- length(flowWorkspace::sampleNames(gs))
   if (loaded != nrow(spec$files)) {
     warning(sprintf(
-      paste0("Workspace '%s': group %d (\"%s\") lists %d sample(s) but the ",
-             "GatingSet loaded %d. The workspace's group indexing may differ ",
-             "from the sample table; check the group with --list_populations."),
-      spec$label, spec$group_index, spec$group_name,
-      nrow(spec$files), loaded))
+      paste0("Workspace '%s': %s lists %d sample(s) but the GatingSet loaded ",
+             "%d. The workspace's group indexing may differ from the sample ",
+             "table; check the group with --list_populations."),
+      spec$label, describe_group(spec), nrow(spec$files), loaded))
   }
   gs
 }

@@ -63,8 +63,19 @@ def run_argv(params: dict) -> list[str]:
     group = params.get("group")
     add("--group", str(group).strip() if group is not None else None,
         config.DEFAULTS["group"])
-    add("--expected_samples", params.get("expected_samples"),
-        config.DEFAULTS["expected_samples"])
+
+    # Annotations. --sample_pattern is only meaningful without a CSV, and the
+    # R side ignores it in that case, so it is not sent — the printed command
+    # should not imply an option is doing something it is not.
+    metadata = (params.get("sample_metadata") or "").strip()
+    pattern = (params.get("sample_pattern") or "").strip()
+    if metadata:
+        argv.extend(["--sample_metadata", metadata])
+    elif pattern:
+        argv.extend(["--sample_pattern", pattern])
+    annotate = params.get("annotate") or []
+    if annotate and (metadata or pattern):
+        argv.extend(["--annotate", ",".join(annotate)])
 
     markers = params.get("markers") or []
     if markers:

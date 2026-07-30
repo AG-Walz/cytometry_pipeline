@@ -23,7 +23,8 @@ if (is.null(.ofile)) .ofile <- "test_data/test_umap_multi_wsp.R"
 base_dir <- normalizePath(file.path(dirname(.ofile), ".."))
 if (!dir.exists(file.path(base_dir, "src"))) base_dir <- getwd()
 
-source(file.path(base_dir, "src", "loading", "discover_flowjo_workspaces.R"))
+source(file.path(base_dir, "src", "loading", "flowjo_workspace.R"))
+source(file.path(base_dir, "src", "loading", "sample_annotations.R"))
 
 # umap_from_flowjo.R is sourced for the pure helpers only. It has no top-level
 # side effects and does not load CytoML at source time (only inside the main
@@ -210,6 +211,32 @@ throws("an empty group is rejected", resolve_group("Controls", tbl), "is empty")
 throws("the workspace is named in the message",
        resolve_group("Nonsense", tbl, where = "runB"), "workspace 'runB'")
 
+# The group accessor moved between CytoML and flowWorkspace and has been
+# renamed across versions, so it may be unavailable. An INDEX must still work.
+eq("an index works with no group table at all",
+   resolve_group("2", NULL)$index, 2L)
+ok("...and reports no group name",
+   is.na(resolve_group("2", NULL)$name))
+throws("a NAME without a group table fails with an actionable message",
+       resolve_group("Killing", NULL), "Use the group index instead")
+
+cat("\nfind_wsp_accessor()\n")
+ok("returns NULL when nothing matches",
+   is.null(find_wsp_accessor(c("no_such_function_at_all"))))
+ok("finds a function that a loaded package really exports",
+   is.function(find_wsp_accessor(c("no_such_function_at_all", "sessionInfo"))) ||
+     is.null(find_wsp_accessor("sessionInfo")))  # CytoML absent here
+
+cat("\ndescribe_group()\n")
+eq("a named group renders with its name",
+   describe_group(list(group_index = 2L, group_name = "Killing")),
+   'group 2 "Killing"')
+eq("an unnamed group does not print the string NA",
+   describe_group(list(group_index = 2L, group_name = NA_character_)),
+   "group 2")
+eq("a missing name field is handled",
+   describe_group(list(group_index = 1L)), "group 1")
+
 # --- resolve_workspace_specs (CytoML injected) -------------------------------
 cat("\nresolve_workspace_specs()\n")
 
@@ -272,6 +299,35 @@ ok("reports every ambiguous candidate",
    length(grep("Shared.fcs", strsplit(report, "\n")[[1]])) >= 1 &&
    length(grep("dup/(left|right)", strsplit(report, "\n")[[1]])) == 2)
 ok("says nothing was loaded", grepl("Nothing was loaded", report))
+
+cat("\nformat_shared_file_report()\n")
+
+mkspec <- function(label, files) list(
+  label = label,
+  files = data.frame(file = files, stringsAsFactors = FALSE))
+
+eq("a single workspace can share nothing",
+   format_shared_file_report(list(mkspec("a", "/x/P1.fcs"))), "")
+eq("disjoint workspaces are silent",
+   format_shared_file_report(list(mkspec("a", "/x/P1.fcs"),
+                                  mkspec("b", "/x/P2.fcs"))), "")
+shared <- format_shared_file_report(list(
+  mkspec("MTB048", c("/x/P1.fcs", "/x/P2.fcs")),
+  mkspec("MTB039_048", c("/x/P2.fcs", "/x/P3.fcs")),
+  mkspec("MTB039", "/x/P3.fcs")))
+ok("an overlapping file is reported", grepl("P2.fcs", shared))
+ok("...naming every workspace that claims it",
+   grepl("MTB048, MTB039_048", shared))
+ok("an overlapping file is also caught for the second pair",
+   grepl("P3.fcs", shared))
+ok("a file owned by one workspace is not reported", !grepl("P1.fcs", shared))
+ok("it says what the consequence is", grepl("ONCE PER WORKSPACE", shared))
+eq("the count is right", sub("^(\\d+) FCS.*", "\\1", strsplit(shared, "\n")[[1]][1]),
+   "2")
+long <- format_shared_file_report(
+  list(mkspec("a", sprintf("/x/P%02d.fcs", 1:15)),
+       mkspec("b", sprintf("/x/P%02d.fcs", 1:15))), max_show = 3L)
+ok("a long list is truncated", grepl("and 12 more", long))
 ok("echoes the FCS root that was searched", grepl(fcs_root, report,
                                                   fixed = TRUE))
 
@@ -367,6 +423,124 @@ membership <- get_subpop_membership(fake_gh, c(TRUE, TRUE, FALSE),
 eq("all-absent gates give an all-FALSE matrix of the right shape",
    dim(membership), c(2L, 4L))
 ok("and it really is all FALSE", !any(membership))
+
+# --- sample annotations ------------------------------------------------------
+cat("\nannotation_key()\n")
+
+eq("strips the cytoset suffix and the extension",
+   annotation_key("MTB048_TP1.fcs_0"), "mtb048_tp1")
+eq("strips a bare extension", annotation_key("MTB048_TP1.fcs"), "mtb048_tp1")
+eq("leaves a plain id alone", annotation_key("MTB048_TP1"), "mtb048_tp1")
+eq("reduces a Windows path to its base name",
+   annotation_key("C:\\\\Data\\\\MTB048_TP1.fcs"), "mtb048_tp1")
+eq("is vectorised", annotation_key(c("A.fcs", "B.fcs_2")), c("a", "b"))
+
+cat("\nannotations_from_pattern()\n")
+
+pat <- "(?<patient>MTB[0-9]+)_(?<timepoint>TP[0-9]+)"
+ap  <- annotations_from_pattern(
+  c("MTB048_TP1", "MTB011_TP3", "junk"), pat)
+eq("named groups become the columns", colnames(ap), c("patient", "timepoint"))
+eq("captures the patient", ap$patient, c("MTB048", "MTB011", NA))
+eq("captures the timepoint", ap$timepoint, c("TP1", "TP3", NA))
+eq("a name that does not match yields NA everywhere",
+   unname(unlist(ap[3, ])), c(NA_character_, NA_character_))
+throws("an unnamed pattern is rejected with an example",
+       annotations_from_pattern("MTB048_TP1", "(MTB[0-9]+)"),
+       "named capture groups")
+
+cat("\nresolve_sample_annotations()\n")
+
+samples <- data.frame(
+  workspace = c("runA", "runA", "runB"),
+  raw       = c("MTB048_TP1.fcs_0", "MTB048_TP3.fcs_1", "MTB011_TP1.fcs_0"),
+  clean     = c("MTB048_TP1", "MTB048_TP3", "MTB011_TP1"),
+  display   = c("MTB048_TP1", "MTB048_TP3", "runB: MTB011_TP1"),
+  stringsAsFactors = FALSE)
+
+eq("no source means no annotations",
+   ncol(resolve_sample_annotations(samples)), 0L)
+
+md_file <- file.path(root, "cohort.csv")
+writeLines(c("sample_id,patient,timepoint,response",
+             "MTB048_TP1.fcs,MTB048,TP1,R",
+             "MTB048_TP3.fcs,MTB048,TP3,R",
+             "MTB011_TP1.fcs,MTB011,TP1,NR"), md_file)
+
+a <- resolve_sample_annotations(samples, metadata_file = md_file)
+eq("every non-key column becomes an annotation",
+   colnames(a), c("patient", "timepoint", "response"))
+eq("rows follow the sample order", a$patient,
+   c("MTB048", "MTB048", "MTB011"))
+eq("a row is matched despite the cytoset suffix", a$timepoint,
+   c("TP1", "TP3", "TP1"))
+eq("a display label with a workspace prefix still matches", a$response[3], "NR")
+
+eq("annotate restricts and orders the columns",
+   colnames(resolve_sample_annotations(samples, metadata_file = md_file,
+                                       annotate = c("timepoint", "patient"))),
+   c("timepoint", "patient"))
+throws("an unknown annotate column is rejected, listing what exists",
+       resolve_sample_annotations(samples, metadata_file = md_file,
+                                  annotate = "nonsense"),
+       "not available")
+
+# A sample missing from the table must not vanish or poison the run.
+md_partial <- file.path(root, "partial.csv")
+writeLines(c("sample_id,patient", "MTB048_TP1,MTB048"), md_partial)
+a2 <- suppressWarnings(
+  resolve_sample_annotations(samples, metadata_file = md_partial))
+eq("an unmatched sample becomes Unassigned", a2$patient,
+   c("MTB048", .ANNOT_UNASSIGNED, .ANNOT_UNASSIGNED))
+ok("...and it warns about it",
+   !is.null(tryCatch(resolve_sample_annotations(samples,
+                                                metadata_file = md_partial),
+                     warning = function(w) conditionMessage(w))))
+
+# Blanks and placeholder strings are Unassigned, matching check_metadata.R.
+md_blank <- file.path(root, "blank.csv")
+writeLines(c("sample_id,arm", "MTB048_TP1,A", "MTB048_TP3,",
+             "MTB011_TP1,n/a"), md_blank)
+eq("blanks and placeholders become Unassigned",
+   resolve_sample_annotations(samples, metadata_file = md_blank)$arm,
+   c("A", .ANNOT_UNASSIGNED, .ANNOT_UNASSIGNED))
+
+# Semicolon-separated exports are common in this project.
+md_semi <- file.path(root, "semi.csv")
+writeLines(c("sample_id;patient", "MTB048_TP1;MTB048", "MTB048_TP3;MTB048",
+             "MTB011_TP1;MTB011"), md_semi)
+eq("a semicolon-separated table is detected",
+   resolve_sample_annotations(samples, metadata_file = md_semi)$patient,
+   c("MTB048", "MTB048", "MTB011"))
+
+# Values must stay text: a timepoint of "01" must not become the number 1.
+md_num <- file.path(root, "num.csv")
+writeLines(c("sample_id,timepoint", "MTB048_TP1,01", "MTB048_TP3,02",
+             "MTB011_TP1,01"), md_num)
+eq("numeric-looking levels keep their leading zeros",
+   resolve_sample_annotations(samples, metadata_file = md_num)$timepoint,
+   c("01", "02", "01"))
+
+eq("the pattern route works when no metadata file is given",
+   resolve_sample_annotations(samples, pattern = pat)$patient,
+   c("MTB048", "MTB048", "MTB011"))
+eq("metadata wins over a pattern when both are given",
+   colnames(resolve_sample_annotations(samples, metadata_file = md_file,
+                                       pattern = pat)),
+   c("patient", "timepoint", "response"))
+
+md_alt <- file.path(root, "alt.csv")
+writeLines(c("FCS,patient", "MTB048_TP1,MTB048", "MTB048_TP3,MTB048",
+             "MTB011_TP1,MTB011"), md_alt)
+eq("the first column is used when there is no sample_id",
+   resolve_sample_annotations(samples, metadata_file = md_alt)$patient,
+   c("MTB048", "MTB048", "MTB011"))
+throws("a bad sample_id_column is rejected",
+       resolve_sample_annotations(samples, metadata_file = md_file,
+                                  id_column = "nope"), "is not in the metadata")
+throws("a missing metadata file is rejected",
+       resolve_sample_annotations(samples, metadata_file = "/no/such.csv"),
+       "not found")
 
 # --- summary -----------------------------------------------------------------
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")

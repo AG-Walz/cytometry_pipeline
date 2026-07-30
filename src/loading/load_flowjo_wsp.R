@@ -5,9 +5,22 @@
 # Refactored from: R_scripts/01_loading/Load_wsp.R
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# Respect a shared_dir the caller already set (the CLI convention used by
+# nextflow/bin/*_cli.R and scripts/*.R); only guess from the working directory
+# when there is none. The unconditional assignment this replaces clobbered the
+# caller's value, which broke sourcing from anywhere but pipelines/.
+if (!exists("shared_dir")) {
+  shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+}
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "flowframe_utils.R"))
+
+# Every CytoML call goes through src/loading/flowjo_workspace.R so an API
+# change is a fix in one file. Guarded, so a caller that already sourced it
+# (e.g. scripts/umap_from_flowjo.R) does not source it twice.
+if (!exists("wsp_open", mode = "function")) {
+  source(file.path(dirname(shared_dir), "loading", "flowjo_workspace.R"))
+}
 
 #' Load a FlowJo workspace (.wsp) file
 #'
@@ -25,14 +38,19 @@ load_flowjo_wsp <- function(wsp_path, fcs_dir = dirname(wsp_path), name = NULL) 
   cat("Loading workspace:", basename(wsp_path), "\n")
   cat("FCS directory:", fcs_dir, "\n")
 
-  # Parse workspace
-  ws <- CytoML::open_flowjo_xml(wsp_path)
-  cat("Workspace groups:", paste(flowWorkspace::fj_ws_get_sample_groups(ws)$groupName,
-                                  collapse = ", "), "\n")
+  # Parse workspace. Both calls go through flowjo_workspace.R; the group listing
+  # is best-effort because the accessor behind it is not exported by the same
+  # package on every install, and failing to *print* the groups must not stop
+  # the load.
+  ws <- wsp_open(wsp_path)
+  groups <- tryCatch(wsp_group_table(ws), error = function(e) NULL)
+  if (!is.null(groups)) {
+    cat("Workspace groups:", paste(groups$groupName, collapse = ", "), "\n")
+  }
 
   # Import as GatingSet
   gs <- tryCatch(
-    CytoML::flowjo_to_gatingset(ws, name = 1, path = fcs_dir),
+    wsp_to_gatingset(ws, group = 1, path = fcs_dir),
     error = function(e) {
       stop("Failed to parse FlowJo workspace: ", e$message,
            "\nWorkspace: ", wsp_path,

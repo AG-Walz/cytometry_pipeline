@@ -67,6 +67,26 @@ option_list <- list(
               help = paste0("If > 0, warn when the run does not total exactly ",
                             "this many samples across all workspaces ",
                             "[default %default]")),
+  make_option("--sample_metadata", type = "character", default = NULL,
+              help = paste0("Optional CSV keyed on sample (a 'sample_id' ",
+                            "column, or the first column). Every other column ",
+                            "becomes a per-sample annotation — patient, ",
+                            "timepoint, response, anything — and each one ",
+                            "yields a plot coloured by it plus one plot per ",
+                            "level, all on the SAME embedding.")),
+  make_option("--sample_pattern", type = "character", default = NULL,
+              help = paste0("Alternative to --sample_metadata: a regex with ",
+                            "NAMED capture groups applied to the sample name, ",
+                            "e.g. \"(?<patient>MTB[0-9]+)_(?<timepoint>TP",
+                            "[0-9]+)\". Group names become the columns. ",
+                            "Ignored when --sample_metadata is given.")),
+  make_option("--annotate", type = "character", default = NULL,
+              help = paste0("Comma-separated subset of annotation columns to ",
+                            "plot. Default: all of them.")),
+  make_option("--sample_id_column", type = "character", default = NULL,
+              help = paste0("Name of the --sample_metadata column holding the ",
+                            "sample identifier [default: 'sample_id', else ",
+                            "the first column].")),
   make_option("--markers", type = "character", default = NULL,
               help = paste0("Optional comma-separated subset of marker names to ",
                             "use/plot. Default: all common non-scatter markers.")),
@@ -177,8 +197,10 @@ source(file.path(shared_dir, "io_utils.R"))        # make_outdir
 source(file.path(shared_dir, "plot_utils.R"))      # save_plot_formats, create_safe_filename
 source(file.path(shared_dir, "stats_utils.R"))     # run_umap
 source(file.path(shared_dir, "flowframe_utils.R")) # explore_data
-# find_workspace_files, index_fcs_dir, resolve_workspace_specs, ...
-source(file.path(src_dir, "loading", "discover_flowjo_workspaces.R"))
+# THE FlowJo workspace layer: wsp_open, wsp_to_gatingset, discovery, pairing
+source(file.path(src_dir, "loading", "flowjo_workspace.R"))
+# Per-sample annotations (patient, timepoint, ...) from a CSV or a name regex
+source(file.path(src_dir, "loading", "sample_annotations.R"))
 source(file.path(src_dir, "visualization", "umap_from_flowjo.R"))  # umap_from_flowjo
 
 # -----------------------------------------------------------------------------
@@ -204,6 +226,10 @@ umap_from_flowjo(
   output_dir       = opt$output_dir,
   group            = opt$group,
   expected_samples = opt$expected_samples,
+  sample_metadata  = opt$sample_metadata,
+  sample_pattern   = opt$sample_pattern,
+  annotate         = split_csv(opt$annotate),
+  sample_id_column = opt$sample_id_column,
   markers          = split_csv(opt$markers),
   subpop_mode      = opt$subpop_mode,
   subpop_select    = split_csv(opt$subpop_select),

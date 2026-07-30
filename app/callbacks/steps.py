@@ -10,7 +10,7 @@ from dash import ALL, Input, Output, State, callback, ctx, html, no_update
 
 from app import config
 from app.callbacks import common
-from app.services import fs_tree, gating, rscript, session_state
+from app.services import annotations, fs_tree, gating, rscript, session_state
 
 #: Last state written to the session file, so it is only rewritten on a change.
 _last_saved: dict | None = None
@@ -89,6 +89,26 @@ def register_callbacks() -> None:
             color="blue",
             variant="light",
         )
+
+    @callback(
+        Output("advanced-badge", "children"),
+        Input("in-group", "value"),
+    )
+    def advanced_badge(group):
+        """Surface a non-default sample group on the collapsed Advanced header.
+
+        A setting that changes which samples are loaded must not be able to
+        hide behind a closed panel — that is the one way this section could
+        cost someone a run.
+        """
+        group = str(group or "").strip()
+        if not group:
+            return dmc.Badge("no group set", color="red", variant="light",
+                             size="sm", tt="none")
+        if group == str(config.DEFAULTS["group"]):
+            return None
+        return dmc.Badge(f"group: {group}", color="blue", variant="light",
+                         size="sm", tt="none")
 
     # -- stepper navigation ------------------------------------------------
 
@@ -318,6 +338,61 @@ def register_callbacks() -> None:
             mt=8,
         )
 
+    # -- sample annotations ------------------------------------------------
+
+    @callback(
+        Output("in-annotate", "data"),
+        Output("in-annotate", "value"),
+        Output("annotate-preview", "children"),
+        Input({"comp": "fb-input", "bid": "meta"}, "value"),
+        Input("in-pattern", "value"),
+        Input("store-inspect", "data"),
+        State("in-annotate", "value"),
+    )
+    def fill_annotations(metadata, pattern, inspect, current):
+        """Offer the annotation columns, and show what they will resolve to.
+
+        Done in Python rather than by asking R: a CSV header is a single line
+        and a regex is a regex, so the picker can be populated and the match
+        rate shown instantly instead of after a workspace load.
+        """
+        samples = (inspect or {}).get("samples") or []
+        columns, preview = annotations.describe(
+            (metadata or "").strip(), (pattern or "").strip(), samples)
+
+        kept = [c for c in (current or []) if c in set(columns)]
+        note = None
+        if preview.get("error"):
+            note = _alert(preview["error"], color="red")
+        elif not columns:
+            note = None
+        elif preview.get("unmatched"):
+            note = _alert(
+                [
+                    dmc.Text(
+                        f"{preview['matched']} of {preview['total']} loaded "
+                        f"sample(s) resolve; the rest become 'Unassigned'.",
+                        size="sm", fw=600),
+                    dmc.Space(h=4),
+                    dmc.Text("Not resolved: "
+                             + ", ".join(preview["unmatched"][:5])
+                             + ("…" if len(preview["unmatched"]) > 5 else ""),
+                             size="xs"),
+                ],
+                color="yellow",
+            )
+        else:
+            detail = ", ".join(
+                f"{c} ({preview['levels'].get(c, 0)} level(s))"
+                for c in columns) if preview.get("levels") else ", ".join(columns)
+            note = _alert(
+                f"{preview['source']}: {detail}."
+                + (f" All {preview['total']} loaded sample(s) resolve."
+                   if preview.get("total") else ""),
+                color="green",
+            )
+        return [{"value": c, "label": c} for c in columns], kept, note
+
     # -- markers -----------------------------------------------------------
 
     @callback(
@@ -464,7 +539,6 @@ def register_callbacks() -> None:
     @callback(
         Output({"comp": "fb-input", "bid": ALL}, "value"),
         Output("in-group", "value"),
-        Output("in-expected", "value"),
         Output("in-normalize", "value"),
         Output("in-downsample", "value"),
         Output("in-neighbors", "value"),
@@ -489,7 +563,6 @@ def register_callbacks() -> None:
         return (
             [""] * len(path_values),
             d["group"],
-            d["expected_samples"],
             d["normalize"],
             d["downsample"],
             d["n_neighbors"],

@@ -12,7 +12,7 @@ Seven scripts for ingesting flow cytometry data from FCS files, CSV expression m
 | `load_csv_expression.R` | `load_csv_expression()` | Load CSV expression matrices into data.tables |
 | `load_csv_gating.R` | `load_csv_gating()`, `process_single_csv_gating()`, `create_safe_filename()` | Load CSV+FCS gating data, split by population |
 | `load_flowjo_wsp.R` | `load_flowjo_wsp()`, `get_population_stats()`, `get_population_strings_list()`, `summarize_population_counts()`, `save_population_strings()`, `load_multiple_workspaces()` | Load FlowJo workspaces and extract gating data |
-| `discover_flowjo_workspaces.R` | `find_workspace_files()`, `workspace_labels()`, `index_fcs_dir()`, `resolve_fcs_names()`, `wsp_group_table()`, `wsp_sample_files()`, `resolve_group()`, `resolve_workspace_specs()`, `format_resolution_report()`, `build_workspace_gatingset()`, `disambiguate_sample_labels()` | Find many `.wsp` under a folder and pair each with its FCS files by name |
+| `flowjo_workspace.R` | `find_workspace_files()`, `workspace_labels()`, `index_fcs_dir()`, `resolve_fcs_names()`, `wsp_group_table()`, `wsp_sample_files()`, `resolve_group()`, `resolve_workspace_specs()`, `format_resolution_report()`, `build_workspace_gatingset()`, `disambiguate_sample_labels()` | Find many `.wsp` under a folder and pair each with its FCS files by name |
 | `load_manual_gating.R` | `load_manual_gating()` | Load manual gating labels from CSVs |
 | `create_flowframes.R` | `create_flowframes_from_matrices()`, `create_merged_flowset()` | Create flowFrame/flowSet objects from matrices |
 
@@ -364,7 +364,7 @@ pop_strings_list <- load_multiple_workspaces(wsp_paths, names = names)
 
 ---
 
-## discover_flowjo_workspaces.R
+## flowjo_workspace.R
 
 Turns two **folder roots** — one holding `.wsp` workspaces, one holding `.fcs` files, both searched recursively — into ready-to-load workspace specs. Used by [`umap_from_flowjo()`](../scripts/umap-from-flowjo.md#many-workspaces-at-once) to put many workspaces into one shared embedding.
 
@@ -387,7 +387,7 @@ Everything is resolved **before any GatingSet is built**, and problems across al
 | `disambiguate_sample_labels()` | `(clean_names, wsp_labels)` | Display labels: unchanged when unique across the run, `"<wsp>: <sample>"` only for names that actually collide |
 
 ```r
-source("src/loading/discover_flowjo_workspaces.R")
+source("src/loading/flowjo_workspace.R")
 
 wsp    <- find_workspace_files("data/workspaces")   # recursive
 labels <- workspace_labels(wsp)

@@ -103,6 +103,7 @@ def register_callbacks() -> None:
         Output("gallery", "children"),
         Output("per-marker-header", "children"),
         Output("marker-accordion", "children"),
+        Output("annot-accordion", "children"),
         Output("results-path", "children"),
         Output("filter-marker", "data"),
         Output("filter-sample", "data"),
@@ -112,16 +113,19 @@ def register_callbacks() -> None:
         Input("filter-marker", "value"),
         Input("filter-sample", "value"),
         Input("marker-accordion", "value"),
+        Input("annot-accordion", "value"),
     )
     def render_gallery(directory, _generation, _refresh, marker_filter,
-                       sample_filter, open_markers):
+                       sample_filter, open_markers, open_annotations):
         """Render the gallery for ``directory``.
 
-        ``marker-accordion.value`` is an input so that only the panels the user
-        has actually opened are built. Writing that component's children while
-        reading its value is not a loop: setting children never changes value.
+        The accordions' ``value`` props are inputs so that only the panels the
+        user has actually opened are built. Writing a component's children
+        while reading its value is not a loop: setting children never changes
+        value.
         """
         open_markers = set(open_markers or [])
+        open_annotations = set(open_annotations or [])
         if not directory:
             return (
                 dmc.Alert(
@@ -130,6 +134,7 @@ def register_callbacks() -> None:
                     variant="light",
                 ),
                 None,
+                [],
                 [],
                 "No results yet.",
                 [],
@@ -161,6 +166,7 @@ def register_callbacks() -> None:
                 dmc.Alert(note, color="gray", variant="light"),
                 None,
                 [],
+                [],
                 path_text,
                 marker_options,
                 sample_options,
@@ -184,6 +190,51 @@ def register_callbacks() -> None:
             sections.append(dmc.Space(h=8))
             sections.append(_grid(results.overview))
             sections.append(dmc.Space(h=16))
+
+        # Sample annotations (patient, timepoint, …): the "coloured by" plot for
+        # every column, then each column's levels in its own collapsed panel.
+        # A cohort can have dozens of patients, so the levels are not rendered
+        # until you open them — same reasoning as the per-marker section.
+        if results.annotations and not sample_filter:
+            annot_overviews = [results.annot_all[c] for c in results.annotations
+                               if c in results.annot_all]
+            if annot_overviews:
+                sections.append(
+                    dmc.Divider(label="Sample annotations",
+                                labelPosition="left")
+                )
+                sections.append(dmc.Space(h=8))
+                sections.append(_grid(annot_overviews))
+                sections.append(dmc.Space(h=12))
+
+
+        # One collapsed panel per annotation column holding its level plots.
+        # Built lazily for the same reason as the per-marker panels: a cohort
+        # of 33 patients is 33 full-size images, and Mantine keeps closed
+        # panels mounted, so filling them all would load every one at once.
+        annot_items = []
+        if not sample_filter:
+            for column in results.annotations:
+                levels = results.annot_level.get(column) or {}
+                if not levels:
+                    continue
+                panel = (
+                    _grid([levels[k] for k in sorted(levels)])
+                    if column in open_annotations
+                    else dmc.Text("Opening…", size="xs", c="dimmed")
+                )
+                annot_items.append(
+                    dmc.AccordionItem(
+                        [
+                            dmc.AccordionControl(
+                                f"{column} — {len(levels)} level(s), each "
+                                "highlighted against the whole embedding"
+                            ),
+                            dmc.AccordionPanel(panel),
+                        ],
+                        value=column,
+                    )
+                )
 
         markers = [m for m in results.markers
                    if not marker_filter or m == marker_filter]
@@ -251,6 +302,7 @@ def register_callbacks() -> None:
             html.Div(sections),
             header,
             per_marker_items,
+            annot_items,
             path_text,
             marker_options,
             sample_options,

@@ -24,6 +24,8 @@ SESSION_FILE = CACHE_DIR / "last_session.json"
 
 # File-browser filters.
 WSP_EXTENSIONS = (".wsp",)
+# Sample-metadata tables. The R side sniffs "," vs ";" itself.
+METADATA_EXTENSIONS = (".csv", ".tsv", ".txt")
 
 # Plot files the results gallery knows about. PNG is preferred for inline
 # preview: an SVG scatter of a large embedding carries one node per cell and can
@@ -44,8 +46,10 @@ DEFAULTS: dict = {
     "fcs_dir": "",
     # Text, not a number: the R side takes an index OR a sample-group name.
     "group": "1",
-    "expected_samples": 0,
     "population": "",
+    "sample_metadata": "",
+    "sample_pattern": "",
+    "annotate": [],
     "markers": [],
     "subpop_mode": "furthest",
     "explicit_subpop": False,

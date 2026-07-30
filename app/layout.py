@@ -54,29 +54,70 @@ def _step_data(state: dict) -> list:
             value=state["fcs_dir"],
         ),
         dmc.Space(h=12),
-        dmc.Group(
-            [
-                dmc.TextInput(
-                    id="in-group",
-                    label="Sample group",
-                    value=str(state["group"]),
-                    description='Index (1) or name ("All Samples")',
-                    placeholder="1",
-                    style={"flex": 1},
-                ),
-                _number(
-                    "in-expected",
-                    "Expected samples",
-                    state["expected_samples"],
-                    min=0,
-                    step=1,
-                    allowDecimal=False,
-                    description="0 = no check; total across workspaces",
-                    style={"flex": 1},
-                ),
+        # Advanced, but deliberately still in step 1 and not in Parameters: the
+        # sample group decides which samples are loaded at all, so it has to be
+        # set before the load that builds the gating tree. A closed Mantine
+        # accordion keeps its panel mounted, so `in-group` stays addressable by
+        # the form callbacks whether or not it is open.
+        dmc.Accordion(
+            id="acc-advanced",
+            value=None,
+            variant="contained",
+            chevronPosition="left",
+            children=[
+                dmc.AccordionItem(
+                    value="advanced",
+                    children=[
+                        dmc.AccordionControl(
+                            dmc.Group(
+                                [
+                                    dmc.Text("Advanced", size="sm", fw=500),
+                                    html.Div(id="advanced-badge"),
+                                ],
+                                gap="xs",
+                                align="center",
+                            )
+                        ),
+                        dmc.AccordionPanel(
+                            [
+                                dmc.Text(
+                                    "A FlowJo workspace can hold several "
+                                    "groups of samples — “All Samples” plus "
+                                    "any the analyst created, such as "
+                                    "“Killing” or “Controls”. Only one group "
+                                    "is loaded, and it decides which samples "
+                                    "are analysed at all. Group 1 is “All "
+                                    "Samples” in almost every workspace, so "
+                                    "you can normally ignore this.",
+                                    size="xs",
+                                    c="dimmed",
+                                ),
+                                dmc.Space(h=10),
+                                dmc.TextInput(
+                                    id="in-group",
+                                    label="Sample group",
+                                    value=str(state["group"]),
+                                    description=(
+                                        "An index (1, 2, …) or the group's "
+                                        "name. Use the name when loading "
+                                        "several workspaces: the same group "
+                                        "can sit at a different index in each."
+                                    ),
+                                    placeholder="1",
+                                ),
+                                dmc.Space(h=8),
+                                dmc.Text(
+                                    "Loading lists every workspace's groups in "
+                                    "the Log tab, so a name that does not "
+                                    "match tells you the valid ones.",
+                                    size="xs",
+                                    c="dimmed",
+                                ),
+                            ]
+                        ),
+                    ],
+                )
             ],
-            grow=True,
-            align="flex-start",
         ),
         dmc.Space(h=16),
         dmc.Button(
@@ -179,6 +220,52 @@ def _step_gates(state: dict) -> list:
             hidePickedOptions=True,
             placeholder="all common markers",
             nothingFoundMessage="No such marker in this workspace",
+        ),
+        dmc.Space(h=16),
+        dmc.Divider(label="Sample annotations", labelPosition="center"),
+        dmc.Space(h=10),
+        dmc.Text(
+            "Group the samples by anything you know about them — patient, "
+            "timepoint, response — and get one plot coloured by it plus one "
+            "plot per level, all on the same embedding. Optional.",
+            size="xs",
+            c="dimmed",
+        ),
+        dmc.Space(h=10),
+        browser_field(
+            "meta",
+            "Metadata CSV",
+            "Keyed on sample; every other column becomes an annotation",
+            mode="file",
+            extensions=config.METADATA_EXTENSIONS,
+            placeholder="/path/to/cohort.csv",
+            value=state["sample_metadata"],
+        ),
+        dmc.Space(h=10),
+        dmc.TextInput(
+            id="in-pattern",
+            label="…or derive from the sample name",
+            description=(
+                "A regex with named groups, used only when no CSV is given. "
+                "Example: (?<patient>MTB[0-9]+)_(?<timepoint>TP[0-9]+)"
+            ),
+            value=state["sample_pattern"],
+            placeholder="(?<patient>...)_(?<timepoint>...)",
+        ),
+        dmc.Space(h=8),
+        html.Div(id="annotate-preview"),
+        dmc.Space(h=10),
+        dmc.MultiSelect(
+            id="in-annotate",
+            label="Annotations to plot",
+            description="Leave empty to plot every column that resolves.",
+            data=[],
+            value=state["annotate"],
+            searchable=True,
+            clearable=True,
+            hidePickedOptions=True,
+            placeholder="all available",
+            nothingFoundMessage="No such column",
         ),
     ]
 
@@ -491,12 +578,20 @@ def _right_column() -> dmc.Paper:
                             dmc.ScrollArea(
                                 [
                                     html.Div(id="gallery"),
-                                    # The per-marker accordion is a static
-                                    # component so its open set can drive which
-                                    # panels get built: Mantine keeps closed
-                                    # panels mounted, so building them all
-                                    # would put every marker x sample image on
-                                    # the page at once.
+                                    # Both accordions are static components so
+                                    # their open sets can drive which panels
+                                    # get built: Mantine keeps closed panels
+                                    # mounted, so building them all would put
+                                    # every image on the page at once — marker
+                                    # x sample, and every annotation level.
+                                    dmc.Accordion(
+                                        id="annot-accordion",
+                                        multiple=True,
+                                        value=[],
+                                        variant="separated",
+                                        children=[],
+                                        mb="md",
+                                    ),
                                     html.Div(id="per-marker-header"),
                                     dmc.Accordion(
                                         id="marker-accordion",
