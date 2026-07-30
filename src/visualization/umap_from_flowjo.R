@@ -295,11 +295,8 @@ get_subpop_membership <- function(gh, viable_idx, subpop_paths) {
 # Shared by extract_population_sample() and gs_common_markers() so the marker set
 # reported by list_populations mode can never drift from the one a run uses.
 # -----------------------------------------------------------------------------
-marker_columns <- function(ff, exclude_pattern = "Time|FSC|SSC|scatter") {
-  info     <- explore_data(ff)      # dyes (channels), markers, mcols
-  channels <- colnames(flowCore::exprs(ff))
-  markers  <- info$markers          # length == number of columns
-
+select_marker_columns <- function(channels, markers,
+                                  exclude_pattern = "Time|FSC|SSC|scatter") {
   keep <- vapply(seq_along(channels), function(i) {
     m <- markers[i]
     if (is.na(m) || m == "") return(FALSE)                    # empty marker
@@ -320,6 +317,29 @@ marker_columns <- function(ff, exclude_pattern = "Time|FSC|SSC|scatter") {
   list(keep = keep, markers = markers, dropped = dropped)
 }
 
+# The flowFrame/cytoframe form. Reads parameters() rather than going through
+# explore_data(), which materialises exprs() once per column — the same answer
+# for a fraction of the work, and it keeps this and gs_common_markers() on one
+# code path so the panel reported by list_populations cannot drift from the one
+# a run uses.
+marker_columns <- function(ff, exclude_pattern = "Time|FSC|SSC|scatter") {
+  cm <- cf_channel_markers(ff)
+  select_marker_columns(cm$channels, cm$markers, exclude_pattern)
+}
+
+# Channel and marker names of a cytoframe WITHOUT touching a single event.
+#
+# parameters() is metadata: $name is the channel, $desc the marker, already
+# aligned and one row per column. The obvious-looking `cf[0, ]` is not a way to
+# get here — on flowWorkspace 4.14 a zero-row cytoframe subset builds an index
+# of UINT_MAX and dies with "The size of the new row index
+# (4294967295,4294967295) is not within the original mat size". Reading the
+# metadata directly is both correct and cheaper than materialising exprs().
+cf_channel_markers <- function(cf) {
+  pd <- flowCore::pData(flowCore::parameters(cf))
+  list(channels = as.character(pd$name), markers = as.character(pd$desc))
+}
+
 # -----------------------------------------------------------------------------
 # Marker names common to ALL samples of a GatingSet, evaluated at the ROOT node.
 # Markers are a property of the channels, not of a gate, so this is the same set
@@ -331,12 +351,12 @@ marker_columns <- function(ff, exclude_pattern = "Time|FSC|SSC|scatter") {
 gs_common_markers <- function(gs, sample_names,
                               exclude_pattern = "Time|FSC|SSC|scatter") {
   per_sample <- lapply(sample_names, function(s) {
-    # ff[0, ] keeps the parameter metadata (channel and marker names) while
-    # dropping every event. marker_columns() reads only that metadata, but it
-    # goes through explore_data(), which materialises exprs() once per column —
-    # affordable on a gated population, wasteful on a whole file at the root.
-    ff  <- flowWorkspace::gh_pop_get_data(gs[[s]], y = "root")[0, ]
-    sel <- marker_columns(ff, exclude_pattern)
+    # Metadata only: no rows are read, and no column is subset. At the root node
+    # a sample is the whole FCS file, so anything that materialises exprs() here
+    # is both wasteful and — since flowWorkspace 4.14 — a crash. See
+    # cf_channel_markers().
+    cm  <- cf_channel_markers(flowWorkspace::gh_pop_get_data(gs[[s]], y = "root"))
+    sel <- select_marker_columns(cm$channels, cm$markers, exclude_pattern)
     sel$markers[sel$keep]
   })
   if (length(per_sample) == 0) return(character(0))
