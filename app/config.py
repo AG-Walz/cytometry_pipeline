@@ -46,6 +46,7 @@ DEFAULTS: dict = {
     "fcs_dir": "",
     # Text, not a number: the R side takes an index OR a sample-group name.
     "group": "1",
+    "allow_missing_samples": False,
     "population": "",
     "sample_metadata": "",
     "sample_pattern": "",

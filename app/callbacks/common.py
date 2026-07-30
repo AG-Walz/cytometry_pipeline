@@ -23,6 +23,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("output_parent", {"comp": "fb-input", "bid": "outparent"}, "value"),
     ("output_name", "in-outname", "value"),
     ("group", "in-group", "value"),
+    ("allow_missing_samples", "sw-allow-missing", "checked"),
     ("sample_metadata", {"comp": "fb-input", "bid": "meta"}, "value"),
     ("sample_pattern", "in-pattern", "value"),
     ("annotate", "in-annotate", "value"),

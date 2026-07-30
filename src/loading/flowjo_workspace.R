@@ -322,20 +322,39 @@ describe_group <- function(spec) {
 # format_resolution_report). `open_ws` and `read_samples` are injectable so the
 # orchestration is testable without CytoML.
 #
-# Returns list(specs = list of per-workspace specs, problems = list of
-# per-workspace problem records). A spec carries:
+# `allow_missing` = TRUE relaxes ONE failure mode: a sample whose FCS file is
+# nowhere under the root is dropped and the workspace loads without it, rather
+# than failing the whole run. Real workspace collections routinely reference
+# negative controls or re-exports that were never copied to the analysis host,
+# and one such file should not cost the other 32 workspaces.
+#
+# It deliberately does NOT relax the others:
+#   * AMBIGUOUS names stay fatal. Missing is a known unknown — the sample is
+#     absent and the report says so. Ambiguous means two files could be the
+#     sample, and picking one silently puts the WRONG cells in the embedding.
+#   * A workspace that fails to OPEN, or a bad --group, stays fatal: that is a
+#     broken input, not a gap in the data.
+#
+# Returns list(specs = per-workspace specs, problems = per-workspace problem
+# records, dropped = per-workspace records of what `allow_missing` discarded).
+# A spec carries:
 #   label, wsp, group_index, group_name, files (data.frame sampleID/name/file),
 #   dirs (the unique directories its files live in)
+# A dropped record carries: label, wsp, samples (the dropped names), kept, total.
+# A workspace whose samples ALL go missing yields a dropped record with kept = 0
+# and no spec — it is reported as dropped, not silently absent.
 # -----------------------------------------------------------------------------
 resolve_workspace_specs <- function(wsp_paths, labels, fcs_index, group,
-                                    open_ws = NULL, read_samples = NULL) {
+                                    open_ws = NULL, read_samples = NULL,
+                                    allow_missing = FALSE) {
   if (is.null(open_ws))      open_ws      <- wsp_open
   if (is.null(read_samples)) read_samples <- function(ws, idx) wsp_sample_files(ws, idx)
 
   specs    <- list()
   problems <- list()
+  dropped  <- list()
 
-  # One workspace -> either a spec or a problem record. Kept as an explicit
+  # One workspace -> a spec and/or a problem/dropped record. Kept as an explicit
   # return value (rather than assigning into `specs`/`problems` from inside
   # tryCatch) so the error handler and the happy path write to the same place.
   one <- function(path, label) {
@@ -348,16 +367,36 @@ resolve_workspace_specs <- function(wsp_paths, labels, fcs_index, group,
       smp <- read_samples(ws, grp$index)
       res <- resolve_fcs_names(smp$name, fcs_index)
 
-      if (length(res$missing) || length(res$ambiguous)) {
+      fatal <- length(res$ambiguous) > 0 ||
+               (length(res$missing) > 0 && !allow_missing)
+      if (fatal) {
         return(list(problem = list(label = label, wsp = path,
                                    missing = res$missing,
                                    ambiguous = res$ambiguous)))
       }
+
+      out <- list()
+      if (length(res$missing)) {
+        keep <- !is.na(res$file)
+        out$dropped <- list(label = label, wsp = path,
+                            samples = res$missing,
+                            kept = sum(keep), total = length(keep))
+        smp <- smp[keep, , drop = FALSE]
+        res$file <- res$file[keep]
+        # Nothing survived: report the workspace as dropped and emit no spec.
+        if (!nrow(smp)) return(out)
+      }
       smp$file <- res$file
-      list(spec = list(label = label, wsp = path,
+      out$spec <- list(label = label, wsp = path,
                        group_index = grp$index, group_name = grp$name,
                        files = smp, dirs = unique(dirname(res$file)),
-                       groups = tbl))
+                       # `partial` is what build_workspace_gatingset() keys on to
+                       # name the samples it wants. Without it a partial spec
+                       # would be handed a DIRECTORY and CytoML would go looking
+                       # for the very files that were just dropped.
+                       partial = !is.null(out$dropped),
+                       groups = tbl)
+      out
     }, error = function(e) {
       list(problem = list(label = label, wsp = path,
                           error = conditionMessage(e)))
@@ -368,9 +407,10 @@ resolve_workspace_specs <- function(wsp_paths, labels, fcs_index, group,
     got <- one(wsp_paths[i], labels[i])
     if (!is.null(got$spec))    specs[[labels[i]]]    <- got$spec
     if (!is.null(got$problem)) problems[[labels[i]]] <- got$problem
+    if (!is.null(got$dropped)) dropped[[labels[i]]]  <- got$dropped
   }
 
-  list(specs = specs, problems = problems)
+  list(specs = specs, problems = problems, dropped = dropped)
 }
 
 # -----------------------------------------------------------------------------
@@ -395,10 +435,61 @@ format_resolution_report <- function(problems, fcs_root = "") {
                  sprintf("                 %s", p$ambiguous[[nm]]))
     }
   }
+  # Only offered when EVERY problem is a missing file: the flag does not help
+  # with an ambiguous name or a workspace that would not open, and suggesting
+  # it there would send you down a dead end.
+  only_missing <- all(vapply(problems, function(p) {
+    length(p$missing) > 0 && length(p$ambiguous) == 0 && is.null(p$error)
+  }, logical(1)))
+
   lines <- c(lines, "",
              if (nzchar(fcs_root))
                paste0("FCS root searched (recursively): ", fcs_root),
-             "Nothing was loaded. Fix the FCS root (or --group) and re-run.")
+             "Nothing was loaded. Fix the FCS root (or --group) and re-run.",
+             if (only_missing)
+               paste0("To load the samples that ARE present and drop the rest, ",
+                      "re-run with --allow_missing_samples."))
+  paste(lines, collapse = "\n")
+}
+
+# -----------------------------------------------------------------------------
+# Report what --allow_missing_samples discarded. Returns "" when nothing was.
+#
+# This is a WARNING the run continues past, so it has to be readable at a
+# glance: the embedding it produces is missing cells that the workspaces asked
+# for, and that fact belongs in the log next to the results, not only in the
+# scrollback of whoever started the run. A whole workspace dropped (kept = 0) is
+# called out separately, because losing one subject entirely is a different
+# thing from losing a negative control.
+# -----------------------------------------------------------------------------
+format_dropped_report <- function(dropped, max_show = 8L) {
+  if (length(dropped) == 0) return("")
+
+  n_samples <- sum(vapply(dropped, function(d) length(d$samples), integer(1)))
+  gone      <- Filter(function(d) d$kept == 0L, dropped)
+
+  lines <- c(sprintf(
+    "%d sample(s) across %d workspace(s) were NOT FOUND and have been dropped:",
+    n_samples, length(dropped)), "")
+  for (d in dropped) {
+    shown <- d$samples
+    extra <- length(shown) - max_show
+    if (extra > 0) shown <- c(shown[seq_len(max_show)],
+                              sprintf("... and %d more", extra))
+    lines <- c(lines,
+               sprintf("  %s  (%d of %d sample(s) kept)%s",
+                       d$label, d$kept, d$total,
+                       if (d$kept == 0L) "  <- WORKSPACE DROPPED ENTIRELY" else ""),
+               sprintf("    %s", paste(shown, collapse = ", ")))
+  }
+  lines <- c(lines, "",
+             if (length(gone))
+               sprintf("%d workspace(s) contributed NO cells at all: %s",
+                       length(gone),
+                       paste(vapply(gone, function(d) d$label, character(1)),
+                             collapse = ", ")),
+             paste0("The embedding below is built WITHOUT those samples. ",
+                    "Drop --allow_missing_samples to make this fatal again."))
   paste(lines, collapse = "\n")
 }
 
@@ -459,6 +550,13 @@ format_shared_file_report <- function(specs, max_show = 10L) {
 # installed CytoML does not support it we say so explicitly rather than
 # returning a quietly wrong GatingSet.
 #
+# A PARTIAL spec (--allow_missing_samples dropped some of its samples) must not
+# take the directory form even when one directory would do. That form leaves
+# CytoML to pair the group's samples with files itself, and the samples we
+# dropped are exactly the ones it cannot pair — it would fail on them, which is
+# the failure the flag exists to avoid. Such a spec is named sample by sample
+# instead, via `subset`, so CytoML is asked only for what we know is there.
+#
 # The sample count is checked against what we resolved, because
 # fj_ws_get_samples(group_id=) and flowjo_to_gatingset(name=) index groups
 # independently — a disagreement would otherwise load the wrong group silently.
@@ -466,7 +564,23 @@ format_shared_file_report <- function(specs, max_show = 10L) {
 build_workspace_gatingset <- function(spec) {
   ws <- wsp_open(spec$wsp)
 
-  if (length(spec$dirs) == 1L) {
+  if (isTRUE(spec$partial)) {
+    cat(sprintf("    %s: loading %d named sample(s); the rest have no FCS file.\n",
+                spec$label, nrow(spec$files)))
+    map <- data.frame(sampleID = spec$files$sampleID,
+                      file     = spec$files$file,
+                      stringsAsFactors = FALSE)
+    gs <- tryCatch(
+      wsp_to_gatingset(ws, group = spec$group_index, path = map,
+                       subset = spec$files$name),
+      error = function(e) {
+        stop("Workspace '", spec$label, "' is missing ",
+             "some of its FCS files and this CytoML rejected loading the ",
+             "remaining samples by name:\n  ", conditionMessage(e),
+             "\nDrop --allow_missing_samples and supply the missing files ",
+             "instead, or exclude this workspace from --wsp.")
+      })
+  } else if (length(spec$dirs) == 1L) {
     gs <- wsp_to_gatingset(ws, group = spec$group_index, path = spec$dirs)
   } else {
     cat(sprintf(

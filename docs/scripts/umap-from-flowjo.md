@@ -201,6 +201,53 @@ FCS root searched (recursively): /data/fcs
 Nothing was loaded. Fix the FCS root (or --group) and re-run.
 ```
 
+The report is printed in full to stderr and the error itself is a one-line
+summary. That is deliberate: R truncates the error message it *prints* at
+`getOption("warning.length")` — 1000 characters by default — which was enough to
+swallow most of a 33-workspace report.
+
+### Loading anyway when FCS files are missing
+
+A collection of real workspaces routinely names files that were never copied to
+the analysis host — negative controls, re-exports, a folder someone forgot. One
+of them should not cost the other 32 workspaces, so `--allow_missing_samples`
+drops the samples that cannot be resolved and loads the rest:
+
+```bash
+Rscript scripts/umap_from_flowjo.R \
+  --wsp /data/workspaces --fcs_dir /data/fcs \
+  --population "Lymphocytes/Single Cells/Viable cells" \
+  --allow_missing_samples
+```
+
+Every dropped sample is named, before the slow load and again after the plots
+are written, because the embedding is then missing cells the workspaces asked
+for and that must not be lost in the scrollback:
+
+```
+WARNING: 3 sample(s) across 2 workspace(s) were NOT FOUND and have been dropped:
+
+  MTB039_078  (11 of 12 sample(s) kept)
+    Neg39_A10_A10_038.fcs
+  MTB082  (0 of 21 sample(s) kept)  <- WORKSPACE DROPPED ENTIRELY
+    MTB082_V0W0_Negativ.fcs, MTB082_V0W0_245024.fcs, ... and 19 more
+
+1 workspace(s) contributed NO cells at all: MTB082
+The embedding below is built WITHOUT those samples. Drop --allow_missing_samples to make this fatal again.
+```
+
+It relaxes **only** the missing-file case. An **ambiguous** name stays fatal:
+a missing sample is a known absence, while an ambiguous one is a sample that
+two files could be, and picking either would put the wrong cells in the
+embedding. A workspace that will not open, or a bad `--group`, also stays fatal
+— that is a broken input, not a gap in the data. If every workspace loses every
+file the run still stops, since that means `--fcs_dir` is simply wrong.
+
+In the app the same switch is **Advanced → Load anyway when FCS files are
+missing**. It applies to loading the workspaces as well as to the run, because
+the population tree cannot be printed until the FCS files resolve; while it is
+on, the collapsed Advanced header carries a `missing FCS allowed` badge.
+
 ### Sample groups across workspaces
 
 The group of interest can sit at a different index in each workspace, so
@@ -315,6 +362,7 @@ Rscript scripts/umap_from_flowjo.R --subpop_select \
 | `--population` | `Lymphocytes/Single Cells/Viable cells` | Population path to extract (leading `/` optional; suffix-matched). Resolved independently in each workspace |
 | `--list_populations` | off | Load the workspace(s), print their samples, population tree, common markers and workspace/divergence blocks, then exit (no analysis) |
 | `--group` | `1` | FlowJo sample group to load: an index, **or a group name** such as `"All Samples"` |
+| `--allow_missing_samples` | off | Drop samples whose FCS file is not found instead of failing, reporting each one (see [above](#loading-anyway-when-fcs-files-are-missing)). An *ambiguous* name is still fatal |
 | `--expected_samples` | `0` | If `> 0`, warn when the run does not total this many samples across all workspaces |
 | `--markers` | all common | Comma-separated subset of marker names to use/plot |
 | `--subpop_mode` | `furthest` | Subgate set for the subpopulation plot: `furthest`, `cd4cd8`, `direct`, `deepest`, `none` (see [above](#subpopulation-colouring)) |

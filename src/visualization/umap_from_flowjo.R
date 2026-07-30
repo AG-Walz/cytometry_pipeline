@@ -537,7 +537,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              point_size = 0.4, point_alpha = 0.6,
                              plot_width = 10, plot_height = 8,
                              output_formats = list(pdf = FALSE, png = FALSE, svg = TRUE),
-                             list_populations = FALSE) {
+                             list_populations = FALSE,
+                             allow_missing_samples = FALSE) {
   require(CytoML)
   require(flowWorkspace)
   require(flowCore)
@@ -579,10 +580,34 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
 
   cat("Resolving ", n_wsp, " workspace(s) (group = \"", group, "\") ...\n",
       sep = "")
-  resolved <- resolve_workspace_specs(wsp_paths, wsp_names, fcs_index, group)
+  resolved <- resolve_workspace_specs(wsp_paths, wsp_names, fcs_index, group,
+                                      allow_missing = allow_missing_samples)
   report   <- format_resolution_report(resolved$problems, fcs_root = fcs_dir)
-  if (nzchar(report)) stop(report)
+  if (nzchar(report)) {
+    # The report is written out BEFORE stop(), not passed to it. R truncates the
+    # error message it PRINTS at getOption("warning.length") (1000 chars by
+    # default), which silently swallowed most of a 33-workspace report — the
+    # whole point of collecting every problem first. stop() then carries only a
+    # short summary, which is also what a caller sees in conditionMessage().
+    cat(report, "\n", sep = "", file = stderr())
+    stop("could not build the workspace set: ", length(resolved$problems),
+         " of ", n_wsp, " workspace(s) unusable. See the report above.",
+         call. = FALSE)
+  }
   specs <- resolved$specs
+
+  # What --allow_missing_samples discarded. Said before the slow part, and again
+  # in the run summary at the end, so it cannot be lost in the scrollback of a
+  # long load — the embedding is short of cells and that has to stay visible.
+  dropped_report <- format_dropped_report(resolved$dropped)
+  if (nzchar(dropped_report)) {
+    cat("\nWARNING: ", dropped_report, "\n", sep = "")
+  }
+  if (!length(specs)) {
+    stop("every workspace was dropped: not one FCS file named by any of the ",
+         n_wsp, " workspace(s) was found under ", fcs_dir,
+         ". This is a wrong --fcs_dir, not a gap in the data.", call. = FALSE)
+  }
 
   # Overlapping workspaces double-count cells rather than failing, so this is
   # said loudly and early, before the slow part.
@@ -1230,7 +1255,13 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   }
 
   cat("\nDone. Plots written to:", normalizePath(output_dir), "\n")
+  # Repeated here on purpose: the warning above scrolled past a long load, and
+  # the plots must not be read as covering samples they do not contain.
+  if (nzchar(dropped_report)) {
+    cat("\nWARNING: ", dropped_report, "\n", sep = "")
+  }
   invisible(list(umap_coords = umap_coords, umap_df = umap_df,
                  workspaces = names(gs_list),
+                 dropped = resolved$dropped,
                  output_dir = normalizePath(output_dir)))
 }

@@ -113,6 +113,27 @@ def _step_data(state: dict) -> list:
                                     size="xs",
                                     c="dimmed",
                                 ),
+                                dmc.Space(h=14),
+                                dmc.Divider(
+                                    label="Missing FCS files",
+                                    labelPosition="center",
+                                ),
+                                dmc.Space(h=10),
+                                dmc.Switch(
+                                    id="sw-allow-missing",
+                                    label="Load anyway when FCS files are missing",
+                                    description=(
+                                        "By default one .fcs file a workspace "
+                                        "names but that is not under the FCS "
+                                        "folder stops the whole run. Turn this "
+                                        "on to drop those samples and load the "
+                                        "rest; the Log lists every one dropped. "
+                                        "A workspace left with no files is "
+                                        "skipped, and its cells are simply not "
+                                        "in the UMAP."
+                                    ),
+                                    checked=state["allow_missing_samples"],
+                                ),
                             ]
                         ),
                     ],
