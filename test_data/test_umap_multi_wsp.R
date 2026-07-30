@@ -356,24 +356,83 @@ cat("\nformat_dropped_report()\n")
 eq("nothing dropped means no message", format_dropped_report(list()), "")
 
 drep <- format_dropped_report(am$dropped)
-ok("counts the samples and the workspaces",
-   grepl("3 sample\\(s\\) across 2 workspace\\(s\\)", drep))
+ok("counts what was dropped AND what loaded",
+   grepl("3 sample\\(s\\) dropped", drep) && grepl("1 of 4 sample\\(s\\) loaded", drep))
+ok("scopes the counts to the affected workspaces, not the whole run",
+   grepl("In the 2 affected workspace\\(s\\)", drep))
 ok("names the dropped file", grepl("Nope.fcs", drep))
 ok("flags a workspace that lost everything",
-   grepl("WORKSPACE DROPPED ENTIRELY", drep) &&
-   grepl("contributed NO cells at all: runE", drep))
-ok("says the embedding is built without them",
-   grepl("WITHOUT those samples", drep))
+   grepl("NOTHING FROM THIS WORKSPACE IS IN THE UMAP", drep) &&
+   grepl("contributed no cells at all: runE", drep))
+ok("says the plots were built without them",
+   grepl("WITHOUT the dropped samples", drep))
+ok("names the switch a biologist would look for, not only the CLI flag",
+   grepl("Load anyway when FCS", drep) && grepl("--allow_missing_samples", drep))
 # Per LINE, not per report: R's default regex lets "." match a newline, so a
 # whole-string match here would happily span from runC's line into runE's.
 drep_lines <- strsplit(drep, "\n")[[1]]
 ok("a workspace that kept cells is not flagged as fully dropped",
-   !any(grepl("WORKSPACE DROPPED", grep("^  runC ", drep_lines, value = TRUE))))
+   !any(grepl("NOTHING FROM THIS", grep("^  runC ", drep_lines, value = TRUE))))
+
+# No elision, ever: a sample the biologist is never told about cannot be acted
+# on. This is the assertion that used to demand the opposite.
+long_names <- sprintf("S%02d.fcs", 1:40)
 long_drop <- format_dropped_report(
-  list(x = list(label = "x", wsp = "/w/x.wsp",
-                samples = sprintf("S%02d.fcs", 1:20), kept = 1L, total = 21L)),
-  max_show = 3L)
-ok("a long dropped list is truncated", grepl("and 17 more", long_drop))
+  list(x = list(label = "x", wsp = "/w/x.wsp", samples = long_names,
+                why = setNames(rep(list(list(kind = "absent",
+                                             candidates = character(0))), 40),
+                               long_names),
+                kept = 1L, total = 41L)))
+ok("every dropped sample is named, however many there are",
+   all(vapply(long_names, function(n) grepl(n, long_drop, fixed = TRUE),
+              logical(1))))
+ok("...and nothing is elided", !grepl("more$|\\.\\.\\.", long_drop))
+
+# --- the diagnosis, which is the point of the whole report -------------------
+cat("\nper-sample diagnosis\n")
+
+diag_rep <- format_dropped_report(list(w = list(
+  label = "w", wsp = "/w/w.wsp", kept = 1L, total = 4L,
+  samples = c("Edited_Label.fcs", "Spaced Name.fcs", "Truly_Gone.fcs"),
+  why = list(
+    "Edited_Label.fcs" = list(kind = "recorded", recorded = "Real_File_.fcs",
+                              candidates = "/fcs/Real_File_.fcs"),
+    "Spaced Name.fcs"  = list(kind = "near", recorded = "Spaced Name.fcs",
+                              candidates = "/fcs/Spaced_Name.fcs"),
+    "Truly_Gone.fcs"   = list(kind = "absent", recorded = "Gone_On_Disk.fcs",
+                              candidates = character(0))))))
+ok("a relabelled sample says the file IS present, and names it",
+   grepl("IS in your folder", diag_rep) && grepl("Real_File_.fcs", diag_rep))
+ok("...and says the cells are not lost",
+   grepl("NOT lost", diag_rep))
+ok("a near-miss is called probable, not certain",
+   grepl("Probably the same file", diag_rep) && grepl("Spaced_Name.fcs", diag_rep))
+ok("a truly absent sample is called genuinely unavailable",
+   grepl("genuinely unavailable", diag_rep))
+ok("...and still reports the file name the workspace recorded",
+   grepl("workspace records the file as Gone_On_Disk.fcs", diag_rep))
+ok("the three causes are reported separately, not lumped together",
+   grepl("IS in your folder", diag_rep) &&
+   grepl("Probably the same file", diag_rep) &&
+   grepl("genuinely unavailable", diag_rep))
+
+cat("\ndiagnose_unresolved()\n")
+d_idx   <- list("real_file_.fcs" = "/fcs/Real_File_.fcs",
+                "spaced_name.fcs" = "/fcs/Spaced_Name.fcs")
+d_loose <- loose_fcs_index(d_idx)
+eq("the recorded file name wins when it is on disk",
+   diagnose_unresolved("Edited.fcs", "Real_File_.fcs", d_idx, d_loose)$kind,
+   "recorded")
+eq("a punctuation-only difference is a near miss",
+   diagnose_unresolved("Spaced Name.fcs", NULL, d_idx, d_loose)$kind, "near")
+eq("nothing like it at all is absent",
+   diagnose_unresolved("Nowhere.fcs", "Nowhere.fcs", d_idx, d_loose)$kind,
+   "absent")
+eq("a recorded name that is ALSO absent does not fake a match",
+   diagnose_unresolved("Nowhere.fcs", "AlsoGone.fcs", d_idx, d_loose)$kind,
+   "absent")
+eq("loose_key ignores case, spaces, underscores and the extension",
+   loose_key("MTB011_Negativ .fcs"), loose_key("mtb011negativ"))
 
 # The remedy is only offered when it would actually work.
 missing_only <- list(runC = list(label = "runC", wsp = "/w/runC.wsp",
@@ -393,9 +452,9 @@ eq("no problems means no message", format_resolution_report(list()), "")
 report <- format_resolution_report(res$problems, fcs_root = fcs_root)
 ok("names every failing workspace",
    grepl("runC", report) && grepl("runD", report))
-ok("reports the missing file", grepl("missing:\\s+Nope.fcs", report))
+ok("reports the missing file", grepl("Nope.fcs", report, fixed = TRUE))
 ok("reports every ambiguous candidate",
-   grepl("ambiguous", report) &&
+   grepl("MORE THAN ONE file", report) &&
    length(grep("Shared.fcs", strsplit(report, "\n")[[1]])) >= 1 &&
    length(grep("dup/(left|right)", strsplit(report, "\n")[[1]])) == 2)
 ok("says nothing was loaded", grepl("Nothing was loaded", report))

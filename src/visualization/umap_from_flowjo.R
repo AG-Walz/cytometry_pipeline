@@ -571,12 +571,14 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   wsp_names <- workspace_labels(wsp_paths)
   n_wsp     <- length(wsp_paths)
 
-  cat("Workspaces found (", n_wsp, "):\n", sep = "")
-  for (i in seq_len(n_wsp)) cat("  - ", wsp_names[i], "  ", wsp_paths[i], "\n",
-                                sep = "")
-  cat("Indexing FCS files under:", fcs_dir, "(recursive)\n")
+  # Names, not full paths: they share a root, and 33 repetitions of it push the
+  # part that matters — what failed — off the top of the log.
+  cat("Workspaces found (", n_wsp, ") under ", wsp_path, ":\n", sep = "")
+  cat(strwrap(paste(wsp_names, collapse = ", "), width = 78,
+              prefix = "  ", initial = "  "), sep = "\n")
   fcs_index <- index_fcs_dir(fcs_dir)
-  cat("  ", length(fcs_index), " distinct FCS file name(s) indexed\n", sep = "")
+  cat("FCS files indexed: ", length(fcs_index), " distinct name(s) under ",
+      fcs_dir, "\n", sep = "")
 
   cat("Resolving ", n_wsp, " workspace(s) (group = \"", group, "\") ...\n",
       sep = "")
@@ -608,6 +610,13 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
          n_wsp, " workspace(s) was found under ", fcs_dir,
          ". This is a wrong --fcs_dir, not a gap in the data.", call. = FALSE)
   }
+
+  # What DID work, stated as plainly as what did not. Without this the log only
+  # ever names failures, and a reader cannot tell a run that lost two controls
+  # from one that lost half the study.
+  n_samples <- sum(vapply(specs, function(s) nrow(s$files), integer(1)))
+  cat(sprintf("\nGOING INTO THE UMAP: %d of %d workspace(s), %d sample(s).\n",
+              length(specs), n_wsp, n_samples))
 
   # Overlapping workspaces double-count cells rather than failing, so this is
   # said loudly and early, before the slow part.
