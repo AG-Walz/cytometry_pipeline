@@ -47,9 +47,10 @@ def register_callbacks() -> None:
         State({"comp": "fb-input", "bid": "wsp"}, "value"),
         State({"comp": "fb-input", "bid": "fcs"}, "value"),
         State("in-group", "value"),
+        State("sw-allow-missing", "checked"),
         prevent_initial_call=True,
     )
-    def start_inspect(_clicks, wsp, fcs_dir, group):
+    def start_inspect(_clicks, wsp, fcs_dir, group, allow_missing):
         form = {"wsp": wsp, "fcs_dir": fcs_dir, "group": group}
         problems = common.validate_inspect(form)
         if problems:
@@ -63,7 +64,8 @@ def register_callbacks() -> None:
                 color="yellow",
             )
 
-        argv = rscript.inspect_argv(wsp.strip(), fcs_dir.strip(), group)
+        argv = rscript.inspect_argv(wsp.strip(), fcs_dir.strip(), group,
+                                    allow_missing_samples=bool(allow_missing))
         ok, message = RUNNER.start(
             argv, cwd=str(config.REPO_ROOT), kind="inspect",
             meta={"wsp": wsp, "fcs_dir": fcs_dir, "group": group},

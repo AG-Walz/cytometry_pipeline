@@ -27,19 +27,28 @@ def _base_argv() -> list[str]:
     )
 
 
-def inspect_argv(wsp: str, fcs_dir: str, group: str) -> list[str]:
+def inspect_argv(wsp: str, fcs_dir: str, group: str,
+                 allow_missing_samples: bool = False) -> list[str]:
     """Argv that loads the workspace(s) and prints samples/populations/markers.
 
     ``group`` is passed through as text: the R side takes either an index or a
     sample-group *name*, which is what lets one value cover a folder of
     workspaces that order their groups differently.
+
+    ``allow_missing_samples`` has to be honoured HERE and not only on the run:
+    the R side resolves every FCS file before it will print a population tree,
+    so without it a single absent file leaves the form with no populations to
+    pick from and the toggle further down unreachable.
     """
-    return _base_argv() + [
+    argv = _base_argv() + [
         "--wsp", wsp,
         "--fcs_dir", fcs_dir,
         "--group", str(group).strip(),
         "--list_populations",
     ]
+    if allow_missing_samples:
+        argv.append("--allow_missing_samples")
+    return argv
 
 
 def run_argv(params: dict) -> list[str]:
@@ -63,6 +72,10 @@ def run_argv(params: dict) -> list[str]:
     group = params.get("group")
     add("--group", str(group).strip() if group is not None else None,
         config.DEFAULTS["group"])
+
+    # A bare flag, so `add` (which appends a value) does not apply.
+    if params.get("allow_missing_samples"):
+        argv.append("--allow_missing_samples")
 
     # Annotations. --sample_pattern is only meaningful without a CSV, and the
     # R side ignores it in that case, so it is not sent — the printed command

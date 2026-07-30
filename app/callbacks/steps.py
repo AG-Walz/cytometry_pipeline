@@ -93,22 +93,32 @@ def register_callbacks() -> None:
     @callback(
         Output("advanced-badge", "children"),
         Input("in-group", "value"),
+        Input("sw-allow-missing", "checked"),
     )
-    def advanced_badge(group):
-        """Surface a non-default sample group on the collapsed Advanced header.
+    def advanced_badge(group, allow_missing):
+        """Surface non-default sample loading on the collapsed Advanced header.
 
         A setting that changes which samples are loaded must not be able to
         hide behind a closed panel — that is the one way this section could
-        cost someone a run.
+        cost someone a run. "Missing FCS allowed" earns a badge for the
+        opposite reason to the others: it cannot fail a run, it can quietly
+        shrink one, and a UMAP that silently lost a subject looks exactly like
+        a UMAP that did not.
         """
+        badges = []
         group = str(group or "").strip()
         if not group:
-            return dmc.Badge("no group set", color="red", variant="light",
-                             size="sm", tt="none")
-        if group == str(config.DEFAULTS["group"]):
+            badges.append(dmc.Badge("no group set", color="red",
+                                    variant="light", size="sm", tt="none"))
+        elif group != str(config.DEFAULTS["group"]):
+            badges.append(dmc.Badge(f"group: {group}", color="blue",
+                                    variant="light", size="sm", tt="none"))
+        if allow_missing:
+            badges.append(dmc.Badge("missing FCS allowed", color="orange",
+                                    variant="light", size="sm", tt="none"))
+        if not badges:
             return None
-        return dmc.Badge(f"group: {group}", color="blue", variant="light",
-                         size="sm", tt="none")
+        return dmc.Group(badges, gap="xs")
 
     # -- stepper navigation ------------------------------------------------
 
@@ -539,6 +549,7 @@ def register_callbacks() -> None:
     @callback(
         Output({"comp": "fb-input", "bid": ALL}, "value"),
         Output("in-group", "value"),
+        Output("sw-allow-missing", "checked"),
         Output("in-normalize", "value"),
         Output("in-downsample", "value"),
         Output("in-neighbors", "value"),
@@ -563,6 +574,7 @@ def register_callbacks() -> None:
         return (
             [""] * len(path_values),
             d["group"],
+            d["allow_missing_samples"],
             d["normalize"],
             d["downsample"],
             d["n_neighbors"],

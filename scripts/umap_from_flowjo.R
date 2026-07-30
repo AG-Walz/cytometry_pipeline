@@ -63,6 +63,14 @@ option_list <- list(
                             "that order their groups differently. ",
                             "--list_populations prints each workspace's ",
                             "groups. [default %default]")),
+  make_option("--allow_missing_samples", action = "store_true", default = FALSE,
+              help = paste0("Drop samples whose FCS file is not found under ",
+                            "--fcs_dir instead of failing the run, and report ",
+                            "exactly what was dropped. A workspace with no ",
+                            "file left is skipped. An AMBIGUOUS file name is ",
+                            "still fatal: the sample is not absent, it is ",
+                            "unidentifiable, and guessing would put the wrong ",
+                            "cells in the embedding. [default %default]")),
   make_option("--expected_samples", type = "integer", default = 0,
               help = paste0("If > 0, warn when the run does not total exactly ",
                             "this many samples across all workspaces ",
@@ -244,5 +252,6 @@ umap_from_flowjo(
   plot_width       = opt$plot_width,
   plot_height      = opt$plot_height,
   output_formats   = parse_formats(opt$output_formats),
-  list_populations = opt$list_populations
+  list_populations = opt$list_populations,
+  allow_missing_samples = opt$allow_missing_samples
 )

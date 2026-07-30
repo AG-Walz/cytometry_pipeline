@@ -283,6 +283,106 @@ bad <- resolve_workspace_specs(paths[1], "runA", idx, "Controls",
 ok("a group error is captured, not thrown",
    length(bad$specs) == 0 && grepl("is empty", bad$problems$runA$error))
 
+# --- resolve_workspace_specs(allow_missing = TRUE) ---------------------------
+# The relaxed mode: a sample whose FCS file is absent is dropped instead of
+# failing the run. runE is the nastier case — EVERY file absent — which must
+# still be reported rather than quietly contributing nothing.
+cat("\nresolve_workspace_specs(allow_missing = TRUE)\n")
+
+fake_samples$runE <- c("Gone_1.fcs", "Gone_2.fcs")
+paths_am  <- paste0("/w/", c("runA", "runC", "runD", "runE"), ".wsp")
+labels_am <- workspace_labels(paths_am)
+am <- resolve_workspace_specs(paths_am, labels_am, idx, "All Samples",
+                              open_ws = fake_open, read_samples = fake_read,
+                              allow_missing = TRUE)
+
+eq("a workspace with a missing file now loads", names(am$specs), c("runA", "runC"))
+eq("...keeping only the files that resolved",
+   basename(am$specs$runC$files$file), "Pool_001.fcs")
+eq("...and no NA file survives into the spec",
+   sum(is.na(am$specs$runC$files$file)), 0L)
+eq("the dropped sample is recorded", am$dropped$runC$samples, "Nope.fcs")
+eq("...with the kept/total counts", c(am$dropped$runC$kept, am$dropped$runC$total),
+   c(1L, 2L))
+ok("a clean workspace is not recorded as dropped", is.null(am$dropped$runA))
+
+ok("an all-missing workspace produces no spec", is.null(am$specs$runE))
+eq("...but is reported as dropped, not silently absent",
+   am$dropped$runE$kept, 0L)
+eq("...naming every file it wanted", am$dropped$runE$samples,
+   c("Gone_1.fcs", "Gone_2.fcs"))
+
+ok("an AMBIGUOUS name stays fatal even when missing is allowed",
+   is.null(am$specs$runD) && !is.null(am$problems$runD$ambiguous))
+
+ok("a trimmed spec is marked partial", isTRUE(am$specs$runC$partial))
+ok("an untouched spec is not", isFALSE(am$specs$runA$partial))
+
+# --- build_workspace_gatingset() dispatch ------------------------------------
+# What CytoML is ASKED for, which is the whole point of `partial`: a workspace
+# missing some files must not be handed a directory to search, or CytoML goes
+# looking for the files we just dropped and fails anyway. The GatingSet itself
+# needs flowWorkspace, so the call is intercepted and only its arguments are
+# checked — CytoML's own behaviour still needs a real host.
+cat("\nbuild_workspace_gatingset() dispatch\n")
+
+.seen <- NULL
+.real_open <- wsp_open; .real_to_gs <- wsp_to_gatingset
+wsp_open        <- function(p) "ws"
+wsp_to_gatingset <- function(ws, group = 1L, path, ...) {
+  .seen <<- list(path = path, dots = list(...))
+  stop("stop here: the GatingSet needs flowWorkspace")
+}
+
+try(build_workspace_gatingset(am$specs$runC), silent = TRUE)
+ok("a partial spec is given a per-sample map, not a directory",
+   is.data.frame(.seen$path))
+eq("...listing only the files that were found",
+   basename(.seen$path$file), "Pool_001.fcs")
+eq("...and names the samples it wants via subset",
+   .seen$dots$subset, "Pool_001.fcs")
+
+.seen <- NULL
+try(build_workspace_gatingset(am$specs$runA), silent = TRUE)
+ok("a complete single-directory spec still gets the plain directory form",
+   is.character(.seen$path) && length(.seen$path) == 1L &&
+   length(.seen$dots) == 0L)
+
+wsp_open <- .real_open; wsp_to_gatingset <- .real_to_gs
+
+# --- format_dropped_report ---------------------------------------------------
+cat("\nformat_dropped_report()\n")
+
+eq("nothing dropped means no message", format_dropped_report(list()), "")
+
+drep <- format_dropped_report(am$dropped)
+ok("counts the samples and the workspaces",
+   grepl("3 sample\\(s\\) across 2 workspace\\(s\\)", drep))
+ok("names the dropped file", grepl("Nope.fcs", drep))
+ok("flags a workspace that lost everything",
+   grepl("WORKSPACE DROPPED ENTIRELY", drep) &&
+   grepl("contributed NO cells at all: runE", drep))
+ok("says the embedding is built without them",
+   grepl("WITHOUT those samples", drep))
+# Per LINE, not per report: R's default regex lets "." match a newline, so a
+# whole-string match here would happily span from runC's line into runE's.
+drep_lines <- strsplit(drep, "\n")[[1]]
+ok("a workspace that kept cells is not flagged as fully dropped",
+   !any(grepl("WORKSPACE DROPPED", grep("^  runC ", drep_lines, value = TRUE))))
+long_drop <- format_dropped_report(
+  list(x = list(label = "x", wsp = "/w/x.wsp",
+                samples = sprintf("S%02d.fcs", 1:20), kept = 1L, total = 21L)),
+  max_show = 3L)
+ok("a long dropped list is truncated", grepl("and 17 more", long_drop))
+
+# The remedy is only offered when it would actually work.
+missing_only <- list(runC = list(label = "runC", wsp = "/w/runC.wsp",
+                                 missing = "Nope.fcs", ambiguous = list()))
+ok("the strict report points at the flag when every problem is a missing file",
+   grepl("--allow_missing_samples", format_resolution_report(missing_only)))
+ok("...and stays quiet when the flag would not help (ambiguous)",
+   !grepl("--allow_missing_samples", format_resolution_report(res$problems)))
+
 wsp_group_table <- .real_group_table
 
 # --- format_resolution_report ------------------------------------------------
