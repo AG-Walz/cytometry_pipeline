@@ -319,11 +319,11 @@ ok("a trimmed spec is marked partial", isTRUE(am$specs$runC$partial))
 ok("an untouched spec is not", isFALSE(am$specs$runA$partial))
 
 # --- build_workspace_gatingset() dispatch ------------------------------------
-# What CytoML is ASKED for, which is the whole point of `partial`: a workspace
-# missing some files must not be handed a directory to search, or CytoML goes
-# looking for the files we just dropped and fails anyway. The GatingSet itself
-# needs flowWorkspace, so the call is intercepted and only its arguments are
-# checked — CytoML's own behaviour still needs a real host.
+# What CytoML is ASKED for. On CytoML 2.14 `path` must be a character scalar —
+# the per-sample data.frame form is rejected with "invalid 'path' argument" —
+# and it searches recursively, so a split workspace is served by the common
+# parent. The GatingSet itself needs flowWorkspace, so the call is intercepted
+# and only its arguments are checked; CytoML's own behaviour needs a real host.
 cat("\nbuild_workspace_gatingset() dispatch\n")
 
 .seen <- NULL
@@ -335,18 +335,24 @@ wsp_to_gatingset <- function(ws, group = 1L, path, ...) {
 }
 
 try(build_workspace_gatingset(am$specs$runC), silent = TRUE)
-ok("a partial spec is given a per-sample map, not a directory",
-   is.data.frame(.seen$path))
-eq("...listing only the files that were found",
-   basename(.seen$path$file), "Pool_001.fcs")
-eq("...and names the samples it wants via subset",
-   .seen$dots$subset, "Pool_001.fcs")
+ok("path is a single directory string, never a data.frame",
+   is.character(.seen$path) && length(.seen$path) == 1L)
+ok("greedy_match is on, so a renamed file can still be matched by $FIL",
+   isTRUE(.seen$dots$greedy_match))
+ok("no subset= is passed (CytoML evaluates it in its own frame and rejects it)",
+   is.null(.seen$dots$subset))
 
 .seen <- NULL
-try(build_workspace_gatingset(am$specs$runA), silent = TRUE)
-ok("a complete single-directory spec still gets the plain directory form",
+try(build_workspace_gatingset(res$specs$runB), silent = TRUE)
+ok("a workspace split across directories is served by their common parent",
    is.character(.seen$path) && length(.seen$path) == 1L &&
-   length(.seen$dots) == 0L)
+   all(startsWith(res$specs$runB$dirs, .seen$path)))
+
+eq("common_parent of one directory is itself", common_parent("/a/b"), "/a/b")
+eq("common_parent stops at the last shared segment",
+   common_parent(c("/a/b/c", "/a/b/d")), "/a/b")
+eq("common_parent of disjoint roots is the separator",
+   common_parent(c("/a/x", "/b/y")), .Platform$file.sep)
 
 wsp_open <- .real_open; wsp_to_gatingset <- .real_to_gs
 
