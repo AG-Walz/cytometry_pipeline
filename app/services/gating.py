@@ -10,9 +10,18 @@ from __future__ import annotations
 
 
 def build_tree(paths: list[str]) -> list[dict]:
-    """Nested dmc.Tree data covering every path, parents included."""
+    """Nested dmc.Tree data covering every path, parents included.
+
+    A path with no "/" — in practice the bare ``root`` node the gating tree
+    starts with — is kept verbatim as its own value. Splitting it like the rest
+    would invent "/root", which is not a gate and would not resolve on the R
+    side.
+    """
     root: dict = {}
     for path in paths:
+        if "/" not in path:
+            root.setdefault(path, {"__value__": path, "__children__": {}})
+            continue
         parts = [p for p in path.split("/") if p]
         node = root
         for i, part in enumerate(parts):
@@ -38,6 +47,8 @@ def default_expanded(paths: list[str], depth: int = 2) -> list[str]:
     """Ancestor paths up to ``depth`` levels, so the tree opens partly unfolded."""
     expanded: set[str] = set()
     for path in paths:
+        if "/" not in path:      # the bare "root" node has nothing to unfold
+            continue
         parts = [p for p in path.split("/") if p]
         for i in range(min(depth, len(parts))):
             expanded.add("/" + "/".join(parts[: i + 1]))
@@ -48,6 +59,9 @@ def all_values(paths: list[str]) -> list[str]:
     """Every node value in the tree, including intermediate parents."""
     values: set[str] = set()
     for path in paths:
+        if "/" not in path:      # "root" is its own value, not "/root"
+            values.add(path)
+            continue
         parts = [p for p in path.split("/") if p]
         for i in range(len(parts)):
             values.add("/" + "/".join(parts[: i + 1]))

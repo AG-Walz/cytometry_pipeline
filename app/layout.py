@@ -172,6 +172,42 @@ def _step_gates(state: dict) -> list:
             justify="space-between",
         ),
         dmc.Space(h=6),
+        dmc.Switch(
+            id="sw-per-wsp",
+            label="Pick the population separately in each workspace",
+            description=(
+                "Use this when workspaces name the same biology differently "
+                "— \"Live/CD8\" in one, \"Live cells/CD8\" in another. The "
+                "list above them is only the gates ALL workspaces share, "
+                "which collapses to a couple of nodes when they were gated "
+                "independently. A workspace you leave unset is left out of "
+                "the UMAP."
+            ),
+            checked=bool(state.get("population_map")),
+        ),
+        dmc.Space(h=8),
+        # Always mounted, hidden when the mode is off: a callback whose Input
+        # is missing from the layout never fires, and the gating tree depends
+        # on this one.
+        html.Div(
+            id="per-wsp-select-wrap",
+            style={"display": "none"},
+            # value="" and never None: dash-mantine-components 2.8 fails to
+            # render a Select whose value is None, and the error it raises is
+            # a colour-parsing one, which points nowhere near the cause.
+            children=dmc.Select(
+                id="sel-wsp",
+                label="Workspace",
+                description=("The tree below shows this workspace's own gates; "
+                             "clicking one sets its population."),
+                data=[],
+                value="",
+                searchable=True,
+                allowDeselect=False,
+            ),
+        ),
+        dmc.Space(h=8),
+        html.Div(id="per-wsp-picker"),
         html.Div(id="gate-tree-mode"),
         dmc.ScrollArea(
             dmc.Tree(
@@ -647,6 +683,11 @@ def build_layout(state: dict):
         children=dmc.Box(
             [
                 dcc.Store(id="store-inspect", data={}),
+                # {workspace: gate}. A Store rather than a component prop
+                # because the mapping is per workspace and there is no single
+                # widget that owns it; it is read back through FORM_FIELDS like
+                # any other field, and persists with the rest of the form.
+                dcc.Store(id="store-popmap", data=state.get("population_map") or {}),
                 dcc.Store(id="store-results-dir", data=""),
                 dcc.Store(id="store-run-generation", data=-1),
                 dcc.Interval(id="poll", interval=POLL_MS, disabled=False),

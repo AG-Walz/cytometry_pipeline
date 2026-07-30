@@ -41,6 +41,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("plot_width", "in-width", "value"),
     ("plot_height", "in-height", "value"),
     ("output_formats", "in-formats", "value"),
+    ("population_map", "store-popmap", "data"),
     ("selected_gates", "gate-tree", "selected"),
     ("checked_gates", "gate-tree", "checked"),
 ]
@@ -131,6 +132,7 @@ def run_params(form: dict, populations: list[str]) -> dict:
         "population": population_of(form),
         "output_dir": output_dir_of(form),
         "group": form.get("group"),
+        "population_map": form.get("population_map") or {},
         "allow_missing_samples": bool(form.get("allow_missing_samples")),
         "sample_metadata": (form.get("sample_metadata") or "").strip(),
         "sample_pattern": (form.get("sample_pattern") or "").strip(),
@@ -166,8 +168,20 @@ def validate_run(form: dict, inspect: dict) -> list[str]:
     elif not Path(fcs_dir).is_dir():
         problems.append(f"FCS directory does not exist: {fcs_dir}")
 
-    if not inspect.get("populations"):
+    pop_map = {w: p for w, p in (form.get("population_map") or {}).items() if p}
+    loaded = inspect.get("populations_by_workspace") or {}
+    if not inspect.get("populations") and not loaded:
         problems.append("Workspaces not loaded yet — run 'Load workspaces' in step 1.")
+    elif pop_map:
+        # A gate chosen for a workspace that is no longer loaded would be a
+        # hard error on the R side; catch it while it is still fixable.
+        stale = [w for w in pop_map if loaded and w not in loaded]
+        if stale:
+            problems.append(
+                "The per-workspace populations name workspace(s) that are not "
+                "loaded: " + ", ".join(sorted(stale)) +
+                ". Re-pick them in step 2."
+            )
     elif not population_of(form):
         problems.append("No population selected (step 2).")
 
