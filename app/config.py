@@ -48,6 +48,10 @@ DEFAULTS: dict = {
     "group": "1",
     "allow_missing_samples": False,
     "population": "",
+    # {workspace label: gate}. Empty means "one population for every
+    # workspace", the original behaviour; non-empty switches the run to
+    # --population_map. A workspace absent from it is excluded from the run.
+    "population_map": {},
     "sample_metadata": "",
     "sample_pattern": "",
     "annotate": [],

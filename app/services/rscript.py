@@ -61,9 +61,13 @@ def run_argv(params: dict) -> list[str]:
     argv = _base_argv() + [
         "--wsp", params["wsp"],
         "--fcs_dir", params["fcs_dir"],
-        "--population", params["population"],
-        "--output_dir", params["output_dir"],
     ]
+    # --population is omitted entirely when a map is given: the R side ignores
+    # it there, and printing a gate the run does not use would misrepresent the
+    # command someone is about to read or paste.
+    if not (params.get("population_map") or {}):
+        argv.extend(["--population", params["population"]])
+    argv.extend(["--output_dir", params["output_dir"]])
 
     def add(flag: str, value, default) -> None:
         if value is not None and value != default:
@@ -76,6 +80,14 @@ def run_argv(params: dict) -> list[str]:
     # A bare flag, so `add` (which appends a value) does not apply.
     if params.get("allow_missing_samples"):
         argv.append("--allow_missing_samples")
+
+    # Per-workspace populations override --population entirely on the R side, so
+    # the two are never both meaningful. ';' separates pairs because a FlowJo
+    # gate name may contain a comma but not, in practice, a semicolon.
+    pop_map = params.get("population_map") or {}
+    if pop_map:
+        argv.extend(["--population_map",
+                     ";".join(f"{w}={p}" for w, p in pop_map.items() if p)])
 
     # Annotations. --sample_pattern is only meaningful without a CSV, and the
     # R side ignores it in that case, so it is not sent — the printed command
@@ -134,11 +146,20 @@ _MARKERS_HEADER = re.compile(r"^Common markers \(\s*(\d+)\s*\):\s*$")
 _WORKSPACES_HEADER = re.compile(r"^Workspaces resolved \(\s*(\d+)\s*\):\s*$")
 
 _SAMPLE_ITEM = re.compile(r"^  - (.+?)\s*$")
-_POP_ITEM = re.compile(r"^  (/.*?)\s*$")
+# Not anchored on "/": gs_get_pop_paths() lists the bare "root" node first, and
+# requiring a leading slash made _collect stop on that very first line — so the
+# population list came back EMPTY for every real workspace.
+_POP_ITEM = re.compile(r"^  (\S.*?)\s*$")
 _MARKER_ITEM = re.compile(r"^  (\S.*?)\s*$")
 # Four-space indent, deliberately: it keeps the two-space item patterns above
 # from swallowing this block, which is printed after them.
 _WORKSPACE_ITEM = re.compile(r"^    (\S.*?)\s*$")
+
+_POPS_BY_WSP_HEADER = re.compile(r"^Populations by workspace \(\s*(\d+)\s*\):\s*$")
+# Inside that block the workspace rows keep the four-space indent and its gates
+# take six, which is what lets the two levels be told apart on the way back in.
+_PBW_WORKSPACE = re.compile(r"^    (\S.*?)\s*\|\s*\d+ node\(s\)\s*$")
+_PBW_GATE = re.compile(r"^      (\S.*?)\s*$")
 
 
 def _collect(lines: list[str], start: int, item_re: re.Pattern) -> list[str]:
@@ -164,8 +185,12 @@ def parse_inspect(stdout: str) -> dict:
     can use, since the R side refuses a population it cannot resolve everywhere.
     """
     lines = stdout.splitlines()
-    result: dict[str, list] = {
-        "samples": [], "populations": [], "markers": [], "workspaces": []
+    result: dict = {
+        "samples": [], "populations": [], "markers": [], "workspaces": [],
+        # {workspace label: its own gates}. Each workspace's FULL tree, unlike
+        # "populations", which is the intersection and collapses to a few nodes
+        # when the workspaces were gated independently.
+        "populations_by_workspace": {},
     }
 
     for i, raw in enumerate(lines):
@@ -173,18 +198,45 @@ def parse_inspect(stdout: str) -> dict:
         if _SAMPLES_HEADER.match(line):
             result["samples"] = _collect(lines, i + 1, _SAMPLE_ITEM)
         elif _POPS_HEADER.match(line):
-            result["populations"] = _collect(lines, i + 1, _POP_ITEM)
+            # The R side prints a parenthetical when no gate is shared; prose,
+            # not a gate name (same convention as the marker block).
+            result["populations"] = [
+                p for p in _collect(lines, i + 1, _POP_ITEM)
+                if not p.startswith("(")
+            ]
         elif _MARKERS_HEADER.match(line):
             markers = _collect(lines, i + 1, _MARKER_ITEM)
             # The R side prints an explanatory parenthetical when the set is
             # empty; that is prose, not a marker name.
             result["markers"] = [m for m in markers if not m.startswith("(")]
+        elif _POPS_BY_WSP_HEADER.match(line):
+            result["populations_by_workspace"] = _collect_pops_by_workspace(
+                lines, i + 1)
         elif _WORKSPACES_HEADER.match(line):
             result["workspaces"] = [
                 _parse_workspace_row(row)
                 for row in _collect(lines, i + 1, _WORKSPACE_ITEM)
             ]
     return result
+
+
+def _collect_pops_by_workspace(lines: list[str], start: int) -> dict:
+    """Two-level block: a workspace row, then its gates, until neither matches."""
+    out: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in lines[start:]:
+        line = line.rstrip("\n")
+        ws = _PBW_WORKSPACE.match(line)
+        if ws:
+            current = ws.group(1)
+            out[current] = []
+            continue
+        gate = _PBW_GATE.match(line)
+        if gate and current is not None:
+            out[current].append(gate.group(1))
+            continue
+        break
+    return out
 
 
 def _parse_workspace_row(row: str) -> dict:

@@ -170,9 +170,13 @@ def register_callbacks() -> None:
         Output("gate-tree-mode", "children"),
         Input("store-inspect", "data"),
         Input("sw-explicit", "checked"),
+        Input("sw-per-wsp", "checked"),
+        Input("sel-wsp", "value"),
         State("gate-tree", "selected"),
+        State("store-popmap", "data"),
     )
-    def fill_gate_tree(inspect, explicit, current_selected):
+    def fill_gate_tree(inspect, explicit, per_wsp, wsp, current_selected,
+                       pop_map):
         """Sole owner of the gating tree's contents and mode.
 
         The tree does two jobs — pick the population, or tick a gate set — and
@@ -180,8 +184,20 @@ def register_callbacks() -> None:
         are handled together so neither can overwrite the other's tree.
         """
         inspect = inspect or {}
-        populations = inspect.get("populations") or []
+        by_wsp = inspect.get("populations_by_workspace") or {}
         explicit = bool(explicit)
+        per_wsp = bool(per_wsp) and bool(by_wsp)
+        pop_map = pop_map or {}
+
+        # In per-workspace mode the tree shows ONE workspace's own gates —
+        # otherwise the intersection, which is what a single --population must
+        # live within.
+        if per_wsp:
+            if wsp not in by_wsp:
+                wsp = next(iter(by_wsp))
+            populations = by_wsp.get(wsp) or []
+        else:
+            populations = inspect.get("populations") or []
 
         if not populations:
             return (
@@ -196,8 +212,9 @@ def register_callbacks() -> None:
         # the same workspace), else fall back to the remembered one.
         keep = [
             p
-            for p in list(current_selected or [])
-            + [inspect.get("remembered_population") or ""]
+            for p in ([pop_map.get(wsp) or ""] if per_wsp else
+                      list(current_selected or [])
+                      + [inspect.get("remembered_population") or ""])
             if p in set(populations)
         ]
         selected = keep[:1]
@@ -238,12 +255,16 @@ def register_callbacks() -> None:
         if multi:
             # With several workspaces the gate list is their INTERSECTION, and
             # saying so here saves you hunting for a gate that only one of them
-            # has. The R side refuses a population it cannot resolve in all.
+            # has. In per-workspace mode that is no longer true, and a stale
+            # sentence here would flatly contradict the tree underneath it.
             body += [
                 dmc.Space(h=4),
                 dmc.Text(
-                    "The tree below shows only the gates shared by every "
-                    "workspace — those are the ones a run can use.",
+                    (f"The tree below shows {wsp}'s OWN gates. Each workspace "
+                     "contributes the gate you pick for it."
+                     if per_wsp else
+                     "The tree below shows only the gates shared by every "
+                     "workspace — those are the ones a run can use."),
                     size="xs",
                 ),
                 dmc.Space(h=6),
@@ -276,23 +297,180 @@ def register_callbacks() -> None:
             mode_note,
         )
 
+    # -- per-workspace population picker -----------------------------------
+
+    @callback(
+        Output("sel-wsp", "data"),
+        Output("sel-wsp", "value"),
+        Output("per-wsp-select-wrap", "style"),
+        Input("sw-per-wsp", "checked"),
+        Input("store-inspect", "data"),
+        Input("store-popmap", "data"),
+        State("sel-wsp", "value"),
+    )
+    def fill_workspace_select(per_wsp, inspect, pop_map, current):
+        by_wsp = (inspect or {}).get("populations_by_workspace") or {}
+        if not per_wsp or not by_wsp:
+            return [], "", {"display": "none"}   # "" not None — see layout.py
+        pop_map = pop_map or {}
+        labels = list(by_wsp)
+        if current not in by_wsp:
+            current = labels[0]
+        data = [
+            {"value": w,
+             "label": f"{w}  ({'set' if pop_map.get(w) else 'not set'})"}
+            for w in labels
+        ]
+        return data, current, {}
+
+    @callback(
+        Output("per-wsp-picker", "children"),
+        Input("sw-per-wsp", "checked"),
+        Input("store-inspect", "data"),
+        Input("store-popmap", "data"),
+    )
+    def per_workspace_picker(per_wsp, inspect, pop_map):
+        """A running list of what each workspace contributes.
+
+        The safeguard, not decoration: this mode pools cells from gates with
+        different names, so which gate every workspace contributes has to be
+        readable at a glance BEFORE the run, not inferred afterwards from the
+        plots.
+        """
+        by_wsp = (inspect or {}).get("populations_by_workspace") or {}
+        if not per_wsp:
+            return None
+        if not by_wsp:
+            return _alert(
+                "Load the workspaces in step 1 first — this needs each "
+                "workspace's own gating tree.", color="gray")
+
+        pop_map = pop_map or {}
+        labels = list(by_wsp)
+        chosen = sum(1 for w in labels if pop_map.get(w))
+        rows = [
+            dmc.Group(
+                [
+                    dmc.Badge("set" if pop_map.get(w) else "not set",
+                              color="green" if pop_map.get(w) else "gray",
+                              variant="light", size="sm", tt="none",
+                              style={"minWidth": "72px"}),
+                    dmc.Text(w, size="xs", fw=600,
+                             style={"minWidth": "190px"}),
+                    # The prop is OMITTED rather than set to None for the
+                    # default colour: None crosses to the browser as JSON null,
+                    # `typeof null` is "object", and Mantine rejects it with
+                    # "Failed to parse color ... instead got object" — which
+                    # takes down the whole step, not just this line.
+                    dmc.Text(pop_map.get(w) or "not in the UMAP", size="xs",
+                             style={"flex": 1, "wordBreak": "break-all"},
+                             **({} if pop_map.get(w) else {"c": "dimmed"})),
+                    dmc.Button("clear", id={"comp": "popmap-clear", "wsp": w},
+                               size="compact-xs", variant="subtle",
+                               disabled=not pop_map.get(w)),
+                ],
+                gap="xs", wrap="nowrap",
+            )
+            for w in labels
+        ]
+        return [
+            dmc.Alert(
+                [
+                    dmc.Text(f"{chosen} of {len(labels)} workspace(s) will "
+                             f"contribute cells.", size="sm", fw=600),
+                    dmc.Space(h=6),
+                    dmc.Stack(rows, gap=4),
+                ],
+                color="blue" if chosen else "yellow",
+                variant="light",
+                title="What each workspace contributes",
+            ),
+            dmc.Space(h=10),
+        ]
+
+    @callback(
+        Output("store-popmap", "data"),
+        Input("gate-tree", "selected"),
+        Input({"comp": "popmap-clear", "wsp": ALL}, "n_clicks"),
+        Input("sw-per-wsp", "checked"),
+        State("sel-wsp", "value"),
+        State("store-popmap", "data"),
+        State("store-inspect", "data"),
+        prevent_initial_call=True,
+    )
+    def record_population_choice(selected, _clears, per_wsp, wsp, pop_map,
+                                 inspect):
+        """Sole writer of the per-workspace mapping."""
+        pop_map = dict(pop_map or {})
+        by_wsp = (inspect or {}).get("populations_by_workspace") or {}
+        trigger = ctx.triggered_id
+
+        # Turning the mode OFF clears the mapping rather than leaving it to
+        # apply invisibly: with it set, the R side ignores --population
+        # entirely, so a stale mapping would silently decide the whole run.
+        if trigger == "sw-per-wsp" and not per_wsp:
+            return {}
+        if not per_wsp:
+            return no_update
+
+        if isinstance(trigger, dict) and trigger.get("comp") == "popmap-clear":
+            pop_map.pop(trigger.get("wsp"), None)
+            return pop_map
+
+        if trigger == "gate-tree":
+            if not wsp or wsp not in by_wsp:
+                return no_update
+            gate = (selected or [None])[0]
+            if gate:
+                pop_map[wsp] = gate
+            else:
+                pop_map.pop(wsp, None)
+            return pop_map
+        return no_update
+
     @callback(
         Output("gate-tree", "expanded", allow_duplicate=True),
         Input("btn-expand-all", "n_clicks"),
         Input("btn-collapse", "n_clicks"),
         State("store-inspect", "data"),
+        State("sw-per-wsp", "checked"),
+        State("sel-wsp", "value"),
         prevent_initial_call=True,
     )
-    def expand_collapse(_expand, _collapse, inspect):
+    def expand_collapse(_expand, _collapse, inspect, per_wsp, wsp):
         if ctx.triggered_id == "btn-collapse":
             return []
-        return gating.all_values((inspect or {}).get("populations") or [])
+        # Must expand the tree that is actually SHOWN. Expanding the shared
+        # list while the tree shows one workspace's own gates unfolds nothing
+        # below the gates they happen to have in common — which is exactly the
+        # part you switched modes to get at.
+        inspect = inspect or {}
+        by_wsp = inspect.get("populations_by_workspace") or {}
+        if per_wsp and by_wsp:
+            paths = by_wsp.get(wsp) or by_wsp[next(iter(by_wsp))]
+        else:
+            paths = inspect.get("populations") or []
+        return gating.all_values(paths)
 
     @callback(
         Output("population-echo", "children"),
         Input("gate-tree", "selected"),
+        Input("sw-per-wsp", "checked"),
+        Input("sel-wsp", "value"),
     )
-    def echo_population(selected):
+    def echo_population(selected, per_wsp, wsp):
+        if per_wsp and wsp:
+            if not selected:
+                return dmc.Text(
+                    f"{wsp} has no gate yet — it will be left out of the UMAP.",
+                    size="sm", c="dimmed")
+            return dmc.Text(
+                [dmc.Text(f"{wsp} \u2192 ", span=True, c="dimmed", size="sm"),
+                 dmc.Text(selected[0], span=True, size="sm", fw=600)],
+                size="sm")
+        return _echo_single_population(selected)
+
+    def _echo_single_population(selected):
         if not selected:
             return _alert("Click a gate above to choose the population.",
                           color="yellow")
@@ -563,6 +741,8 @@ def register_callbacks() -> None:
         Output("in-formats", "value"),
         Output("in-markers", "value", allow_duplicate=True),
         Output("sw-explicit", "checked"),
+        Output("sw-per-wsp", "checked"),
+        Output("store-popmap", "data", allow_duplicate=True),
         Output("subpop-mode", "value"),
         Output("in-outname", "value", allow_duplicate=True),
         Input("btn-reset", "n_clicks"),
@@ -588,6 +768,8 @@ def register_callbacks() -> None:
             list(d["output_formats"]),
             [],
             d["explicit_subpop"],
+            bool(d["population_map"]),
+            dict(d["population_map"]),
             d["subpop_mode"],
             "",
         )
