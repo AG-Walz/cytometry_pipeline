@@ -67,6 +67,12 @@ class Results:
     overview: list[Plot] = field(default_factory=list)
     marker_all: dict[str, Plot] = field(default_factory=dict)
     marker_file: dict[str, dict[str, Plot]] = field(default_factory=dict)
+    #: Sample-annotation plots. These reuse ``Plot.marker`` for the annotation
+    #: COLUMN (patient, timepoint) and ``Plot.sample`` for the LEVEL, since the
+    #: file-name scheme is the same shape as the marker one.
+    annot_all: dict[str, Plot] = field(default_factory=dict)
+    annot_level: dict[str, dict[str, Plot]] = field(default_factory=dict)
+    annotations: list[str] = field(default_factory=list)
     other: list[Plot] = field(default_factory=list)
     markers: list[str] = field(default_factory=list)
     samples: list[str] = field(default_factory=list)
@@ -102,6 +108,17 @@ def _classify(stem: str) -> tuple[str, str, str, str]:
         if tail.endswith("_ALL"):
             marker = tail[: -len("_ALL")]
             return "marker_all", marker, "", f"{marker} — all samples"
+
+    # Sample annotations (patient, timepoint, …) mirror the marker scheme, so
+    # the same rsplit reasoning applies: the level is the last segment.
+    if "_annot_" in stem:
+        tail = stem.split("_annot_", 1)[1]
+        if "_level_" in tail:
+            column, level = tail.rsplit("_level_", 1)
+            return "annot_level", column, level, f"{column}: {level}"
+        if tail.endswith("_ALL"):
+            column = tail[: -len("_ALL")]
+            return "annot_all", column, "", f"Coloured by {column}"
 
     return "other", "", "", stem
 
@@ -151,9 +168,14 @@ def scan(output_dir: str | os.PathLike) -> Results:
             results.marker_all[plot.marker] = plot
         elif section == "marker_file":
             results.marker_file.setdefault(plot.marker, {})[plot.sample] = plot
+        elif section == "annot_all":
+            results.annot_all[plot.marker] = plot
+        elif section == "annot_level":
+            results.annot_level.setdefault(plot.marker, {})[plot.sample] = plot
         else:
             results.other.append(plot)
 
+    results.annotations = sorted(set(results.annot_all) | set(results.annot_level))
     results.markers = sorted(set(results.marker_all) | set(results.marker_file))
     samples: set[str] = set()
     for per_sample in results.marker_file.values():

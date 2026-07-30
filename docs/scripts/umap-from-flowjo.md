@@ -386,7 +386,7 @@ source(file.path(shared_dir, "io_utils.R"))        # make_outdir
 source(file.path(shared_dir, "plot_utils.R"))      # save_plot_formats, create_safe_filename
 source(file.path(shared_dir, "stats_utils.R"))     # run_umap
 source(file.path(shared_dir, "flowframe_utils.R")) # explore_data
-source("src/loading/discover_flowjo_workspaces.R") # workspace discovery/pairing
+source("src/loading/flowjo_workspace.R") # workspace discovery/pairing
 source("src/visualization/umap_from_flowjo.R")     # umap_from_flowjo
 
 umap_from_flowjo(
@@ -399,7 +399,7 @@ umap_from_flowjo(
 )
 ```
 
-`src/loading/discover_flowjo_workspaces.R` must be sourced too: it holds the
+`src/loading/flowjo_workspace.R` must be sourced too: it holds the
 workspace discovery and FCS pairing (`find_workspace_files`, `index_fcs_dir`,
 `resolve_workspace_specs`, …) that `umap_from_flowjo()` calls.
 
@@ -468,7 +468,7 @@ own behaviour — that needs a real workspace on an analysis host.
 ## Related
 
 - [FlowJo → UMAP Dash app](../../app/README.md) — a GUI over this script
-- [`src/loading/discover_flowjo_workspaces.R`](../subprojects/loading.md#discover_flowjo_workspacesr) — the workspace discovery and FCS pairing functions
+- [`src/loading/flowjo_workspace.R`](../subprojects/loading.md#flowjo_workspacer) — the workspace discovery and FCS pairing functions
 - [Getting Started](../getting-started.md) — environment setup
 - [Pipeline D — FlowJo Comparison](../pipelines/pipeline-D-flowjo-comparison.md) — inter-rater gating comparison from `.wsp` files
 - [Pipeline E — Preprocessed UMAP](../pipelines/pipeline-E-preprocessed-umap.md) — UMAP/clustering from preprocessed FCS (no gating)
