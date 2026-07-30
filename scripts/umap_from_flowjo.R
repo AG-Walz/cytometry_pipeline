@@ -54,6 +54,15 @@ option_list <- list(
               help = paste0("Population path to extract. A leading '/' is ",
                             "optional; a suffix (e.g. 'Single Cells/Viable cells') ",
                             "is matched against the gating tree. [default %default]")),
+  make_option("--population_map", type = "character", default = NULL,
+              help = paste0("Choose the gate PER WORKSPACE, for studies whose ",
+                            "workspaces name the same biology differently. ",
+                            "Either a path to a two-column file (workspace, ",
+                            "gate) or inline \"wsA=/gate;wsB=/other gate\". ",
+                            "A workspace with no entry is EXCLUDED from the ",
+                            "run. Overrides --population. Use ",
+                            "--list_populations to see each workspace's own ",
+                            "gates.")),
   make_option("--list_populations", action = "store_true", default = FALSE,
               help = "Print the population tree (gs_get_pop_paths) and exit."),
   make_option("--group", type = "character", default = "1",
@@ -253,5 +262,6 @@ umap_from_flowjo(
   plot_height      = opt$plot_height,
   output_formats   = parse_formats(opt$output_formats),
   list_populations = opt$list_populations,
-  allow_missing_samples = opt$allow_missing_samples
+  allow_missing_samples = opt$allow_missing_samples,
+  population_map   = opt$population_map
 )

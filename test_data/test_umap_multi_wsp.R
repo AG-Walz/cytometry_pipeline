@@ -707,6 +707,61 @@ throws("a missing metadata file is rejected",
        resolve_sample_annotations(samples, metadata_file = "/no/such.csv"),
        "not found")
 
-# --- summary -----------------------------------------------------------------
+
+# --- parse_population_map ----------------------------------------------------
+# The per-workspace pairing: which gate each workspace contributes. Parsing is
+# the only part testable without CytoML, and it is where a typo becomes a
+# silently wrong pooling, so it is strict about what it accepts.
+cat("\nparse_population_map()\n")
+
+eq("no map means NULL", parse_population_map(NULL), NULL)
+eq("an empty string means NULL", parse_population_map(""), NULL)
+
+m <- parse_population_map("runA=/Lymph/CD3;runB=/Cells/Viable/CD3+")
+eq("inline pairs become a named vector", names(m), c("runA", "runB"))
+eq("...carrying the gate", unname(m), c("/Lymph/CD3", "/Cells/Viable/CD3+"))
+eq("whitespace around a pair is ignored",
+   unname(parse_population_map("  runA = /Lymph/CD3 ")), "/Lymph/CD3")
+eq("a gate containing '=' keeps everything after the first one",
+   unname(parse_population_map("runA=/Lymph/CD4=hi")), "/Lymph/CD4=hi")
+eq("a gate containing a comma survives (that is why ';' separates)",
+   unname(parse_population_map("runA=/Lymph/CD4+, CD8-")), "/Lymph/CD4+, CD8-")
+
+throws("a pair without '=' is rejected",
+       parse_population_map("runA/Lymph/CD3"), "no '='")
+throws("an empty gate is rejected",
+       parse_population_map("runA="), "no gate for workspace")
+throws("naming a workspace twice is rejected",
+       parse_population_map("runA=/a;runA=/b"), "more than once")
+throws("an unknown workspace is rejected when the labels are known",
+       parse_population_map("nope=/a", labels = c("runA", "runB")),
+       "were not loaded")
+ok("a known workspace passes the label check",
+   !is.null(parse_population_map("runA=/a", labels = c("runA", "runB"))))
+
+# The file form, for gates that would need quoting on a command line.
+mapfile <- file.path(root, "popmap.tsv")
+writeLines(c("workspace\tpopulation",
+             "runA\t/Lymph/CD3",
+             "# a comment, and a blank line follow",
+             "",
+             "runB\t/Cells/Viable/CD3+"), mapfile)
+fm <- parse_population_map(mapfile)
+eq("a TSV file is read", names(fm), c("runA", "runB"))
+eq("...with its gates", unname(fm), c("/Lymph/CD3", "/Cells/Viable/CD3+"))
+ok("a header row is dropped", !("workspace" %in% names(fm)))
+
+csvfile <- file.path(root, "popmap.csv")
+writeLines(c("runA,/Lymph/CD3", "runB,/Cells/CD3+"), csvfile)
+eq("a comma file works too", unname(parse_population_map(csvfile)),
+   c("/Lymph/CD3", "/Cells/CD3+"))
+
+badfile <- file.path(root, "popmap_bad.tsv")
+writeLines(c("runA"), badfile)
+throws("a file line without two fields is rejected",
+       parse_population_map(badfile), "without")
+
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
+
+# --- summary -----------------------------------------------------------------
 if (.fail > 0) quit(status = 1)
