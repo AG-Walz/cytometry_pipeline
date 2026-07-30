@@ -196,26 +196,43 @@ resolve_fcs_names <- function(names, fcs_index, recorded = NULL,
   ambiguous <- list()
   why       <- list()
 
-  for (i in seq_along(names)) {
-    nm   <- names[i]
-    base <- path_basename(nm)
-    keys <- unique(tolower(c(nm, paste0(nm, ".fcs"), base,
+  # The RECORDED file name is tried before the sample name. A FlowJo sample name
+  # is an editable label; the recorded name is the file FlowJo actually opened
+  # when the gates were drawn. Where they disagree AND both exist on disk, the
+  # label is the wrong one to follow: in a real workspace here that meant
+  # pairing a 2025 export with a 2024 file of the same name and a different
+  # event count — a different acquisition entirely.
+  via <- rep(NA_character_, length(names))
+
+  lookup <- function(cand) {
+    if (is.null(cand) || is.na(cand) || !nzchar(cand)) return(NULL)
+    base <- path_basename(cand)
+    keys <- unique(tolower(c(cand, paste0(cand, ".fcs"), base,
                              paste0(base, ".fcs"))))
-    hit <- NULL
-    for (k in keys) {
-      if (!is.null(fcs_index[[k]])) { hit <- fcs_index[[k]]; break }
-    }
+    for (k in keys) if (!is.null(fcs_index[[k]])) return(fcs_index[[k]])
+    NULL
+  }
+
+  for (i in seq_along(names)) {
+    nm  <- names[i]
+    rec <- if (is.null(recorded)) NA_character_ else recorded[i]
+    hit <- lookup(rec)
+    src <- "recorded"
+    if (is.null(hit)) { hit <- lookup(nm); src <- "name" }
+
     if (is.null(hit)) {
       missing <- c(missing, nm)
       if (is.null(loose_index)) loose_index <- loose_fcs_index(fcs_index)
-      why[[nm]] <- diagnose_unresolved(nm, recorded[i], fcs_index, loose_index)
+      why[[nm]] <- diagnose_unresolved(nm, rec, fcs_index, loose_index)
     } else if (length(hit) > 1L) {
       ambiguous[[nm]] <- hit
     } else {
       file[i] <- hit
+      via[i]  <- src
     }
   }
-  list(file = file, missing = missing, ambiguous = ambiguous, why = why)
+  list(file = file, missing = missing, ambiguous = ambiguous, why = why,
+       via = via)
 }
 
 # -----------------------------------------------------------------------------
@@ -751,65 +768,76 @@ format_shared_file_report <- function(specs, max_show = 10L) {
 # installed CytoML does not support it we say so explicitly rather than
 # returning a quietly wrong GatingSet.
 #
-# A PARTIAL spec (--allow_missing_samples dropped some of its samples) must not
-# take the directory form even when one directory would do. That form leaves
-# CytoML to pair the group's samples with files itself, and the samples we
-# dropped are exactly the ones it cannot pair — it would fail on them, which is
-# the failure the flag exists to avoid. Such a spec is named sample by sample
-# instead, via `subset`, so CytoML is asked only for what we know is there.
+# `path` MUST be a character scalar on CytoML 2.14: it calls normalizePath() on
+# it, so the per-sample data.frame form this used to pass is rejected outright
+# ("invalid 'path' argument"). It searches RECURSIVELY, so a workspace whose
+# files are split across directories is served by their common parent.
+#
+# Restricting WHICH samples load is left to CytoML, which already skips a sample
+# whose file is not under `path` — verified on CytoML 2.14. The previous attempt
+# to name them via `subset=` could not work: flowjo_to_gatingset() evaluates
+# that argument with eval(substitute(subset)) in its OWN frame, so any variable
+# of ours is out of scope and it falls through to "invalid 'subset' argument!".
+#
+# greedy_match=TRUE lets CytoML accept a file whose NAME differs from the sample
+# label when the file's $FIL keyword matches it AND the event count is right.
+# That is content-verified, not a guess on names, and it is what makes a
+# workspace load whose analyst renamed the files after gating.
 #
 # The sample count is checked against what we resolved, because
 # fj_ws_get_samples(group_id=) and flowjo_to_gatingset(name=) index groups
 # independently — a disagreement would otherwise load the wrong group silently.
 # -----------------------------------------------------------------------------
-build_workspace_gatingset <- function(spec) {
-  ws <- wsp_open(spec$wsp)
 
-  if (isTRUE(spec$partial)) {
-    cat(sprintf("    %s: loading %d named sample(s); the rest have no FCS file.\n",
-                spec$label, nrow(spec$files)))
-    map <- data.frame(sampleID = spec$files$sampleID,
-                      file     = spec$files$file,
-                      stringsAsFactors = FALSE)
-    gs <- tryCatch(
-      wsp_to_gatingset(ws, group = spec$group_index, path = map,
-                       subset = spec$files$name),
-      error = function(e) {
-        stop("Workspace '", spec$label, "' is missing ",
-             "some of its FCS files and this CytoML rejected loading the ",
-             "remaining samples by name:\n  ", conditionMessage(e),
-             "\nDrop --allow_missing_samples and supply the missing files ",
-             "instead, or exclude this workspace from --wsp.")
-      })
-  } else if (length(spec$dirs) == 1L) {
-    gs <- wsp_to_gatingset(ws, group = spec$group_index, path = spec$dirs)
-  } else {
-    cat(sprintf(
-      "    %s: FCS files span %d directories; using a per-sample path map.\n",
-      spec$label, length(spec$dirs)))
-    map <- data.frame(sampleID = spec$files$sampleID,
-                      file     = spec$files$file,
-                      stringsAsFactors = FALSE)
-    gs <- tryCatch(
-      wsp_to_gatingset(ws, group = spec$group_index, path = map),
-      error = function(e) {
-        stop("Workspace '", spec$label, "' has FCS files in ",
-             length(spec$dirs), " different directories, and this CytoML ",
-             "rejected the per-sample path map:\n  ", conditionMessage(e),
-             "\nPut this workspace's FCS files under one directory, or ",
-             "point --fcs_dir at a root where they are not split.\n",
-             "Directories involved:\n  ",
-             paste(spec$dirs, collapse = "\n  "))
-      })
+# The deepest directory containing all of `dirs`. Used because `path` takes one
+# scalar and searches under it.
+common_parent <- function(dirs) {
+  if (length(dirs) == 1L) return(dirs)
+  parts <- strsplit(dirs, .Platform$file.sep, fixed = TRUE)
+  n <- min(vapply(parts, length, integer(1)))
+  keep <- 0L
+  for (i in seq_len(n)) {
+    seg <- unique(vapply(parts, function(p) p[i], character(1)))
+    if (length(seg) > 1L) break
+    keep <- i
   }
+  if (keep == 0L) return(.Platform$file.sep)
+  out <- paste(parts[[1]][seq_len(keep)], collapse = .Platform$file.sep)
+  # An absolute path splits with an empty first segment, so sharing only the
+  # root collapses to "" — which is not a directory anyone can search.
+  if (!nzchar(out)) .Platform$file.sep else out
+}
 
-  loaded <- length(flowWorkspace::sampleNames(gs))
-  if (loaded != nrow(spec$files)) {
-    warning(sprintf(
-      paste0("Workspace '%s': %s lists %d sample(s) but the GatingSet loaded ",
-             "%d. The workspace's group indexing may differ from the sample ",
-             "table; check the group with --list_populations."),
-      spec$label, describe_group(spec), nrow(spec$files), loaded))
+build_workspace_gatingset <- function(spec) {
+  ws   <- wsp_open(spec$wsp)
+  root <- common_parent(spec$dirs)
+  if (length(spec$dirs) > 1L) {
+    cat(sprintf("    %s: FCS files span %d directories; searching under %s\n",
+                spec$label, length(spec$dirs), root))
+  }
+  gs <- wsp_to_gatingset(ws, group = spec$group_index, path = root,
+                         greedy_match = TRUE)
+
+  # Which of the samples we resolved did CytoML actually load? Reported BY NAME,
+  # because "15 listed, 7 loaded" tells the person whose data it is nothing they
+  # can act on. CytoML keys a sample on its name AND its event count, so the
+  # usual cause of a name we resolved not arriving is a DIFFERENT acquisition
+  # sitting under the expected file name.
+  loaded_raw <- flowWorkspace::sampleNames(gs)
+  # Sample names come back as "<name>_<$TOT>"; compare on the name part.
+  loaded <- sub("_[0-9]+$", "", loaded_raw)
+  wanted <- spec$files$name
+  absent <- setdiff(wanted, loaded)
+  if (length(absent)) {
+    warning(sprintf(paste0(
+      "Workspace '%s': %d of %d resolved sample(s) were REJECTED by CytoML and ",
+      "are not in the analysis:\n  %s\n",
+      "CytoML matches a sample on its name AND its event count. A file of the ",
+      "right name whose event count differs is a different acquisition, so it ",
+      "is refused rather than used. Check whether an older export sits under ",
+      "these names in the FCS folder."),
+      spec$label, length(absent), length(wanted),
+      paste(absent, collapse = "\n  ")), call. = FALSE)
   }
   gs
 }

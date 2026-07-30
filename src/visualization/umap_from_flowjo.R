@@ -626,12 +626,36 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   }
 
   # --- 1b. Build one GatingSet per workspace. --------------------------------
+  # A build can still fail after resolution succeeded — CytoML checks the event
+  # count of each file it opens, so a name we resolved can turn out to be a
+  # different acquisition. With --allow_missing_samples that costs the run one
+  # workspace, not all of them: the flag says "load what is loadable", and a
+  # workspace CytoML refuses is a workspace whose data is unusable here.
   gs_list <- list()
+  build_failed <- list()
   for (label in names(specs)) {
     spec <- specs[[label]]
     cat(sprintf("\nBuilding GatingSet for '%s' — %s, %d sample(s)\n",
                 label, describe_group(spec), nrow(spec$files)))
-    gs_list[[label]] <- build_workspace_gatingset(spec)
+    gs <- tryCatch(build_workspace_gatingset(spec),
+                   error = function(e) {
+                     if (!allow_missing_samples) stop(e)
+                     build_failed[[label]] <<- conditionMessage(e)
+                     NULL
+                   })
+    if (!is.null(gs)) gs_list[[label]] <- gs
+  }
+  if (length(build_failed)) {
+    cat("\nWARNING: ", length(build_failed),
+        " workspace(s) resolved their files but could NOT be loaded, and are\n",
+        "not in the analysis. Each reason is CytoML's own:\n", sep = "")
+    for (label in names(build_failed)) {
+      cat(sprintf("  %s\n    %s\n", label,
+                  gsub("\n", "\n    ", build_failed[[label]])))
+    }
+  }
+  if (!length(gs_list)) {
+    stop("no workspace could be loaded; see the failures above.", call. = FALSE)
   }
 
   # Sample display labels across the WHOLE run. Names are kept exactly as they
