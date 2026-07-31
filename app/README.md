@@ -2,11 +2,18 @@
 
 # FlowJo → UMAP — Dash front-end
 
-A GUI for [`scripts/umap_from_flowjo.R`](../scripts/umap_from_flowjo.R), and
-nothing else. It builds the same command line you would type by hand, shows it
-to you before running it, executes it, streams its output, and displays the
-plots the script wrote. There is no separate analysis path: if the GUI produces
-a figure, the CLI produces the identical figure from the command it printed.
+A GUI for two of this repo's standalone scripts, on two tabs down the left:
+
+| Tab | Script | What it does |
+|---|---|---|
+| **UMAP** | [`umap_from_flowjo.R`](../scripts/umap_from_flowjo.R) | FlowJo workspaces + FCS → one shared UMAP |
+| **FCS names** | [`sync_fcs_names.R`](../scripts/sync_fcs_names.R) | make each FCS file's `$FIL` match its name on disk, and show what every file has stored inside it |
+
+Both build the same command line you would type by hand, show it to you before
+running it, execute it, and stream the output into the shared **Log** pane on
+the right. There is no separate analysis path: if the GUI produces a figure or
+a rewritten file, the CLI produces the identical one from the command it
+printed.
 
 ---
 
@@ -71,6 +78,59 @@ authentication, and anyone who can reach the port can start jobs. It is also
 single-user: two people using one instance share one runner and one log. Only
 put it behind the launcher on a trusted network, and preferably one at a time
 per host.
+
+---
+
+## The FCS names tab
+
+For the case where a whole run was acquired under one file name, you renamed
+the files on disk, and FlowJo still shows a column of identical samples —
+because it displays the `$FIL` keyword stored *inside* each file, not the file
+name. Full background in
+[docs/scripts/sync-fcs-names.md](../docs/scripts/sync-fcs-names.md).
+
+The panel is a folder, a mode, and a button. The five modes are listed
+read-only first, and that ordering is the safety design:
+
+| Mode | Flags | Writes? |
+|---|---|---|
+| Census — read every file and report | `--probe` | no |
+| Dry run — show exactly what would change | — | no |
+| APPLY — patch the originals in place | `--apply --in_place` | **yes** |
+| APPLY — write patched copies elsewhere | `--apply --output_dir` | **yes** |
+| Undo — revert the most recent run | `--revert` | **yes** |
+
+Census is what the page loads on, and the mode is deliberately **not**
+remembered between sessions — a refresh must never bring the app back armed to
+write. Everything a write does is recorded in `fcs_name_sync_ledger.csv` beside
+the data, which is what Undo replays.
+
+Only four of the script's flags have a UI (`--fcs_dir`, the mode, `--also`,
+`--output_dir`). The rest — `--set`, `--unset`, `--guid`, `--strip_extension`,
+`--allow`, `--ledger`, `--no_recursive`, `--no_original` — stay on the command
+line on purpose. `--allow` especially: it downgrades a refusal that exists to
+stop the tool writing to a file it does not fully understand, and that should
+be a deliberate typed act, not a checkbox. The command preview is
+copy-pasteable, so adding one by hand is easy.
+
+### Stored metadata
+
+The TEXT segment of an FCS file is a delimiter-packed blob you cannot read
+without a parser, so **Show metadata** decodes it for the whole folder at once:
+one row per keyword, one column per file, with the keyword column frozen while
+you scroll sideways through the cohort. Identity keywords come first; the
+switch expands it to all of them.
+
+A cell is highlighted when its value is shared by more than one file **and** the
+keyword is a name — `$FIL`, `GUID`, `$SRC`, `TUBE NAME` and friends. A cohort
+sharing `$TOT` or `$DATE` is ordinary and is not flagged, and neither is
+`ORIGINALFIL`, which is *supposed* to be identical everywhere: it records the
+one name the whole cohort used to have.
+
+This runs R synchronously rather than through the shared runner, because it
+only reads each file's header and TEXT segment (a few KB) and you are waiting
+for it. It refuses while a run is in progress, since reading a file mid-rewrite
+would give a torn view.
 
 ---
 
@@ -146,6 +206,13 @@ per cell and can be tens of megabytes.
 
 ## Layout
 
+The tab bar wraps the **left column only**, so the Log and Results panes stay
+visible for both tools. Tabs around the whole page would hide the log behind
+the UMAP tab — and the log is where the FCS tool's entire output goes. Its id is
+`tool-tabs`, not `tabs`: `tabs` belongs to the right column and is both a State
+and an Output of the poll callback.
+
+
 ```
 app/
   app.py                    entrypoint and CLI flags
@@ -167,6 +234,21 @@ app/
     session_state.py        remembered form state
   assets/dmcfuncs.js        custom dmc.Tree node renderer (file/folder icons)
 ```
+
+### Why the FCS names tab needed almost no new code
+
+`RUNNER` takes a free-form `kind`, and the poll callback in
+`callbacks/execution.py` branches on `kind == "inspect"` / `kind == "run"` and
+falls through for anything else — while the tuple it always returns already
+drives the status badge, the elapsed clock, the log and the Cancel button. So
+`kind="fcs-names"` gets all of that for **zero** lines in `execution.py`. The
+folder pickers are `browser_field`s, whose callbacks are pattern-matching and
+already cover them. `RUNNER` being single-slot is what stops a sync and a UMAP
+run overlapping. `callbacks/fcsnames.py` is the whole tab.
+
+The one structured thing the tab needs — the keyword table — comes back from R
+as a CSV rather than being parsed out of stdout, because R owns the only
+correct FCS parser in this repo and a second one in Python would drift from it.
 
 ### The one dependency on the R side
 

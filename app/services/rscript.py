@@ -19,11 +19,16 @@ import shlex
 from app import config
 
 
-def _base_argv() -> list[str]:
+def _base_argv(script=None) -> list[str]:
+    """The stdbuf + Rscript + script-path prefix.
+
+    ``script`` defaults to the UMAP CLI so the two existing callers are
+    unchanged; the FCS-names tab passes ``config.SYNC_SCRIPT``.
+    """
     return (
         config.line_buffer_prefix()
         + config.rscript_command()
-        + [str(config.CLI_SCRIPT)]
+        + [str(script or config.CLI_SCRIPT)]
     )
 
 
@@ -131,6 +136,65 @@ def run_argv(params: dict) -> list[str]:
         argv.extend(["--output_formats", ",".join(formats)])
 
     return argv
+
+
+# --- sync_fcs_names.R --------------------------------------------------------
+#
+# Five modes, ordered read-only first. That ordering is the safety design: the
+# two harmless modes are the ones you land on, and reaching a write means moving
+# past two labels that say "writes nothing".
+#
+# Only 4 of the script's 16 flags get a UI. The rest (--set, --unset, --guid,
+# --strip_extension, --allow, --ledger, --no_recursive, --no_original) are
+# deliberately CLI-only: they are expert options, and --allow in particular
+# downgrades a refusal that exists to stop the tool writing to a file it does
+# not fully understand. That must stay a typed act, not a checkbox.
+SYNC_MODES: dict[str, dict] = {
+    "probe": {
+        "label": "Census — read every file and report. Writes nothing.",
+        "flags": ["--probe"], "button": "Run census", "color": "blue",
+    },
+    "dry": {
+        "label": "Dry run — show exactly what would change. Writes nothing.",
+        "flags": [], "button": "Run dry run", "color": "blue",
+    },
+    "inplace": {
+        "label": "APPLY — patch the original files where they sit.",
+        "flags": ["--apply", "--in_place"], "button": "Apply in place",
+        "color": "red", "writes": True,
+    },
+    "copy": {
+        "label": "APPLY — write patched copies to another folder.",
+        "flags": ["--apply"], "button": "Apply to copies", "color": "red",
+        "writes": True, "needs_output": True,
+    },
+    "revert": {
+        "label": "Undo — revert the most recent run from its ledger.",
+        "flags": ["--revert"], "button": "Revert last run", "color": "orange",
+        "writes": True,
+    },
+}
+
+
+def sync_argv(fcs_dir: str, mode: str, also: str = "",
+              output_dir: str = "") -> list[str]:
+    """Argv for one FCS-names run."""
+    spec = SYNC_MODES[mode]
+    argv = _base_argv(config.SYNC_SCRIPT) + ["--fcs_dir", fcs_dir]
+    argv += list(spec["flags"])
+    if spec.get("needs_output") and output_dir.strip():
+        argv += ["--output_dir", output_dir.strip()]
+    # Revert replays a ledger; every other option would be noise on that command.
+    if mode != "revert" and also.strip():
+        argv += ["--also", also.strip()]
+    return argv
+
+
+def keyword_table_argv(fcs_dir: str, csv_path: str) -> list[str]:
+    """Argv that dumps every keyword of every file to a CSV. Read-only."""
+    return _base_argv(config.SYNC_SCRIPT) + [
+        "--fcs_dir", fcs_dir, "--probe", "--keyword_table", csv_path,
+    ]
 
 
 def command_string(argv: list[str]) -> str:

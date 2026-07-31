@@ -12,6 +12,7 @@ from dash import dcc, html
 
 from app import config
 from app.components.filebrowser import browser_field
+from app.services import rscript
 
 POLL_MS = 700
 
@@ -467,9 +468,117 @@ def _step_run(state: dict) -> list:
     ]
 
 
+def _fcs_names_panel(state: dict) -> list:
+    """The second tool: make each FCS file's $FIL match its name on disk.
+
+    Controls only. The report streams into the shared Log pane on the right,
+    which is why this tab bar wraps the left column and not the whole grid.
+    """
+    return [
+        dmc.Badge("sync_fcs_names.R", variant="dot", color="gray", size="sm"),
+        dmc.Space(h=10),
+        dmc.Text(
+            "A run acquired under one file name records that name inside every "
+            "file, in $FIL — and that is what FlowJo displays. Renaming the "
+            "files on disk does not change it, so the workspace shows a column "
+            "of identical samples. This writes each file's own name into its "
+            "metadata without ever decoding the event data.",
+            size="sm", c="dimmed",
+        ),
+        dmc.Space(h=8),
+        dmc.Text(
+            "Check FlowJo → Preferences → Workspace → \"How should data files "
+            "be named\" first: if it is set to \"Use Short File Name\" you do "
+            "not need this at all. Then go census → dry run → apply; the first "
+            "two write nothing, not even a timestamp.",
+            size="xs", c="dimmed",
+        ),
+        dmc.Space(h=14),
+        browser_field(
+            "fcssync",
+            "FCS folder",
+            "Searched recursively, .fcs and .FCS alike",
+            mode="dir",
+            placeholder="/path/to/renamed",
+            value=state.get("fcs_sync_dir", ""),
+        ),
+        dmc.Space(h=14),
+        dmc.RadioGroup(
+            id="fcs-mode",
+            value="probe",
+            label="What to do",
+            children=dmc.Stack(
+                [
+                    dmc.Radio(value=k, label=v["label"])
+                    for k, v in rscript.SYNC_MODES.items()
+                ],
+                gap=6,
+                mt=6,
+            ),
+        ),
+        dmc.Space(h=12),
+        # Always mounted, never conditionally rendered: hiding it would need a
+        # callback, and layout.py's doctrine is that every input exists from
+        # the start. It is simply ignored by every mode but "copy".
+        browser_field(
+            "fcsout",
+            "Output folder (copies mode only)",
+            "Must not be inside the FCS folder",
+            mode="dir",
+            placeholder="/path/to/patched_copies",
+        ),
+        dmc.Space(h=12),
+        dmc.TextInput(
+            id="fcs-also",
+            label="Also sync these keywords",
+            description=(
+                "Comma-separated, e.g. $SRC,TUBE NAME. Only needed when FlowJo "
+                "is set to \"Keyword Combination\". $FIL is always written, and "
+                "the name being replaced is preserved in ORIGINALFIL."
+            ),
+            placeholder="",
+        ),
+        dmc.Space(h=16),
+        dmc.Divider(label="Command", labelPosition="center"),
+        dmc.Space(h=8),
+        dmc.Code(id="fcs-cmd", block=True, children="",
+                 style={"whiteSpace": "pre-wrap", "wordBreak": "break-all"}),
+        dmc.Space(h=10),
+        html.Div(id="fcs-note"),
+        dmc.Space(h=8),
+        dmc.Button("Run census", id="btn-fcs", fullWidth=True, size="md"),
+        dmc.Space(h=8),
+        html.Div(id="fcs-feedback"),
+        dmc.Space(h=18),
+        dmc.Divider(label="Stored metadata", labelPosition="center"),
+        dmc.Space(h=8),
+        dmc.Text(
+            "The TEXT segment of an FCS file is a packed blob you cannot read "
+            "without a parser. This decodes it for every file in the folder at "
+            "once, so you can compare the cohort. Read-only.",
+            size="xs", c="dimmed",
+        ),
+        dmc.Space(h=8),
+        dmc.Group(
+            [
+                dmc.Button("Show metadata", id="btn-fcs-kw",
+                           variant="default", size="compact-sm"),
+                dmc.Switch(id="sw-fcs-allkw", label="Every keyword",
+                           checked=False, size="xs"),
+            ],
+            justify="space-between", align="center",
+        ),
+        dmc.Space(h=10),
+        dcc.Store(id="store-fcs-kw", data=None),
+        html.Div(id="fcs-kw-table"),
+    ]
+
+
 def _left_column(state: dict) -> dmc.Paper:
     return dmc.Paper(
         [
+            dmc.Badge("umap_from_flowjo.R", variant="dot", color="gray",
+                      size="sm", mb="sm"),
             dmc.Stepper(
                 id="stepper",
                 active=0,
@@ -702,8 +811,6 @@ def build_layout(state: dict):
                         dmc.Group(
                             [
                                 dmc.Title("FlowJo → UMAP", order=3),
-                                dmc.Badge("umap_from_flowjo.R", variant="dot",
-                                          color="gray", size="sm"),
                             ],
                             gap="sm",
                             align="center",
@@ -725,8 +832,31 @@ def build_layout(state: dict):
                 ),
                 dmc.Grid(
                     [
-                        dmc.GridCol(_left_column(state),
-                                    span={"base": 12, "lg": 5}),
+                        # The tab bar wraps the LEFT column only, so the Log
+                        # and Results panes stay visible for both tools. Tabs
+                        # around the whole Grid would hide the log behind the
+                        # UMAP tab — and the log is where the FCS tool's entire
+                        # output goes. id is "tool-tabs": "tabs" belongs to the
+                        # right column and is both a State and an Output of the
+                        # poll callback.
+                        dmc.GridCol(
+                            dmc.Tabs(
+                                [
+                                    dmc.TabsList([
+                                        dmc.TabsTab("UMAP", value="umap"),
+                                        dmc.TabsTab("FCS names", value="fcsnames"),
+                                    ]),
+                                    dmc.TabsPanel(_left_column(state),
+                                                  value="umap", keepMounted=True),
+                                    dmc.TabsPanel(
+                                        dmc.Paper(_fcs_names_panel(state), p="lg",
+                                                  withBorder=True, radius="md",
+                                                  mt="md"),
+                                        value="fcsnames", keepMounted=True),
+                                ],
+                                id="tool-tabs", value="umap",
+                            ),
+                            span={"base": 12, "lg": 5}),
                         dmc.GridCol(_right_column(), span={"base": 12, "lg": 7}),
                     ],
                     gutter="md",
