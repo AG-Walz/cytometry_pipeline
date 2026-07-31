@@ -47,6 +47,34 @@ Rscript test_data/generate_test_data.R
 Rscript pipelines/pipeline_A_raw_fcs.R --config config/pipeline_A_config.R
 ```
 
+### Renamed your FCS files and FlowJo now shows duplicate samples?
+
+An FCS file records the name it was acquired under in its `$FIL` keyword, and
+that is what FlowJo displays — so a plate acquired under one name still looks
+like one name after you rename the files on disk.
+[`scripts/sync_fcs_names.R`](docs/scripts/sync-fcs-names.md) writes each file's
+own name into its metadata **without decoding the event data**. Base R only —
+no conda, no Bioconductor:
+
+```bash
+# Read-only census first: which keywords actually collide, and which files
+# CytoML can currently only tell apart by luck.
+Rscript scripts/sync_fcs_names.R --fcs_dir data/renamed --probe
+# Then apply, with an undo ledger:
+Rscript scripts/sync_fcs_names.R --fcs_dir data/renamed --apply --in_place
+```
+
+The name being replaced is preserved in an `ORIGINALFIL` keyword, so the
+acquisition name is still readable afterwards. `--keyword_table keywords.csv`
+dumps every keyword of every file for inspection.
+
+Check **FlowJo -> Preferences -> Workspace -> "How should data files be named"**
+before you run it: if it is set to "Use Short File Name" you do not need the
+tool at all.
+
+Both this and the UMAP script have a GUI: [`app/`](app/README.md) is a Dash
+front-end with a tab for each.
+
 ### UMAP from a FlowJo workspace
 
 To go straight from FlowJo `.wsp` workspaces + raw FCS files to a shared UMAP

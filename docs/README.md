@@ -31,6 +31,7 @@ If you are **looking for a specific utility function** (CSV I/O, memory manageme
 | [File Formats](file-formats.md) | Input and output format specifications for all pipelines (FCS, CSV, WSP, plots) |
 | [Standalone Scripts](standalone-scripts.md) | Using individual module functions outside of pipelines, with signatures and examples |
 | [UMAP from a FlowJo Population](scripts/umap-from-flowjo.md) | Extract a gated population from a `.wsp` + FCS, build a shared UMAP, and colour it by every marker (conjoint + per file) |
+| [Sync FCS Embedded Names](scripts/sync-fcs-names.md) | Rewrite each FCS file's `$FIL` keyword to match its file name on disk, so a renamed cohort stops colliding in FlowJo. Base R only, event data never decoded |
 | [FlowJo → UMAP Dash app](../app/README.md) | Browser front-end for that script: file and gate pickers, live log, results gallery |
 | [R_shared API Reference](r-shared-reference.md) | Complete function reference for all 8 shared utility modules (io, gui, memory, cluster, plot, flowframe, fcs, stats) |
 | [Composability Guide](composability-guide.md) | Data flow contracts, format specs, and 8 example cross-pipeline workflows |
@@ -70,7 +71,7 @@ Each subproject reference documents every function in that module: its signature
 | `src/clustering/` | 3 scripts | [Clustering Reference](subprojects/clustering.md) | Leiden community detection on expression data, FlowJo gate import, unified cluster assignment interface |
 | `src/analysis/` | 7 scripts | [Analysis Reference](subprojects/analysis.md) | Cluster splitting, NB-GLMM differential abundance, Fisher's enrichment, marker statistics (lmer/ICC), abundance plotting, expression matrices, cell ratios |
 | `src/visualization/` | 7 scripts | [Visualization Reference](subprojects/visualization.md) | UMAP scatter plots, clustered heatmaps, density/ridge overlays, composition barplots, PCA, UpSet intersection plots, Venn/Euler diagrams |
-| `src/metadata_qc/` | 4 scripts | [Metadata QC Reference](subprojects/metadata-qc.md) | Metadata validation barplots, FCS acquisition date extraction, Fleiss' kappa inter-rater agreement, gating comparison across FlowJo workspaces |
+| `src/metadata_qc/` | 5 scripts | [Metadata QC Reference](subprojects/metadata-qc.md) | Metadata validation barplots, FCS acquisition date extraction, Fleiss' kappa inter-rater agreement, gating comparison across FlowJo workspaces |
 
 ### Example Data
 
@@ -103,7 +104,8 @@ cytometry/
 │   ├── methods-guide.md         Decision flowcharts + 19 method deep-dives
 │   ├── methods/                 Per-method deep-dive pages (peer-reviewed refs)
 │   ├── scripts/                  Standalone helper-script guides
-│   │   └── umap-from-flowjo.md   FlowJo population -> shared UMAP by marker
+│   │   ├── umap-from-flowjo.md   FlowJo population -> shared UMAP by marker
+│   │   └── sync-fcs-names.md     Make $FIL match the file name on disk
 ├── app/                      Dash front-end for umap_from_flowjo.R
 │   └── README.md                 Running it, the four steps, layout
 │   ├── pipelines/                Per-pipeline deep-dive guides

@@ -20,6 +20,8 @@ Key keywords the pipeline uses:
 | `$PnN` | `BV421-A`, `APC-A` | Channel (fluorochrome) names |
 | `$TOT` | `50000` | Total events — validated by `check_tot()` |
 | `$DATE` | `15-MAR-2024` | Acquisition date — extracted by `check_acquisition.R` |
+| `$FIL` | `Specimen_001.fcs` | The name the file was acquired under, and **what FlowJo displays by default**. Renaming a file on disk does not change it — see [Sync FCS Embedded Names](scripts/sync-fcs-names.md) |
+| `ORIGINALFIL` | `Specimen_001.fcs` | Written by `sync_fcs_names.R` when it replaces `$FIL`, so the acquisition name survives the rename. Write-once. Not an FCS-standard keyword, and deliberately un-prefixed: `$` is reserved for the standard's own vocabulary (FCS 3.1 §3.2.12) |
 
 ### Expression CSVs (Pipeline B)
 

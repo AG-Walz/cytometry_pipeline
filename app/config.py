@@ -15,6 +15,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = APP_DIR.parent
 CLI_SCRIPT = REPO_ROOT / "scripts" / "umap_from_flowjo.R"
+SYNC_SCRIPT = REPO_ROOT / "scripts" / "sync_fcs_names.R"
 
 # Where the last-used form state is remembered between launches.
 CACHE_DIR = Path(
@@ -72,6 +73,9 @@ DEFAULTS: dict = {
     "output_formats": ["svg"],
     "output_parent": "",
     "output_name": "",
+    # FCS-names tab. The folder only. The write mode is deliberately NOT
+    # remembered: a refresh must never bring the app back pre-armed to apply.
+    "fcs_sync_dir": "",
 }
 
 

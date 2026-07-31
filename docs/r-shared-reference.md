@@ -17,6 +17,7 @@ Complete reference for the 12 shared utility modules in `src/R_shared/`. These m
   - [cluster_utils.R](#cluster_utilsr) -- Cluster name parsing and label manipulation
   - [plot_utils.R](#plot_utilsr) -- Multi-format plot saving, barplots, filename sanitization
   - [flowframe_utils.R](#flowframe_utilsr) -- FlowFrame/FlowSet creation and conversion
+  - [fcs_keywords.R](#fcs_keywordsr) -- FCS header/TEXT parsing and keyword REWRITING (base R only)
   - [fcs_utils.R](#fcs_utilsr) -- FCS file parsing, validation, and batch loading
   - [stats_utils.R](#stats_utilsr) -- Statistical tests, GLMM, PCA, UMAP, summary statistics
   - [clustering_dispatch.R](#clustering_dispatchr) -- Clustering method dispatcher
@@ -1029,6 +1030,46 @@ fset <- from_ffl_to_fSet(ff_list, sample_names = c("S1", "S2", "S3"))
 
 ---
 
+### fcs_keywords.R
+
+Reads the FCS HEADER and TEXT segments directly from bytes, and — uniquely in
+this repo — **writes keywords back** without decoding the event data. Base R
+only: no flowCore, no Bioconductor, so it works on files the cytometry stack
+refuses to open, and its tests run anywhere.
+
+Its consumer is [`sync_fcs_names()`](../subprojects/metadata-qc.md#sync_fcs_namesr);
+see the [guide](../scripts/sync-fcs-names.md) for the write strategies and the
+post-write verification.
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `fcs_read_header()` | `(path)` | version, the six offsets as **doubles**, OTHER region, file size |
+| `fcs_header_offsets()` | `(hdr)` | `c(textstart=, textend=, FCSversion=)` — the vector `readFCStext()` in `fcs_utils.R` expects |
+| `fcs_parse_text()` | `(txt_raw)` | `"fcs_text"`: delimiter, keys/values as **raw**, honouring the doubled-delimiter escape |
+| `fcs_serialize_text()` | `(txt)` | raw; exact inverse of the parser |
+| `fcs_text_get()` / `fcs_text_num()` | `(txt, key, default)` | one keyword, matched case-insensitively |
+| `fcs_text_set()` | `(txt, set, unset)` | a new `"fcs_text"` |
+| `fcs_resolve_offsets()` | `(hdr, txt)` | segment layout: `body_start`, `room`, trailer, and the header-vs-keyword resolution |
+| `fcs_validate()` | `(hdr, txt, seg, allow)` | refusal codes, or `character(0)` |
+| `fcs_inspect()` | `(path, allow)` | one read: header, text, layout, refusals, warnings. Never throws on a malformed file |
+| `fcs_plan_layout()` | `(text_len_old, room, natural_len)` | `neutral` / `patch` / `rewrite`, plus fill and grow. Pure |
+| `fcs_write_keywords()` | `(path, set, unset, output_path, ..., dry_run)` | writes and verifies; `list(status, strategy, changed, data_identical, ...)` |
+| `fcs_keyword()` / `fcs_keywords()` | `(path, key)` / `(path)` | keyword lookup without loading a `flowFrame` |
+| `fcs_print_keywords()` | `(path, pattern)` | prints, returns invisibly |
+| `fcs_range_identical()` | `(pa, from_a, pb, from_b, n)` | chunked byte comparison of two file ranges |
+
+```r
+source("src/R_shared/fcs_keywords.R")
+
+fcs_keyword("sample.fcs", "$TOT")       # "50" -- no flowCore needed
+fcs_inspect("sample.fcs")$refusals      # is it safe to edit?
+fcs_write_keywords("sample.fcs", set = c("$FIL" = "sample.fcs"))
+```
+
+**Dependencies:** none. **Tests:** `Rscript test_data/test_fcs_keywords.R`
+
+---
+
 ### fcs_utils.R
 
 FCS file handling utilities including low-level FCS parsing, CSV-FCS mapping, and batch loading.
@@ -1798,6 +1839,8 @@ result <- run_batch_correction_dispatch(data, method = params$batch_method, para
 | Inspect FCS marker panels | `flowframe_utils.R` | `explore_data`, `compare_panels` |
 | Build combined expression matrix | `flowframe_utils.R` | `build_combined_expr_matrix` |
 | Convert matrices to flowFrames | `flowframe_utils.R` | `from_mtx_to_ffr`, `from_ffl_to_fSet` |
+| Read a keyword without flowCore | `fcs_keywords.R` | `fcs_keyword`, `fcs_keywords`, `fcs_inspect` |
+| Rewrite a keyword in place | `fcs_keywords.R` | `fcs_write_keywords` |
 | Validate FCS headers | `fcs_utils.R` | `check_tot`, `get_fcs_event_count` |
 | Map CSV to FCS files | `fcs_utils.R` | `create_csv_fcs_mapping` |
 | Batch load FCS files | `fcs_utils.R` | `load_fcs_list`, `load_fcs_folder` |

@@ -2,7 +2,7 @@
 
 # src/metadata_qc/ -- Metadata & Quality Assurance
 
-Four scripts for inspecting study metadata (clinical variables, acquisition dates), comparing gating strategies across FlowJo workspaces, and computing inter-rater agreement statistics. These scripts are used primarily by Pipeline D and can also be used standalone for quality checks.
+Five scripts for inspecting study metadata (clinical variables, acquisition dates), comparing gating strategies across FlowJo workspaces, and computing inter-rater agreement statistics. These scripts are used primarily by Pipeline D and can also be used standalone for quality checks.
 
 ## Summary Table
 
@@ -12,6 +12,7 @@ Four scripts for inspecting study metadata (clinical variables, acquisition date
 | `check_acquisition.R` | `get_fcs_keyword()`, `explore_fcs_keywords()`, `get_fcs_metadata()`, `check_acquisition_dates()` | FCS acquisition dates and duplicate detection |
 | `compare_gatings.R` | `compare_gatings()` | Compare FlowJo gating strategies via Venn/Euler diagrams |
 | `overlap_statistics.R` | `compute_fleiss_kappa()` | Fleiss' kappa inter-rater agreement |
+| `sync_fcs_names.R` | `sync_fcs_names()`, `probe_fcs_dir()`, `plan_name_sync()`, `detect_collisions()`, `revert_from_ledger()`, `write_keyword_table()` | Write each FCS file's own name into its `$FIL` keyword, so FlowJo stops showing duplicate sample names ([guide](../scripts/sync-fcs-names.md)) |
 
 ---
 
@@ -371,3 +372,61 @@ for (nm in names(results)) {
 ```
 
 **Dependencies:** `io_utils`. Requires `irr` package.
+
+---
+
+## sync_fcs_names.R
+
+Writes each FCS file's own file name into its `$FIL` keyword, so a cohort that
+was acquired under one shared name stops showing up in FlowJo as a column of
+identical samples. The event data is never decoded — see the
+[full guide](../scripts/sync-fcs-names.md) for the FlowJo preference to check
+first, the read-only census, and the three write strategies.
+
+### `sync_fcs_names()`
+
+```r
+sync_fcs_names(fcs_dir, apply = FALSE, in_place = TRUE, output_dir = NULL,
+               also = character(), set = character(), unset = character(),
+               guid = c("never", "auto", "always"), strip_extension = FALSE,
+               recursive = TRUE, probe_only = FALSE, list_keywords = FALSE,
+               revert = FALSE, allow = character(),
+               ledger = "fcs_name_sync_ledger.csv",
+               keyword_table = NULL, write_original = TRUE, verbose = TRUE)
+```
+
+Nothing is written unless `apply = TRUE`. Returns, invisibly,
+`list(probe, plan, collisions, workspaces, results, report, ledger)`.
+
+**Example — census first, then apply:**
+
+```r
+source("src/R_shared/fcs_keywords.R")
+source("src/metadata_qc/sync_fcs_names.R")
+
+# Read-only. Reports which identity keywords collide, and — more importantly —
+# any group of files sharing BOTH $FIL and $TOT, which CytoML can only tell
+# apart by luck.
+res <- sync_fcs_names("data/renamed", probe_only = TRUE)
+
+sync_fcs_names("data/renamed", apply = TRUE, in_place = TRUE)
+sync_fcs_names("data/renamed", revert = TRUE)   # undo the last run
+```
+
+### `write_keyword_table()`
+
+```r
+write_keyword_table(files, path, fcs_dir = NULL, allow = character())
+```
+
+Every keyword of every file, as a long-format CSV (`file`, `keyword`, `value`,
+`keyword_rank`, `name_like`). Read-only. Reachable from `sync_fcs_names()` via
+`keyword_table =`, and from the CLI via `--keyword_table`; it runs before any
+write, so it works with `probe_only` too. This is what the Dash app's
+"Stored metadata" table is built from.
+
+**Dependencies:** `fcs_keywords` (base R). Optionally `io_utils` for
+`make_outdir()`; a local fallback is used when it is absent. No flowCore, no
+CytoML.
+
+**Tests:** `Rscript test_data/test_sync_fcs_names.R`

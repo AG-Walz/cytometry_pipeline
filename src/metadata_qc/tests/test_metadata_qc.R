@@ -450,3 +450,58 @@ test_that("compare_gatings errors when target FCS is missing from workspace", {
     "Target FCS 'file_B.fcs' missing"
   )
 })
+
+# =============================================================================
+# Tests for sync_fcs_names.R and the FCS keyword layer
+# =============================================================================
+# NOTE: these are the only blocks in this file with no skip_if_not_installed().
+# The keyword layer and the sync tool are deliberately base-R only — no
+# flowCore, no CytoML — so they must run on a machine with nothing installed.
+# The exhaustive byte-level coverage lives in test_data/test_fcs_keywords.R and
+# test_data/test_sync_fcs_names.R; these four are the integration smoke tests.
+
+test_that("fcs_read_header reads the committed fixture's layout", {
+  source(file.path(shared_dir, "fcs_keywords.R"))
+  fcs <- file.path(test_data, "fcs_samples", "sample_001.fcs")
+  skip_if_not(file.exists(fcs), "committed FCS fixture not present")
+
+  hdr <- fcs_read_header(fcs)
+  expect_equal(hdr$version, "FCS3.0")
+  expect_equal(hdr$textstart, 58)
+  expect_equal(hdr$datastart, 802)
+  expect_equal(hdr$dataend, 2001)
+  # Offsets must stay doubles: FCS files routinely pass 2^31 and an integer
+  # would silently become NA.
+  expect_type(hdr$dataend, "double")
+})
+
+test_that("fcs_keyword reads a keyword case-insensitively", {
+  source(file.path(shared_dir, "fcs_keywords.R"))
+  fcs <- file.path(test_data, "fcs_samples", "sample_001.fcs")
+  skip_if_not(file.exists(fcs), "committed FCS fixture not present")
+
+  expect_equal(fcs_keyword(fcs, "$TOT"), "50")
+  expect_equal(fcs_keyword(fcs, "$tot"), "50")
+  expect_true(is.na(fcs_keyword(fcs, "$FIL")))
+})
+
+test_that("fcs_keywords returns the whole TEXT segment as a named vector", {
+  source(file.path(shared_dir, "fcs_keywords.R"))
+  fcs <- file.path(test_data, "fcs_samples", "sample_001.fcs")
+  skip_if_not(file.exists(fcs), "committed FCS fixture not present")
+
+  kw <- fcs_keywords(fcs)
+  expect_length(kw, 58)
+  expect_true(all(c("$TOT", "$PAR", "GUID") %in% names(kw)))
+  expect_equal(unname(kw[["$PAR"]]), "6")
+})
+
+test_that("sync_fcs_names rejects a folder that is not there", {
+  source(file.path(shared_dir, "fcs_keywords.R"))
+  source(file.path(mqc_dir, "sync_fcs_names.R"))
+
+  expect_error(
+    sync_fcs_names(file.path(tempdir(), "no_such_folder_here")),
+    "Folder does not exist"
+  )
+})

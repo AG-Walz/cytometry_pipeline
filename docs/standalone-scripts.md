@@ -171,3 +171,4 @@ results <- run_cluster_enrichment(
 | `check_acquisition.R` | `check_acquisition_dates()` | `(parent_folder, ...)` |
 | `overlap_statistics.R` | `compute_fleiss_kappa()` | `(label_lists, ...)` |
 | `compare_gatings.R` | `compare_gatings()` | `(pop_strings_list, ...)` |
+| `sync_fcs_names.R` | `sync_fcs_names()` | `(fcs_dir, apply=FALSE, in_place=TRUE, output_dir=NULL, also=character(), guid="never", probe_only=FALSE, revert=FALSE, ...)` |
