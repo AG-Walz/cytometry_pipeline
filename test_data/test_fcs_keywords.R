@@ -449,6 +449,30 @@ r <- fcs_write_keywords(p, set = c("$FIL" = "a_much_longer_replacement.fcs"))
 eq("...and a rewrite preserves it", r$status, "ok")
 eq("...with TEXT still starting at 74", fcs_inspect(p)$seg$textstart, 74)
 
+# BD FACSDiva starts TEXT at byte 256 and space-pads 58..255. That gap is 198
+# bytes — NOT a multiple of 8 — so a check that only understands 8-byte offset
+# pairs refuses an entire Diva cohort on the strength of the remainder. A region
+# with no digits in it cannot encode an offset, whatever its length.
+p <- fx("diva_pad.fcs")
+fcs_fixture(p, keywords = list("$FIL" = "old.fcs"), other_bytes = 198L)
+ins <- fcs_inspect(p)
+eq("a 198-byte space-padded gap is padding, not an OTHER segment",
+   ins$refusals, character(0))
+eq("...and TEXT starts where Diva puts it", ins$seg$textstart, 256)
+eq("...and the gap length is deliberately not a multiple of 8", 198L %% 8L, 6L)
+r <- fcs_write_keywords(p, set = c("$FIL" = "a_much_longer_replacement.fcs"))
+eq("...and a rewrite through it succeeds", r$status, "ok")
+eq("...with TEXT still starting at 256", fcs_inspect(p)$seg$textstart, 256)
+eq("...and the new value readable", fcs_keywords(p)[["$FIL"]],
+   "a_much_longer_replacement.fcs")
+
+# The refusal must still fire on a gap that carries real offsets, whatever its
+# length — otherwise the fix above would have disarmed the check entirely.
+p <- fx("other_odd.fcs")
+fcs_fixture(p, keywords = list("$FIL" = "old.fcs"), other_bytes = 22L)
+fx_poke(p, 58, "     900    1000")
+refuses("a real OTHER segment in a non-multiple-of-8 gap", p, "other_segments")
+
 p <- fx("v2.fcs")
 fcs_fixture(p, version = "FCS2.0", keywords = list("$FIL" = "old.fcs"))
 refuses("FCS2.0, where $BEGINDATA is not defined", p, "unsupported_version")
