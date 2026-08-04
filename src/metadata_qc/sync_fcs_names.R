@@ -379,12 +379,33 @@ revert_from_ledger <- function(ledger_path, run_id = NULL, verbose = TRUE) {
                            colClasses = "character", fileEncoding = "UTF-8")
   if (is.null(run_id)) {
     already <- unique(led$run_id[led$stage == "reverted"])
-    candidates <- setdiff(unique(led$run_id[led$stage == "after"]), already)
-    if (!length(candidates)) {
-      stop("every run in ", ledger_path, " has already been reverted",
-           call. = FALSE)
+    candidates <- sort(setdiff(unique(led$run_id[led$stage == "after"]), already),
+                       decreasing = TRUE)
+
+    # A run in which every file came back "unchanged" (a re-run over a folder
+    # that was already in sync) or "refused" wrote nothing, so there is nothing
+    # in it to undo. Such a run must still be MARKED, because the marker is the
+    # only thing that moves the walk-back along: left unmarked it stays the
+    # newest un-reverted candidate for ever, every --revert selects it, reverts
+    # nothing, records nothing, and the run that did change something becomes
+    # unreachable. Skip them here and step to the newest run that actually
+    # wrote, so one --revert undoes what the user means by "the last run".
+    wrote <- vapply(candidates, function(rid) any(
+      led$stage == "after" & led$run_id == rid & led$status == "ok"), logical(1))
+    for (rid in candidates[!wrote]) {
+      if (verbose) {
+        cat("Run ", rid, " wrote nothing — marking it undone and stepping back.\n",
+            sep = "")
+      }
+      append_ledger(ledger_path, rid, "reverted", "", status = "nothing_to_revert")
     }
-    run_id <- sort(candidates, decreasing = TRUE)[1]
+    candidates <- candidates[wrote]
+
+    if (!length(candidates)) {
+      stop("nothing left to revert in ", ledger_path,
+           ": every run that wrote has already been reverted", call. = FALSE)
+    }
+    run_id <- candidates[1]
   }
   led <- led[led$run_id == run_id, , drop = FALSE]
   if (verbose) cat("Reverting run ", run_id, "\n", sep = "")
@@ -606,6 +627,16 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
                  else ledger
 
   if (revert) {
+    # A copies run wrote its ledger beside the COPIES, but every path in that
+    # ledger is a SOURCE path — the originals, which that run deliberately left
+    # alone. Replaying it would therefore write to the one set of files the user
+    # asked us not to touch, to "restore" values they still hold. There is
+    # nothing to undo, and saying so is better than a no-op that looks like one.
+    if (!is.null(output_dir)) {
+      stop("--revert cannot undo a copies run: it left everything in ", fcs_dir,
+           " untouched, so there is nothing to restore. To discard the run, ",
+           "delete the copies in ", output_dir, ".", call. = FALSE)
+    }
     if (verbose) cat("Reverting from ", ledger_path, "\n", sep = "")
     res <- revert_from_ledger(ledger_path, verbose = verbose)
     return(invisible(list(results = res, report = "")))
