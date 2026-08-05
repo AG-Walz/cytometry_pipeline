@@ -261,6 +261,7 @@ if (!dir.exists(shared_dir)) {
 source(file.path(shared_dir, "io_utils.R"))        # make_outdir
 source(file.path(shared_dir, "plot_utils.R"))      # save_plot_formats, create_safe_filename
 source(file.path(shared_dir, "stats_utils.R"))     # run_umap
+source(file.path(shared_dir, "dimred_dispatch.R")) # run_dimred (umap/tsne/dm)
 source(file.path(shared_dir, "flowframe_utils.R")) # explore_data
 # THE FlowJo workspace layer: wsp_open, wsp_to_gatingset, discovery, pairing
 source(file.path(src_dir, "loading", "flowjo_workspace.R"))

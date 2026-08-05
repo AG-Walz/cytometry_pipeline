@@ -144,12 +144,20 @@ plot_umap_from_matrix <- function(expr_matrix, sample_labels = NULL,
                                    output_dir,
                                    n_neighbors = 15,
                                    min_dist = 0.1,
+                                   metric = "euclidean",
                                    umap_coords = NULL,
                                    output_formats = list(pdf = FALSE, png = TRUE, svg = TRUE),
                                    plot_width = 10, plot_height = 8,
-                                   seed = 42) {
+                                   seed = 42,
+                                   draw_plots = TRUE) {
   require(ggplot2)
-  make_outdir(output_dir)
+  # draw_plots = FALSE is the "compute the embedding, I will draw it myself"
+  # path: a caller whose figures are its own (the FlowJo population UMAP colours
+  # by gating subpopulation, by workspace and by every marker) still wants THIS
+  # function's coordinates, so that there is one implementation of the embedding
+  # rather than a private copy of run_umap() per caller. No output directory is
+  # needed in that case, and creating one would leave an empty folder behind.
+  if (draw_plots) make_outdir(output_dir)
 
   # Filter markers
   exclude_patterns <- c("^$", "Time", "FSC", "SSC", "index")
@@ -171,13 +179,18 @@ plot_umap_from_matrix <- function(expr_matrix, sample_labels = NULL,
     cat("Computing UMAP on", nrow(expr_subset), "cells x",
         ncol(expr_subset), "markers...\n")
     umap_coords <- run_umap(expr_subset, n_neighbors = n_neighbors,
-                             min_dist = min_dist, seed = seed)
+                             min_dist = min_dist, metric = metric, seed = seed)
   } else {
     cat("Using pre-computed UMAP coordinates for", nrow(umap_coords), "cells\n")
   }
 
   if (is.null(sample_labels)) {
     sample_labels <- rep("all", nrow(expr_matrix))
+  }
+
+  if (!draw_plots) {
+    return(list(umap_coords = umap_coords, sample_labels = sample_labels,
+                plots = list()))
   }
 
   umap_df <- data.frame(UMAP1 = umap_coords[, 1], UMAP2 = umap_coords[, 2],

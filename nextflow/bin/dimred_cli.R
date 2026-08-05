@@ -13,6 +13,12 @@ option_list <- list(
   make_option("--output_formats", type = "character", default = "png"),
   make_option("--plot_width", type = "integer", default = 10),
   make_option("--plot_height", type = "integer", default = 8),
+  make_option("--metric", type = "character", default = "euclidean",
+              help = "UMAP distance metric [default %default]"),
+  make_option("--output_rds", type = "character", default = NULL,
+              help = paste0("Also save the coordinates here, so a later step ",
+                            "can colour the SAME embedding without recomputing ",
+                            "it. Pipeline F's facet step reads this.")),
   make_option("--seed", type = "integer", default = 42)
 )
 opt <- parse_args(OptionParser(option_list = option_list))
@@ -36,7 +42,7 @@ output_formats <- list(
 
 dir.create(opt$output_dir, recursive = TRUE, showWarnings = FALSE)
 
-run_dimred(
+result <- run_dimred(
   expr_matrix    = expr_data$combined_matrix,
   method         = opt$method,
   sample_labels  = expr_data$sample_labels,
@@ -45,6 +51,7 @@ run_dimred(
   params         = list(
     n_neighbors     = opt$n_neighbors,
     umap_min_dist   = opt$umap_min_dist,
+    metric          = opt$metric,
     tsne_perplexity = opt$tsne_perplexity,
     tsne_max_iter   = opt$tsne_max_iter,
     output_formats  = output_formats,
@@ -53,4 +60,10 @@ run_dimred(
     seed            = opt$seed
   )
 )
+
+if (!is.null(opt$output_rds)) {
+  saveRDS(list(coords = result$coords, method = result$method),
+          opt$output_rds)
+  cat("Coordinates ->", opt$output_rds, "\n")
+}
 cat("Dimensionality reduction ->", opt$output_dir, "\n")

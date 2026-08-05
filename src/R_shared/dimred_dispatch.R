@@ -66,11 +66,16 @@ run_dimred <- function(expr_matrix, method = "umap",
         output_dir      = output_dir,
         n_neighbors     = params$n_neighbors %||% params$umap_n_neighbors %||% 15,
         min_dist        = params$umap_min_dist %||% params$min_dist %||% 0.1,
+        # uwot's distance metric. Threaded through so a caller is not forced to
+        # call run_umap() directly — and keep its own copy of every other UMAP
+        # option — just to choose cosine over euclidean.
+        metric          = params$metric %||% "euclidean",
         umap_coords     = params$umap_coords %||% NULL,
         output_formats  = output_formats,
         plot_width      = plot_width,
         plot_height     = plot_height,
-        seed            = seed
+        seed            = seed,
+        draw_plots      = params$draw_plots %||% TRUE
       )
       list(
         coords = umap_result$umap_coords,

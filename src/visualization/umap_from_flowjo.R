@@ -694,19 +694,40 @@ distinct_palette <- function(n) {
 # @return Invisibly, a list with umap_coords, umap_df, output_dir (or, in
 #   list_populations mode, the character vector of population paths).
 # =============================================================================
-umap_from_flowjo <- function(wsp_path, fcs_dir,
+# =============================================================================
+# extract_flowjo_population() — everything up to the embedding
+# =============================================================================
+# Discovers the workspaces, pairs each with its FCS files, builds a GatingSet
+# per workspace, reconciles the marker panels, resolves the population in every
+# workspace, extracts its cells sample by sample and concatenates them.
+#
+# It stops exactly where the analysis stops being FlowJo-specific. What comes
+# back is the repo's ordinary expression-matrix contract —
+# `list(combined_matrix, sample_labels)`, the same shape
+# build_combined_expr_matrix() produces — plus the per-cell labels only a
+# FlowJo gating tree can supply. Downstream that means the shared pipeline
+# steps (homogenize, downsample, dimred) work on it unchanged, and the
+# embedding is run_dimred()'s job rather than a private call to run_umap():
+# t-SNE and diffusion maps come for free, and there is one fewer copy of the
+# UMAP parameter list in the repo.
+#
+# `list_populations = TRUE` returns after the report instead of extracting
+# anything, which is the inspect entry point the GUI and --list_populations use.
+#
+# @return list(combined_matrix, sample_labels, file_labels, workspace_labels,
+#   subpop_labels_per_cell, subpop_levels, n_cells_per, sample_index,
+#   sample_annotations, annot_cols, population, pop_by_wsp, use_markers,
+#   workspaces, dropped, report). With list_populations, list(populations=...)
+#   and `inspected = TRUE`.
+# =============================================================================
+extract_flowjo_population <- function(wsp_path, fcs_dir,
                              population = "Lymphocytes/Single Cells/Viable cells",
-                             output_dir = "umap_flowjo",
                              group = "1", expected_samples = 0L,
                              sample_metadata = NULL, sample_pattern = NULL,
                              annotate = NULL, sample_id_column = NULL,
                              markers = NULL, subpop_mode = "furthest",
                              subpop_select = NULL, normalize = "none",
-                             downsample = 0L, n_neighbors = 15L, min_dist = 0.1,
-                             metric = "euclidean", seed = 42L,
-                             point_size = 0.4, point_alpha = 0.6,
-                             plot_width = 10, plot_height = 8,
-                             output_formats = list(pdf = FALSE, png = FALSE, svg = TRUE),
+                             downsample = 0L, seed = 42L,
                              list_populations = FALSE,
                              allow_missing_samples = FALSE,
                              population_map = NULL,
@@ -717,10 +738,6 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   require(CytoML)
   require(flowWorkspace)
   require(flowCore)
-  require(ggplot2)
-  if (!requireNamespace("viridis", quietly = TRUE)) {
-    stop("Package 'viridis' is required for marker colour scales.")
-  }
 
   VALID_NORMALIZE <- c("none", "zscore", "minmax")
   if (!normalize %in% VALID_NORMALIZE) {
@@ -1111,7 +1128,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       cat("  population = \"", sub("^/", "", shared_pops[length(shared_pops)]),
           "\"\n", sep = "")
     }
-    return(invisible(list(populations = shared_pops,
+    return(invisible(list(inspected = TRUE, populations = shared_pops,
                           populations_by_workspace = pops_by_wsp,
                           samples = sample_index$display,
                           markers = common_markers,
@@ -1370,7 +1387,99 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     combined_matrix <- normalize_columns(combined_matrix, normalize)
   }
 
-  # --- 6. Compute UMAP ONCE on the concatenated matrix. ----------------------
+
+  # The pipeline contract (combined_matrix / sample_labels), plus the per-cell
+  # labels that only a FlowJo gating tree can supply. Everything downstream —
+  # homogenize, downsample, dimred — reads the first two and ignores the rest.
+  list(
+    combined_matrix = combined_matrix,
+    sample_labels   = file_labels,          # per CELL, as the pipeline expects
+    samples         = sample_labels,        # per SAMPLE, in matrix order
+    file_labels     = file_labels,
+    workspace_labels = wsp_labels_per_cell,
+    subpop_labels_per_cell = combined_subpop,
+    subpop_levels   = subpop_labels,
+    n_cells_per     = n_cells_per,
+    sample_index    = sample_index,
+    sample_annotations = sample_annotations,
+    annot_cols      = annot_cols,
+    population      = population,
+    pop_by_wsp      = pop_by_wsp,
+    use_markers     = use_markers,
+    workspaces      = names(gs_list),
+    dropped         = resolved$dropped,
+    dropped_report  = dropped_report,
+    inspected       = FALSE
+  )
+}
+
+
+# =============================================================================
+# umap_from_flowjo() — extraction, then embedding, then the FlowJo-specific
+# plots. Kept as the one-call entry point the standalone script and the tests
+# use; the pipeline calls the two halves as separate steps.
+# =============================================================================
+umap_from_flowjo <- function(wsp_path, fcs_dir,
+                             population = "Lymphocytes/Single Cells/Viable cells",
+                             output_dir = "umap_flowjo",
+                             group = "1", expected_samples = 0L,
+                             sample_metadata = NULL, sample_pattern = NULL,
+                             annotate = NULL, sample_id_column = NULL,
+                             markers = NULL, subpop_mode = "furthest",
+                             subpop_select = NULL, normalize = "none",
+                             downsample = 0L, n_neighbors = 15L, min_dist = 0.1,
+                             metric = "euclidean", seed = 42L,
+                             point_size = 0.4, point_alpha = 0.6,
+                             plot_width = 10, plot_height = 8,
+                             output_formats = list(pdf = FALSE, png = FALSE, svg = TRUE),
+                             list_populations = FALSE,
+                             allow_missing_samples = FALSE,
+                             population_map = NULL,
+                             match_mode = "content",
+                             marker_aliases = NULL,
+                             recover_markers = TRUE,
+                             report_json = NULL,
+                             method = "umap") {
+  require(ggplot2)
+  if (!requireNamespace("viridis", quietly = TRUE)) {
+    stop("Package 'viridis' is required for marker colour scales.")
+  }
+
+  ext <- extract_flowjo_population(
+    wsp_path = wsp_path, fcs_dir = fcs_dir, population = population,
+    group = group, expected_samples = expected_samples,
+    sample_metadata = sample_metadata, sample_pattern = sample_pattern,
+    annotate = annotate, sample_id_column = sample_id_column,
+    markers = markers, subpop_mode = subpop_mode,
+    subpop_select = subpop_select, normalize = normalize,
+    downsample = downsample, seed = seed,
+    list_populations = list_populations,
+    allow_missing_samples = allow_missing_samples,
+    population_map = population_map, match_mode = match_mode,
+    marker_aliases = marker_aliases, recover_markers = recover_markers,
+    report_json = report_json)
+
+  # Inspect mode already printed and returned everything it has.
+  if (isTRUE(ext$inspected)) return(invisible(ext))
+
+  combined_matrix     <- ext$combined_matrix
+  sample_labels       <- ext$samples
+  file_labels         <- ext$file_labels
+  wsp_labels_per_cell <- ext$workspace_labels
+  combined_subpop     <- ext$subpop_labels_per_cell
+  subpop_labels       <- ext$subpop_levels
+  n_cells_per         <- ext$n_cells_per
+  sample_index        <- ext$sample_index
+  sample_annotations  <- ext$sample_annotations
+  annot_cols          <- ext$annot_cols
+  population          <- ext$population
+  use_markers         <- ext$use_markers
+  gs_list             <- stats::setNames(vector("list", length(ext$workspaces)),
+                                         ext$workspaces)
+  resolved            <- list(dropped = ext$dropped)
+  dropped_report      <- ext$dropped_report
+
+  # --- 6. Compute the embedding ONCE on the concatenated matrix. -------------
   # CRITICAL alignment guard: uwot may error or drop rows on non-finite input,
   # which would silently break the row-for-row alignment. Fail loudly here.
   if (!all(is.finite(combined_matrix))) {
@@ -1378,21 +1487,28 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       apply(combined_matrix, 2, function(x) any(!is.finite(x)))]
     stop("combined_matrix contains non-finite (NA/NaN/Inf) values in marker(s): ",
          paste(bad_cols, collapse = ", "),
-         ". Refusing to run UMAP because dropped rows would break index ",
+         ". Refusing to embed because dropped rows would break index ",
          "alignment with the per-file plots.")
   }
 
-  cat("Computing shared UMAP (n_neighbors=", n_neighbors,
+  # Through run_dimred(), not run_umap(): the dispatcher is what the rest of the
+  # repo embeds with, it re-checks that the coordinate count still matches the
+  # matrix, and going through it means `method` can be tsne or diffusion_map
+  # here without another line of code. draw_plots = FALSE because the figures
+  # below are this path's own — the standard by-sample plot is not one of them.
+  cat("Computing shared ", method, " (n_neighbors=", n_neighbors,
       ", min_dist=", min_dist, ", metric=", metric,
       ", seed=", seed, ")...\n", sep = "")
-  umap_coords <- run_umap(
-    combined_matrix,
-    n_neighbors  = n_neighbors,
-    min_dist     = min_dist,
-    n_components = 2,
-    metric       = metric,
-    seed         = seed
+  dimred <- run_dimred(
+    expr_matrix = combined_matrix,
+    method      = method,
+    output_dir  = output_dir,
+    params = list(n_neighbors = n_neighbors, umap_min_dist = min_dist,
+                  metric = metric, seed = seed, draw_plots = FALSE,
+                  output_formats = output_formats,
+                  plot_width = plot_width, plot_height = plot_height)
   )
+  umap_coords <- dimred$coords
   stopifnot(nrow(umap_coords) == nrow(combined_matrix))
 
   # Master data frame: one row per cell, aligned to combined_matrix.
@@ -1416,6 +1532,59 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       rep(sample_annotations[[cl]][annot_of], n_cells_per)
   }
   stopifnot(nrow(umap_df) == nrow(combined_matrix))
+
+  # --- 7. Plotting. ----------------------------------------------------------
+  plot_flowjo_umap_facets(
+    umap_df = umap_df, combined_matrix = combined_matrix,
+    use_markers = use_markers, subpop_labels = subpop_labels,
+    annot_cols = annot_cols, population = population,
+    output_dir = output_dir, n_workspaces = length(gs_list),
+    normalize = normalize, point_size = point_size,
+    point_alpha = point_alpha, plot_width = plot_width,
+    plot_height = plot_height, output_formats = output_formats)
+
+  cat("\nDone. Plots written to:", normalizePath(output_dir), "\n")
+  # Repeated here on purpose: the warning above scrolled past a long load, and
+  # the plots must not be read as covering samples they do not contain.
+  if (nzchar(dropped_report)) {
+    cat("\nWARNING: ", dropped_report, "\n", sep = "")
+  }
+  invisible(list(umap_coords = umap_coords, umap_df = umap_df,
+                 workspaces = names(gs_list),
+                 dropped = resolved$dropped,
+                 output_dir = normalizePath(output_dir)))
+}
+
+
+# =============================================================================
+# plot_flowjo_umap_facets() — the figures only a FlowJo gating tree can produce
+# =============================================================================
+# One embedding, coloured many ways: by source file, by workspace, by the FlowJo
+# subgate each cell falls in, by every marker, and by every sample annotation.
+#
+# Split out from umap_from_flowjo() so the pipeline can run it as its own step
+# against coordinates a previous step computed — the embedding is expensive and
+# should be paid for once, while re-colouring is cheap and is what people
+# actually iterate on.
+#
+# `umap_df` must be row-aligned to `combined_matrix`; every caller builds it the
+# same way and the guards below assume it.
+# =============================================================================
+plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
+                                    subpop_labels, annot_cols, population,
+                                    output_dir, n_workspaces = 1L,
+                                    normalize = "none",
+                                    point_size = 0.4, point_alpha = 0.6,
+                                    plot_width = 10, plot_height = 8,
+                                    output_formats = list(pdf = FALSE,
+                                                          png = FALSE,
+                                                          svg = TRUE)) {
+  require(ggplot2)
+  if (!requireNamespace("viridis", quietly = TRUE)) {
+    stop("Package 'viridis' is required for marker colour scales.")
+  }
+  stopifnot(nrow(umap_df) == nrow(combined_matrix))
+  n_wsp <- n_workspaces
 
   # --- 7. Plotting. ----------------------------------------------------------
   make_outdir(output_dir)
@@ -1679,14 +1848,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     cat("Saved marker plots for:", marker, "\n")
   }
 
-  cat("\nDone. Plots written to:", normalizePath(output_dir), "\n")
-  # Repeated here on purpose: the warning above scrolled past a long load, and
-  # the plots must not be read as covering samples they do not contain.
-  if (nzchar(dropped_report)) {
-    cat("\nWARNING: ", dropped_report, "\n", sep = "")
-  }
-  invisible(list(umap_coords = umap_coords, umap_df = umap_df,
-                 workspaces = names(gs_list),
-                 dropped = resolved$dropped,
-                 output_dir = normalizePath(output_dir)))
+
+  invisible(normalizePath(output_dir))
 }
+
