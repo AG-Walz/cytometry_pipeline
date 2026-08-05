@@ -231,9 +231,24 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
   # ---------------------------------------------------------------------------
 
   # "auto": spectral is the best initialisation and is affordable up to a few
-  # hundred thousand points. Past that its cost stops being worth it and PCA —
-  # which is cheap, deterministic and a perfectly good starting layout — is
-  # chosen instead. The switch is announced, because it changes the embedding.
+  # hundred thousand points. Past that it stops paying for itself — and then
+  # stops working at all.
+  #
+  # MEASURED, 500,000 cells x 7 markers, 12 threads:
+  #     init = "spectral"   2023 s   30 min of it inside irlba, which then
+  #                                  printed "Spectral initialization failed to
+  #                                  converge, using random initialization
+  #                                  instead" and fell back to random anyway
+  #     init = "pca"         166 s
+  #     init = "random"      156 s
+  #
+  # So above the limit spectral is not a better layout bought with time; it is
+  # half an hour spent arriving at the random layout. The optimisation itself
+  # was 47 s of that 166 s — the neighbour search and the initialisation are
+  # the run, which is why more cores did not help.
+  #
+  # 300,000 is set below the size at which convergence was observed to fail,
+  # not at it. The switch is announced, because it changes the embedding.
   SPECTRAL_LIMIT <- 300000L
   if (identical(init, "auto")) {
     init <- if (n_obs > SPECTRAL_LIMIT) "pca" else "spectral"
