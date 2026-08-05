@@ -121,6 +121,37 @@ def register_callbacks() -> None:
             return None
         return dmc.Group(badges, gap="xs")
 
+    @callback(
+        Output("params-badge", "children"),
+        Input("in-metric", "value"),
+        Input("in-seed", "value"),
+        Input("in-pointsize", "value"),
+        Input("in-pointalpha", "value"),
+        Input("in-width", "value"),
+        Input("in-height", "value"),
+    )
+    def params_badge(*values):
+        """Name anything non-default that is hidden behind the closed panel.
+
+        Same rule as advanced_badge: collapsing a control is only acceptable if
+        a changed one still announces itself. Without this, a run seeded
+        differently — or plotted at a size that makes the legend unreadable —
+        would look identical to a default run from the outside.
+        """
+        keys = ("metric", "seed", "point_size", "point_alpha",
+                "plot_width", "plot_height")
+        changed = [
+            f"{k}: {v}" for k, v in zip(keys, values)
+            if v is not None and v != config.DEFAULTS[k]
+        ]
+        if not changed:
+            return None
+        return dmc.Group(
+            [dmc.Badge(c, color="blue", variant="light", size="sm", tt="none")
+             for c in changed],
+            gap="xs",
+        )
+
     # -- stepper navigation ------------------------------------------------
 
     @callback(
@@ -172,9 +203,39 @@ def register_callbacks() -> None:
         Output("health-panel", "children"),
         Output("health-badge", "children"),
         Input("store-inspect", "data"),
+        Input("store-wsp-exclude", "data"),
     )
-    def fill_health(inspect):
-        return health.panel(inspect), health.badge(inspect)
+    def fill_health(inspect, excluded):
+        return (health.panel(inspect, excluded),
+                health.headline(inspect, excluded))
+
+    @callback(
+        Output("store-wsp-exclude", "data"),
+        Input({"comp": "wsp-toggle", "bid": ALL}, "checked"),
+        Input({"comp": "wsp-all"}, "n_clicks"),
+        State({"comp": "wsp-toggle", "bid": ALL}, "id"),
+        State("store-wsp-exclude", "data"),
+        prevent_initial_call=True,
+    )
+    def collect_workspace_selection(checked, _all_clicks, ids, current):
+        """Which workspaces are switched off.
+
+        Stored as the EXCLUDED set: the default — use everything that loaded —
+        is then the empty list, and a workspace that appears in the folder later
+        is included rather than silently dropped by an inclusion list written
+        before it existed.
+        """
+        # ctx.triggered_id is a dict for a pattern id; compare on the part
+        # that identifies the control rather than the whole dict.
+        if isinstance(ctx.triggered_id, dict) and \
+                ctx.triggered_id.get("comp") == "wsp-all":
+            return []
+        excluded = [i["bid"] for i, on in zip(ids or [], checked or []) if not on]
+        # Re-rendering the panel re-fires this with the values it just drew, so
+        # returning an equal-but-new list would loop between the two callbacks.
+        if sorted(excluded) == sorted(current or []):
+            return no_update
+        return excluded
 
     @callback(
         Output("acc-health", "value"),
@@ -756,7 +817,7 @@ def register_callbacks() -> None:
         inspect = values[len(common.FORM_FIELDS)] or {}
         populations = inspect.get("populations") or []
 
-        params = common.run_params(form, populations)
+        params = common.run_params(form, populations, inspect)
         problems = common.validate_run(form, inspect)
 
         # The command is shown even when incomplete, so it is obvious which

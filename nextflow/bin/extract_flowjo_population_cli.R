@@ -36,6 +36,7 @@ option_list <- list(
   make_option("--match_mode", type = "character", default = "content"),
   make_option("--allow_missing_samples", action = "store_true", default = FALSE),
   make_option("--marker_aliases", type = "character", default = NULL),
+  make_option("--workspaces", type = "character", default = NULL),
   make_option("--no_recover_markers", action = "store_true", default = FALSE),
   make_option("--markers", type = "character", default = NULL),
   make_option("--subpop_mode", type = "character", default = "furthest"),
@@ -88,7 +89,7 @@ ext <- extract_flowjo_population(
   list_populations = opt$list_populations,
   allow_missing_samples = opt$allow_missing_samples,
   population_map = opt$population_map, match_mode = opt$match_mode,
-  marker_aliases = opt$marker_aliases,
+  marker_aliases = opt$marker_aliases, workspaces = opt$workspaces,
   recover_markers = !opt$no_recover_markers,
   report_json = report_json)
 

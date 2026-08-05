@@ -13,6 +13,7 @@ serving, and it is not meant to be: the app binds to localhost.
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -20,6 +21,21 @@ import time
 
 #: Hard cap on retained log lines, so a pathological run cannot exhaust memory.
 MAX_LINES = 20000
+
+#: Progress lines emitted by ``emit_progress()`` in src/R_shared/io_utils.R.
+#: They are intercepted here rather than shown: they are for the progress bar,
+#: and one per sample would bury the log they share a stream with. R owns the
+#: counting; this only reads it. Keep in step with PROGRESS_PREFIX there.
+_PROGRESS_RE = re.compile(
+    r"^::progress:: phase=(\S+) done=(\d+) total=(\d+) label=(.*)$"
+)
+
+#: How each phase reads in the UI, in the order they occur.
+PROGRESS_PHASES = {
+    "load": "Building gating sets",
+    "extract": "Extracting cells",
+    "plot": "Drawing plots",
+}
 
 IDLE = "idle"
 RUNNING = "running"
@@ -45,6 +61,9 @@ class Runner:
         self._cancelling = False
         #: Bumped on every completion so the UI can act once per finished run.
         self._generation = 0
+        #: Latest ::progress:: line, and when its phase began (for the ETA).
+        self._progress: dict = {}
+        self._phase_started_at: float | None = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -60,6 +79,8 @@ class Runner:
             self._argv = list(argv)
             self._meta = dict(meta or {})
             self._returncode = None
+            self._progress = {}
+            self._phase_started_at = None
             self._started_at = time.time()
             self._finished_at = None
             self._cancelling = False
@@ -96,9 +117,27 @@ class Runner:
         assert proc.stdout is not None
         try:
             for line in proc.stdout:
+                line = line.rstrip("\n")
+                hit = _PROGRESS_RE.match(line)
+                if hit:
+                    phase, done, total, label = hit.groups()
+                    with self._lock:
+                        # Each phase restarts the clock: they are different work
+                        # at different speeds, so extrapolating "Drawing plots"
+                        # from how long "Building gating sets" took would give a
+                        # confidently wrong estimate.
+                        if phase != self._progress.get("phase"):
+                            self._phase_started_at = time.time()
+                        self._progress = {
+                            "phase": phase,
+                            "done": int(done),
+                            "total": int(total),
+                            "label": label,
+                        }
+                    continue
                 with self._lock:
                     if len(self._lines) < MAX_LINES:
-                        self._lines.append(line.rstrip("\n"))
+                        self._lines.append(line)
                     elif not self._truncated:
                         self._truncated = True
                         self._lines.append(
@@ -173,7 +212,40 @@ class Runner:
                 "argv": list(self._argv),
                 "meta": dict(self._meta),
                 "generation": self._generation,
+                "progress": self._progress_view(),
             }
+
+    def _progress_view(self) -> dict:
+        """The current phase as a fraction, with an estimate of what is left.
+
+        Caller holds the lock. Returns {} when nothing has reported yet, which
+        is the honest state for the first minutes of a load: better a bar that
+        appears late than one that sits at 0% claiming to know something.
+
+        The estimate is linear in the CURRENT phase only — see _pump — and is
+        withheld until a few items are done, because extrapolating a whole run
+        from one sample produces a number that swings by tens of minutes
+        between polls and is worse than no number at all.
+        """
+        p = self._progress
+        if not p or not p.get("total"):
+            return {}
+        done, total = p["done"], p["total"]
+        fraction = max(0.0, min(1.0, done / total))
+        remaining = None
+        if (self._phase_started_at is not None and done >= 3 and done < total
+                and self._status == RUNNING):
+            per_item = (time.time() - self._phase_started_at) / done
+            remaining = per_item * (total - done)
+        return {
+            "phase": p["phase"],
+            "phase_label": PROGRESS_PHASES.get(p["phase"], p["phase"]),
+            "done": done,
+            "total": total,
+            "label": p.get("label", ""),
+            "percent": round(fraction * 100),
+            "remaining": remaining,
+        }
 
     @property
     def busy(self) -> bool:

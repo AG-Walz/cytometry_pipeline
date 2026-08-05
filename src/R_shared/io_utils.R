@@ -200,3 +200,40 @@ die <- function(...) {
 make_outdir <- function(path) {
   if (!dir.exists(path)) dir.create(path, recursive = TRUE)
 }
+
+# -----------------------------------------------------------------------------
+# Machine-readable progress, for a GUI that is watching the log.
+#
+# A long run's only honest progress signal is the work itself: how many
+# workspaces have been built, how many samples extracted, how many plots
+# written. Only the analysis knows those numbers, so it declares them and
+# whoever is watching renders them. The alternative — a front-end counting
+# lines of prose it recognises — is a parser for a format nobody agreed to, and
+# it breaks the first time someone rewords a message.
+#
+# One line, prefixed so it can be told apart from anything a human is meant to
+# read, and so a front-end can hide it from the visible log:
+#
+#   ::progress:: phase=extract done=57 total=311 label=MTB023_204275
+#
+# Emitted to stdout in the same stream as everything else, because the runner
+# already line-buffers and streams that, and a side-channel file would need its
+# own polling and its own staleness problem.
+#
+# Silent when `total` is unknown or zero: a progress bar that cannot say what
+# fraction is done is worse than none.
+# -----------------------------------------------------------------------------
+PROGRESS_PREFIX <- "::progress::"
+
+emit_progress <- function(phase, done, total, label = "") {
+  total <- suppressWarnings(as.integer(total))
+  done  <- suppressWarnings(as.integer(done))
+  if (is.na(total) || is.na(done) || total <= 0L) return(invisible(NULL))
+  # A label can be any sample name, and those contain spaces, '=' and worse.
+  # Newlines are the only character that could break the one-line contract.
+  label <- gsub("[\r\n]", " ", as.character(label))
+  cat(sprintf("%s phase=%s done=%d total=%d label=%s\n",
+              PROGRESS_PREFIX, phase, done, total, label))
+  flush(stdout())
+  invisible(NULL)
+}

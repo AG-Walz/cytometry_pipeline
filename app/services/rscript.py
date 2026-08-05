@@ -48,6 +48,8 @@ def inspect_argv(wsp: str, fcs_dir: str, group: str,
                  allow_missing_samples: bool = False,
                  match_mode: str = "content",
                  marker_aliases: str = "",
+                 recover_markers: bool = True,
+                 workspaces: list[str] | None = None,
                  report_json: str = "") -> list[str]:
     """Argv that loads the workspace(s) and writes the load report.
 
@@ -77,6 +79,10 @@ def inspect_argv(wsp: str, fcs_dir: str, group: str,
         argv.extend(["--match_mode", match_mode])
     if (marker_aliases or "").strip():
         argv.extend(["--marker_aliases", marker_aliases.strip()])
+    if not recover_markers:
+        argv.append("--no_recover_markers")
+    if workspaces:
+        argv.extend(["--workspaces", ",".join(workspaces)])
     if report_json:
         argv.extend(["--report_json", report_json])
     return argv
@@ -120,6 +126,12 @@ def run_argv(params: dict) -> list[str]:
         argv.extend(["--marker_aliases", aliases])
     if not params.get("recover_markers", True):
         argv.append("--no_recover_markers")
+    # Only sent when something is actually switched off: the flag's absence
+    # means "every workspace", which is both the R default and what the printed
+    # command should say when nothing was excluded.
+    selected = params.get("workspaces") or []
+    if selected:
+        argv.extend(["--workspaces", ",".join(selected)])
 
     # Per-workspace populations override --population entirely on the R side, so
     # the two are never both meaningful. ';' separates pairs because a FlowJo

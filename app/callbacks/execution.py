@@ -13,11 +13,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import dash_mantine_components as dmc
-from dash import Input, Output, State, callback, html, no_update
+from dash import Input, Output, State, callback, ctx, html, no_update
 
 from app import config
 from app.callbacks import common
-from app.services import rscript, session_state
+from app.services import report_cache, rscript, session_state
 from app.services.runner import (
     CANCELLED,
     DONE,
@@ -38,6 +38,79 @@ STATUS_COLOURS = {
 
 def _alert(children, color="red", title=None):
     return dmc.Alert(children, color=color, title=title, variant="light")
+
+
+def _format_remaining(seconds: float | None) -> str:
+    """A duration a person would say out loud, not a stopwatch reading.
+
+    Deliberately coarse. The estimate is a linear extrapolation over uneven
+    work, so "about 25 min" is the most it can honestly claim; printing 24:37
+    would dress a guess up as a measurement.
+    """
+    if seconds is None:
+        return ""
+    if seconds < 60:
+        return "under a minute left"
+    minutes = int(round(seconds / 60))
+    if minutes < 60:
+        return f"about {minutes} min left"
+    hours, minutes = divmod(minutes, 60)
+    return f"about {hours} h {minutes:02d} min left" if minutes else \
+        f"about {hours} h left"
+
+
+def _progress_bar(progress: dict, running: bool):
+    """The live progress bar, or nothing.
+
+    Renders only while something is running: a bar left at 40% after a run
+    finished reads as a stalled job, and after a FAILED one it reads as a lie.
+    Everything shown here was counted by R (see emit_progress in
+    src/R_shared/io_utils.R); this arranges it and works nothing out except the
+    wording of the estimate.
+    """
+    if not running or not progress:
+        return None
+    remaining = _format_remaining(progress.get("remaining"))
+    return dmc.Stack(
+        [
+            dmc.Space(h=8),
+            dmc.Group(
+                [
+                    dmc.Text(progress["phase_label"], size="xs", fw=600),
+                    dmc.Text(
+                        f"{progress['done']} / {progress['total']}"
+                        + (f" · {remaining}" if remaining else ""),
+                        size="xs", c="dimmed"),
+                ],
+                justify="space-between", gap="xs",
+            ),
+            dmc.Progress(value=progress["percent"], size="sm",
+                         animated=True, striped=True),
+            # The item in flight, so a run that has stopped moving is obvious
+            # from WHICH item it stopped on.
+            dmc.Text(progress.get("label") or "", size="xs", c="dimmed",
+                     truncate="end"),
+        ],
+        gap=4,
+    )
+
+
+def _cached_feedback(report: dict, parsed: dict, cache_key: str):
+    """The same summary as a fresh load, plus where the answer came from.
+
+    Said explicitly, because a load that returns instantly is otherwise
+    indistinguishable from one that silently did nothing — and because a user
+    who has just changed something outside the key (added an FCS file) needs to
+    know this did not look at it.
+    """
+    base = _inspect_feedback(report, parsed)
+    age = report_cache.age_text(cache_key)
+    note = dmc.Text(
+        (f"Remembered from a load {age} — use Re-read to look again."
+         if age else "Remembered from an earlier load — use Re-read to look "
+                     "again."),
+        size="xs", c="dimmed")
+    return dmc.Stack([base, note], gap=4)
 
 
 def _inspect_feedback(report: dict, parsed: dict):
@@ -93,58 +166,95 @@ def register_callbacks() -> None:
 
     @callback(
         Output("inspect-feedback", "children", allow_duplicate=True),
+        Output("store-inspect", "data", allow_duplicate=True),
         Input("btn-inspect", "n_clicks"),
+        Input("btn-reload", "n_clicks"),
         State({"comp": "fb-input", "bid": "wsp"}, "value"),
         State({"comp": "fb-input", "bid": "fcs"}, "value"),
         State("in-group", "value"),
         State("sw-allow-missing", "checked"),
         State("in-match-mode", "value"),
         State("in-marker-aliases", "value"),
+        State("sw-recover-markers", "checked"),
+        State("store-wsp-exclude", "data"),
         prevent_initial_call=True,
     )
-    def start_inspect(_clicks, wsp, fcs_dir, group, allow_missing,
-                      match_mode, marker_aliases):
+    def start_inspect(_clicks, _reload_clicks, wsp, fcs_dir, group,
+                      allow_missing, match_mode, marker_aliases,
+                      recover_markers, excluded):
+        """Load the workspaces — from the remembered result where possible.
+
+        "Reload" is the same load with the cache bypassed, handled here rather
+        than in a second callback so there is one place that decides what a
+        load is.
+        """
+        force = ctx.triggered_id == "btn-reload"
         form = {"wsp": wsp, "fcs_dir": fcs_dir, "group": group}
         problems = common.validate_inspect(form)
         if problems:
             return _alert(
                 html.Ul([html.Li(p) for p in problems],
                         style={"margin": 0, "paddingLeft": "18px"})
-            )
+            ), no_update
         if RUNNER.busy:
             return _alert(
                 "Something is already running — wait for it or cancel it first.",
                 color="yellow",
-            )
+            ), no_update
 
-        # A fresh path per load, so a failed run cannot leave the previous
-        # report sitting there to be read as if it were this one's.
-        report_json = str(config.CACHE_DIR / "load_report.json")
-        try:
-            config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            Path(report_json).unlink(missing_ok=True)
-        except OSError as exc:
-            return _alert(f"Could not prepare the report directory: {exc}")
+        request = {
+            "wsp": wsp.strip(), "fcs_dir": fcs_dir.strip(),
+            "group": str(group).strip(),
+            "match_mode": match_mode or config.DEFAULTS["match_mode"],
+            "marker_aliases": marker_aliases or "",
+            "recover_markers": bool(recover_markers),
+            "allow_missing_samples": bool(allow_missing),
+            "workspaces": sorted(excluded or []),
+        }
+        cache_key = report_cache.key_for(request)
 
+        # A previous load of exactly this, still valid. Answered without
+        # starting R at all: ten minutes of GatingSet building is the single
+        # worst thing to repeat for no reason.
+        if not force:
+            cached = report_cache.load(cache_key)
+            if cached is not None:
+                try:
+                    parsed = rscript.inspect_from_report(cached)
+                except rscript.ReportError:
+                    parsed = None
+                if parsed is not None:
+                    store = {
+                        **parsed,
+                        "wsp": wsp, "fcs_dir": fcs_dir, "group": group,
+                        "remembered_population":
+                            session_state.load().get("population") or "",
+                        "cache_key": cache_key,
+                    }
+                    return _cached_feedback(cached, parsed, cache_key), store
+
+        report_json = report_cache.reserve(cache_key)
         argv = rscript.inspect_argv(
             wsp.strip(), fcs_dir.strip(), group,
             allow_missing_samples=bool(allow_missing),
             match_mode=match_mode or config.DEFAULTS["match_mode"],
             marker_aliases=marker_aliases or "",
+            recover_markers=bool(recover_markers),
+            workspaces=sorted(excluded or []),
             report_json=report_json,
         )
         ok, message = RUNNER.start(
             argv, cwd=str(config.REPO_ROOT), kind="inspect",
             meta={"wsp": wsp, "fcs_dir": fcs_dir, "group": group,
-                  "report_json": report_json},
+                  "report_json": report_json, "cache_key": cache_key},
         )
         if not ok:
-            return _alert(f"Could not start R: {message}")
+            return _alert(f"Could not start R: {message}"), no_update
         return _alert(
-            "Loading — this builds a full GatingSet per workspace and can take "
-            "a while on large files. Watch the Log tab.",
+            "Reading the workspaces. The result is remembered, so this is a "
+            "one-off for these folders.",
             color="blue",
-        )
+        ), no_update
 
     # -- start: run --------------------------------------------------------
 
@@ -164,7 +274,7 @@ def register_callbacks() -> None:
         if common.validate_run(form, inspect) or RUNNER.busy:
             return no_update, no_update
 
-        params = common.run_params(form, populations)
+        params = common.run_params(form, populations, inspect)
         session_state.save(common.session_snapshot(form, populations))
 
         argv = rscript.run_argv(params)
@@ -192,6 +302,7 @@ def register_callbacks() -> None:
         Output("log-text", "children"),
         Output("btn-cancel", "disabled"),
         Output("btn-inspect", "loading"),
+        Output("progress-wrap", "children"),
         Output("store-run-generation", "data"),
         Output("store-inspect", "data"),
         Output("store-results-dir", "data"),
@@ -219,6 +330,7 @@ def register_callbacks() -> None:
             log,
             not running,
             running and kind == "inspect",
+            _progress_bar(snap["progress"], running),
         )
 
         # Nothing finished since the last poll: only the live fields change.

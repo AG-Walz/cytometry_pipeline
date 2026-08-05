@@ -1,16 +1,20 @@
-"""Render the R load report as a per-workspace data-health table.
+"""Render the R load report: what came in, what did not, and what to use.
 
 Presentation only. Every number, verdict and diagnosis shown here was computed
 by ``src/visualization/umap_load_report.R``; this module decides what is worth
-looking at first and nothing else. If you find yourself wanting to work
-something out in here, it belongs in R — the app cannot see a GatingSet, so
-anything it derives is a second opinion that will eventually disagree with the
-first.
+seeing first and nothing else. If you find yourself working something out in
+here, it belongs in R — the app cannot see a GatingSet, so anything it derives
+is a second opinion that will eventually disagree with the first.
 
-Why a table at all: a 33-workspace load prints an 862-line report. Prose is the
-right shape for one workspace and the wrong shape for thirty. The questions
-someone actually has — *is my data in there, and if not, which part isn't* — are
-per-workspace, and a table answers them at a glance.
+The panel is built around one idea: **a glance, then a click**. The headline is
+one line. Everything else — the workspace list, the marker panel, the sample
+names behind each verdict — is behind its own disclosure, because a
+thirty-three-workspace load has more detail than anyone wants at once and the
+text log it replaces failed precisely by showing all of it.
+
+Workspaces are switchable. Clicking one off excludes it from the run and from
+the next load (see select_workspaces() in src/loading/flowjo_workspace.R), which
+is the only way to act on "this workspace is junk" without editing a path.
 """
 
 from __future__ import annotations
@@ -18,45 +22,39 @@ from __future__ import annotations
 import dash_mantine_components as dmc
 from dash import html
 
-#: status -> (badge colour, what it means in one phrase)
+#: status -> (colour, one word). Deliberately one word: the row already carries
+#: the counts, and a sentence per workspace is what made this unreadable.
 _STATUS = {
     "loaded": ("green", "loaded"),
-    "build_failed": ("red", "CytoML refused it"),
-    "unusable": ("red", "could not be read"),
-    "no_files": ("orange", "no files found"),
-    "not_loaded": ("gray", "not loaded"),
+    "build_failed": ("red", "refused"),
+    "unusable": ("red", "unreadable"),
+    "no_files": ("orange", "no files"),
+    "not_loaded": ("gray", "skipped"),
 }
 
+#: Sample names shown per verdict before the list is cut short.
+_SAMPLE_LIMIT = 40
 
-def _pill(label: str, value, color: str = "gray") -> dmc.Badge:
-    return dmc.Badge(f"{label} {value}", color=color, variant="light", size="sm")
 
-
-def _sample_list(title: str, names: list[str], color: str, limit: int = 40):
-    """A collapsible list of sample names, or nothing when there are none.
-
-    Capped, and the cap is stated. A truncation that does not say it truncated
-    reads as a complete list, and someone will act on it as one.
-    """
+def _sample_list(title: str, names: list[str], color: str):
+    """A collapsible list of sample names, or nothing when there are none."""
     if not names:
         return None
-    shown = names[:limit]
+    shown = names[:_SAMPLE_LIMIT]
     extra = len(names) - len(shown)
     return dmc.Accordion(
-        chevronPosition="left",
-        variant="contained",
+        chevronPosition="left", variant="filled",
         children=[
             dmc.AccordionItem(
                 value=title,
                 children=[
                     dmc.AccordionControl(
-                        dmc.Text(f"{title} ({len(names)})", size="xs",
-                                 c=color, fw=600)),
+                        dmc.Text(f"{title} ({len(names)})", size="xs", c=color)),
                     dmc.AccordionPanel(
                         dmc.Stack(
                             [dmc.Text(n, size="xs", ff="monospace")
                              for n in shown]
-                            + ([dmc.Text(f"… and {extra} more — see the Log tab",
+                            + ([dmc.Text(f"… {extra} more — see the Log tab",
                                          size="xs", c="dimmed", fs="italic")]
                                if extra else []),
                             gap=2)),
@@ -66,52 +64,58 @@ def _sample_list(title: str, names: list[str], color: str, limit: int = 40):
     )
 
 
-def _workspace_row(ws: dict) -> dmc.Paper:
+def _workspace_row(ws: dict, excluded: bool):
+    """One workspace: a switch, its name, its counts, and detail on demand."""
     color, meaning = _STATUS.get(ws.get("status", ""), ("gray", ws.get("status", "")))
     routes = ws.get("routes") or {}
-    n_loaded = ws.get("n_loaded") or 0
-    n_listed = ws.get("n_listed") or 0
+    loaded = ws.get("status") == "loaded"
+
+    # Only the routes that contributed. A row of zeroes is noise.
+    pills = [
+        dmc.Badge(f"{routes[k]} {lbl}", color=c, variant="light", size="xs")
+        for k, lbl, c in (("name", "by name", "green"),
+                          ("recorded", "by recorded name", "teal"),
+                          ("content", "by $FIL", "blue"))
+        if routes.get(k)
+    ]
+    if ws.get("n_gates"):
+        pills.append(dmc.Badge(f"{ws['n_gates']} gates", variant="light",
+                               size="xs", color="gray"))
+    if ws.get("markers"):
+        pills.append(dmc.Badge(f"{len(ws['markers'])} markers", variant="light",
+                               size="xs", color="gray"))
 
     head = dmc.Group(
         [
-            dmc.Text(ws["label"], fw=600, size="sm"),
-            dmc.Badge(meaning, color=color, variant="filled", size="sm"),
-            dmc.Text(f"{n_loaded} of {n_listed} sample(s)", size="xs",
-                     c="dimmed"),
+            # A workspace that did not load cannot be included by ticking it, so
+            # its switch is disabled rather than lying about being available.
+            dmc.Switch(
+                id={"comp": "wsp-toggle", "bid": ws["label"]},
+                checked=loaded and not excluded,
+                disabled=not loaded,
+                size="xs",
+            ),
+            dmc.Text(ws["label"], fw=600, size="sm",
+                     td="line-through" if (excluded or not loaded) else None,
+                     c="dimmed" if (excluded or not loaded) else None),
+            dmc.Badge(meaning, color=color, variant="light", size="xs"),
+            dmc.Text(f"{ws.get('n_loaded') or 0}/{ws.get('n_listed') or 0}",
+                     size="xs", c="dimmed"),
         ],
-        gap="xs", wrap="wrap",
+        gap="xs", wrap="nowrap",
     )
 
-    pills = []
-    # Only the routes that actually contributed. A row of zeroes is noise.
-    if routes.get("name"):
-        pills.append(_pill("by name", routes["name"], "green"))
-    if routes.get("recorded"):
-        pills.append(_pill("by recorded name", routes["recorded"], "teal"))
-    if routes.get("content"):
-        pills.append(_pill("by $FIL content", routes["content"], "blue"))
-    if ws.get("n_gates"):
-        pills.append(_pill("gates", ws["n_gates"]))
-    if ws.get("markers"):
-        pills.append(_pill("markers", len(ws["markers"])))
-
-    body = [head]
-    if pills:
-        body.append(dmc.Group(pills, gap=4, wrap="wrap"))
-
+    detail = []
     if ws.get("reason"):
-        body.append(
-            dmc.Text(ws["reason"], size="xs", c="red",
-                     style={"whiteSpace": "pre-wrap"}))
-
+        detail.append(dmc.Text(ws["reason"], size="xs", c="red",
+                               style={"whiteSpace": "pre-wrap"}))
     if ws.get("markers"):
-        body.append(dmc.Text("Panel: " + ", ".join(ws["markers"]),
-                             size="xs", c="dimmed"))
+        detail.append(dmc.Text("Panel: " + ", ".join(ws["markers"]), size="xs",
+                               c="dimmed"))
     if ws.get("markers_not_shared"):
-        body.append(dmc.Text(
-            "Not shared with every workspace: "
-            + ", ".join(ws["markers_not_shared"]), size="xs", c="orange"))
-
+        detail.append(dmc.Text("Not shared: "
+                               + ", ".join(ws["markers_not_shared"]),
+                               size="xs", c="orange"))
     for title, key, colour in (
         ("Paired by content, not by name", "rescued", "blue"),
         ("Listed but did not load", "rejected", "red"),
@@ -119,42 +123,37 @@ def _workspace_row(ws: dict) -> dmc.Paper:
     ):
         block = _sample_list(title, ws.get(key) or [], colour)
         if block is not None:
-            body.append(block)
+            detail.append(block)
 
+    body = [head]
+    if pills:
+        body.append(dmc.Group(pills, gap=4, wrap="wrap"))
+    body.extend(detail)
     return dmc.Paper(dmc.Stack(body, gap=6), p="xs", withBorder=True,
-                     radius="sm")
+                     radius="sm",
+                     style={"opacity": 0.55} if excluded else None)
 
 
-def _headline(report: dict) -> dmc.Alert:
-    """The one paragraph someone reads before deciding whether to continue."""
+def headline(inspect: dict | None, excluded: list[str] | None = None):
+    """The one line that is always visible, above the collapsed sections."""
+    report = (inspect or {}).get("report")
+    if not report:
+        return None
     totals = report.get("totals") or {}
     found = totals.get("workspaces_found") or 0
     loaded = totals.get("workspaces_loaded") or 0
+    n_off = len([w for w in (excluded or [])])
     samples = totals.get("samples") or 0
-    listed = totals.get("samples_listed") or 0
-    routes = totals.get("routes") or {}
 
-    lines = [
-        dmc.Text(f"{loaded} of {found} workspace(s) loaded — "
-                 f"{samples} of {listed} sample(s) are in the analysis.",
-                 fw=600, size="sm"),
-    ]
-    if routes.get("content"):
-        lines.append(dmc.Text(
-            f"{routes['content']} of them were paired by the $FIL keyword "
-            f"inside the file rather than by file name. Those would be missing "
-            f"under strict matching.", size="xs"))
-    if totals.get("samples_without_marker_names"):
-        lines.append(dmc.Text(
-            f"{totals['samples_without_marker_names']} sample(s) carry no "
-            f"marker names of their own; their markers were recovered from the "
-            f"channel each was measured on.", size="xs"))
-
-    colour = "green" if loaded == found else ("yellow" if loaded else "red")
-    return dmc.Alert(dmc.Stack(lines, gap=4), color=colour, variant="light")
+    bits = [f"{loaded} of {found} workspaces", f"{samples} samples"]
+    if n_off:
+        bits.append(f"{n_off} switched off")
+    colour = "green" if loaded == found and not n_off else (
+        "red" if not loaded else "yellow")
+    return dmc.Badge(" · ".join(bits), color=colour, variant="light", size="sm")
 
 
-def _marker_section(report: dict):
+def marker_section(report: dict):
     """Common panel, what diverges, and the aliases R suggests for it."""
     markers = report.get("markers") or {}
     common = markers.get("common") or []
@@ -163,106 +162,154 @@ def _marker_section(report: dict):
     conflicts = markers.get("conflicts") or []
 
     body = [
-        dmc.Text(f"Markers shared by every workspace ({len(common)})",
-                 fw=600, size="sm"),
         dmc.Text(", ".join(common) if common
-                 else "None — no joint UMAP is possible until this is fixed.",
+                 else "No marker is shared by every workspace — a joint UMAP "
+                      "is not possible until this is resolved.",
                  size="xs", c="dimmed" if common else "red"),
     ]
 
     if not_common:
-        body.append(dmc.Space(h=6))
-        body.append(dmc.Text(f"Not shared ({len(not_common)})", fw=600,
-                             size="sm"))
+        body.append(dmc.Space(h=4))
         body.append(dmc.Stack(
-            [dmc.Text(f"{m['marker']} — in {len(m['present_in'])}: "
-                      + ", ".join(m["present_in"][:6])
-                      + ("…" if len(m["present_in"]) > 6 else ""),
-                      size="xs")
+            [dmc.Text(f"{m['marker']} — only in {len(m['present_in'])}: "
+                      + ", ".join(m["present_in"][:4])
+                      + ("…" if len(m["present_in"]) > 4 else ""),
+                      size="xs", c="orange")
              for m in not_common],
             gap=2))
 
     if conflicts:
-        body.append(dmc.Space(h=6))
-        body.append(dmc.Alert(
-            dmc.Stack(
-                [dmc.Text("A detector is named differently in different files. "
-                          "The most common name was used:", size="xs")]
-                + [dmc.Text(f"{c['channel']}: {c['counts']} → {c['chosen']}",
-                            size="xs", ff="monospace")
-                   for c in conflicts],
-                gap=2),
-            color="yellow", variant="light"))
+        body.append(dmc.Space(h=4))
+        body.append(dmc.Stack(
+            [dmc.Text(f"{c['channel']}: {c['counts']} → using {c['chosen']}",
+                      size="xs", ff="monospace", c="dimmed")
+             for c in conflicts],
+            gap=2))
 
     if suggestions:
         body.append(dmc.Space(h=6))
-        body.append(dmc.Text("Probably the same marker, spelled differently",
-                             fw=600, size="sm"))
-        body.append(dmc.Text(
-            "Nothing is merged unless you say so. Ticking these fills in the "
-            "Marker aliases field under Advanced; load the workspaces again to "
-            "apply them.", size="xs", c="dimmed"))
-        # Pattern-matching id, because this group only exists once a report has
-        # been rendered. A callback keyed on a plain id would fail on every page
-        # load before the first inspect; a pattern with zero matches is fine.
+        body.append(dmc.Text("Probably the same marker — tick to add an alias, "
+                             "then load again", size="xs", fw=600))
+        # Pattern-matching id: this group exists only once a report has been
+        # rendered, and a callback keyed on a plain id would fail on every page
+        # load before the first inspect.
         body.append(dmc.CheckboxGroup(
             id={"comp": "alias-suggestions"},
             value=[],
             children=dmc.Stack(
                 [dmc.Checkbox(
-                    label=f"{' = '.join(s['names'])}  →  {s['suggested']}"
-                          f"   ({s['confidence']})",
-                    # The value IS the CLI fragment, so nothing has to rebuild
-                    # it later: every non-chosen spelling maps to the chosen one.
+                    label=f"{' = '.join(s['names'])} → {s['suggested']}",
+                    # The value IS the CLI fragment, so nothing rebuilds it.
                     value=";".join(f"{n}={s['suggested']}"
-                                   for n in s["names"]
-                                   if n != s["suggested"]),
-                    size="sm")
+                                   for n in s["names"] if n != s["suggested"]),
+                    size="xs")
                  for s in suggestions],
-                gap=4),
+                gap=2),
         ))
-    return dmc.Paper(dmc.Stack(body, gap=4), p="sm", withBorder=True,
-                     radius="sm")
+    return dmc.Stack(body, gap=4)
 
 
-def badge(inspect: dict | None):
-    """The one-glance verdict shown on the collapsed accordion header."""
+def panel(inspect: dict | None, excluded: list[str] | None = None):
+    """The whole panel: three independently collapsible sections."""
     report = (inspect or {}).get("report")
     if not report:
-        return None
-    totals = report.get("totals") or {}
-    found = totals.get("workspaces_found") or 0
-    loaded = totals.get("workspaces_loaded") or 0
-    if loaded == found and found:
-        return dmc.Badge(f"{found}/{found} workspaces", color="green",
-                         variant="light", size="sm")
-    return dmc.Badge(f"{loaded}/{found} workspaces",
-                     color="red" if not loaded else "yellow",
-                     variant="filled", size="sm")
+        return dmc.Text("Load the workspaces to see what came in.",
+                        size="sm", c="dimmed")
 
-
-def panel(inspect: dict | None) -> object:
-    """The whole health panel, or a placeholder before anything is loaded."""
-    report = (inspect or {}).get("report")
-    if not report:
-        return dmc.Text(
-            "Load the workspaces to see what came in and what did not.",
-            size="sm", c="dimmed")
-
+    excluded = list(excluded or [])
     workspaces = report.get("workspaces") or []
-    # Problems first. Someone opening this panel is looking for what went wrong,
-    # and making them scroll past twenty successes to find it is the whole
-    # failure mode of the text log this replaces.
+    # Problems first: someone opening this is looking for what went wrong, and
+    # scrolling past twenty successes to find it is the failure mode of the log
+    # this replaces.
     workspaces = sorted(workspaces,
                         key=lambda w: (w.get("status") == "loaded",
                                        w.get("label", "")))
+    totals = report.get("totals") or {}
+    markers = report.get("markers") or {}
+    n_common = len(markers.get("common") or [])
+    n_diverging = len(markers.get("not_common") or [])
+    n_off = len(excluded)
 
-    return dmc.Stack(
-        [
-            _headline(report),
-            _marker_section(report),
-            dmc.Text(f"Workspaces ({len(workspaces)})", fw=600, size="sm"),
-            dmc.Stack([_workspace_row(w) for w in workspaces], gap=6),
+    sections = []
+
+    # --- workspaces, its own collapsible (the user asked for this) ----------
+    ws_summary = f"{len(workspaces)} total"
+    if n_off:
+        ws_summary += f", {n_off} off"
+    sections.append(dmc.AccordionItem(
+        value="workspaces",
+        children=[
+            dmc.AccordionControl(dmc.Group(
+                [dmc.Text("Workspaces", size="sm", fw=500),
+                 dmc.Badge(ws_summary, size="xs", variant="light",
+                           color="yellow" if n_off else "gray")],
+                gap="xs")),
+            dmc.AccordionPanel(dmc.Stack(
+                [dmc.Group(
+                    [dmc.Text("Switch one off to leave it out of the run.",
+                              size="xs", c="dimmed"),
+                     dmc.Button("Use all", id={"comp": "wsp-all"},
+                                size="compact-xs", variant="subtle",
+                                color="gray")],
+                    justify="space-between")]
+                + [_workspace_row(w, w["label"] in excluded)
+                   for w in workspaces],
+                gap=6)),
         ],
-        gap="sm",
+    ))
+
+    # --- markers ------------------------------------------------------------
+    sections.append(dmc.AccordionItem(
+        value="markers",
+        children=[
+            dmc.AccordionControl(dmc.Group(
+                [dmc.Text("Markers", size="sm", fw=500),
+                 dmc.Badge(f"{n_common} shared" + (f", {n_diverging} not"
+                                                   if n_diverging else ""),
+                           size="xs", variant="light",
+                           color="red" if not n_common else
+                           ("yellow" if n_diverging else "gray"))],
+                gap="xs")),
+            dmc.AccordionPanel(marker_section(report)),
+        ],
+    ))
+
+    # --- samples ------------------------------------------------------------
+    unnamed = totals.get("samples_without_marker_names") or 0
+    routes = totals.get("routes") or {}
+    sample_lines = [
+        dmc.Text(f"{totals.get('samples') or 0} of "
+                 f"{totals.get('samples_listed') or 0} listed samples loaded.",
+                 size="xs"),
+    ]
+    if routes.get("content"):
+        sample_lines.append(dmc.Text(
+            f"{routes['content']} paired by the $FIL keyword inside the file "
+            f"rather than by name — they would be missing under strict "
+            f"matching.", size="xs", c="dimmed"))
+    if unnamed:
+        sample_lines.append(dmc.Text(
+            f"{unnamed} carry no marker names of their own; recovered from the "
+            f"channel each was measured on.", size="xs", c="dimmed"))
+    sections.append(dmc.AccordionItem(
+        value="samples",
+        children=[
+            dmc.AccordionControl(dmc.Group(
+                [dmc.Text("Samples", size="sm", fw=500),
+                 dmc.Badge(f"{totals.get('samples') or 0}", size="xs",
+                           variant="light", color="gray")],
+                gap="xs")),
+            dmc.AccordionPanel(dmc.Stack(sample_lines, gap=4)),
+        ],
+    ))
+
+    return dmc.Accordion(
+        multiple=True,
+        # Nothing open by default. The headline badge already says whether
+        # anything needs attention, and the callback in steps.py opens the
+        # section that does.
+        value=[],
+        id="acc-health-sections",
+        variant="separated",
+        children=sections,
     )

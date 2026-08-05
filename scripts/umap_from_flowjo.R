@@ -111,6 +111,12 @@ option_list <- list(
                             "'strict': a sample whose file name does not match ",
                             "is missing, full stop (the behaviour before this ",
                             "option existed). [default %default]")),
+  make_option("--workspaces", type = "character", default = NULL,
+              help = paste0("Comma-separated workspace names to USE; the rest ",
+                            "are left out. Default: every workspace found. ",
+                            "Applied before any GatingSet is built, so leaving ",
+                            "one out makes the run shorter as well as smaller. ",
+                            "Names are the ones --list_populations reports.")),
   make_option("--expected_samples", type = "integer", default = 0,
               help = paste0("If > 0, warn when the run does not total exactly ",
                             "this many samples across all workspaces ",
@@ -339,6 +345,7 @@ umap_from_flowjo(
   population_map   = opt$population_map,
   match_mode       = opt$match_mode,
   marker_aliases   = opt$marker_aliases,
+  workspaces       = opt$workspaces,
   recover_markers  = !opt$no_recover_markers,
   report_json      = opt$report_json
 )

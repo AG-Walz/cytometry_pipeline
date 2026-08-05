@@ -27,6 +27,7 @@ process EXTRACT_FLOWJO_POPULATION {
     def annot_arg   = params.annotate         ? "--annotate '${params.annotate}'"               : ''
     def allow_arg   = params.allow_missing_samples ? '--allow_missing_samples' : ''
     def norecover   = params.recover_markers ? '' : '--no_recover_markers'
+    def wsp_sel     = params.workspaces       ? "--workspaces '${params.workspaces}'"     : ''
     """
     extract_flowjo_population_cli.R \
         --wsp '${wsp}' \
@@ -40,6 +41,6 @@ process EXTRACT_FLOWJO_POPULATION {
         --seed ${params.seed} \
         --output_dir flowjo_population \
         ${allow_arg} ${norecover} ${alias_arg} ${popmap_arg} ${markers_arg} \
-        ${subsel_arg} ${meta_arg} ${pattern_arg} ${annot_arg}
+        ${subsel_arg} ${meta_arg} ${pattern_arg} ${annot_arg} ${wsp_sel}
     """
 }

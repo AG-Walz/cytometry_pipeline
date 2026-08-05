@@ -358,6 +358,50 @@ wsp_recorded_files <- function(wsp_path) {
 }
 
 # -----------------------------------------------------------------------------
+# Which of the discovered workspaces this run should use.
+#
+# `spec` is an INCLUDE list: workspace labels, either as a character vector or
+# comma-separated in one string. Empty or NULL means all of them, so the option
+# costs nothing when nobody sets it.
+#
+# Why this exists rather than reusing --population_map, which already excludes a
+# workspace that has no entry: the map requires a GATE per workspace. Wanting to
+# leave one workspace out of a run is not the same as wanting to name a
+# different gate in each of the other twenty-two, and forcing the second in
+# order to express the first is how a one-click exclusion turns into a
+# twenty-two-line configuration file. The two compose instead — select the
+# workspaces here, then choose their gates however you like.
+#
+# Applied BEFORE any GatingSet is built, so deselecting a workspace makes the
+# load faster rather than merely hiding it at the end.
+#
+# An unknown label is fatal and lists what was available: silently ignoring it
+# would run on more workspaces than the caller asked for, which is the one
+# outcome a selection must never produce.
+#
+# Returns a logical vector over `labels`.
+# -----------------------------------------------------------------------------
+select_workspaces <- function(labels, spec = NULL) {
+  if (is.null(spec)) return(rep(TRUE, length(labels)))
+  wanted <- if (length(spec) == 1L && is.character(spec)) {
+    trimws(strsplit(spec, ",", fixed = TRUE)[[1]])
+  } else {
+    trimws(as.character(spec))
+  }
+  wanted <- wanted[nzchar(wanted)]
+  if (!length(wanted)) return(rep(TRUE, length(labels)))
+
+  unknown <- setdiff(wanted, labels)
+  if (length(unknown)) {
+    stop("--workspaces names ", length(unknown),
+         " workspace(s) that were not found: ",
+         paste(unknown, collapse = ", "),
+         "\nAvailable: ", paste(labels, collapse = ", "), call. = FALSE)
+  }
+  labels %in% wanted
+}
+
+# -----------------------------------------------------------------------------
 # A readable label for one gate path.
 #
 # FlowJo lets a gate be named with nothing but spaces, and real workspaces

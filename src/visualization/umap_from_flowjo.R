@@ -734,6 +734,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
                              match_mode = "content",
                              marker_aliases = NULL,
                              recover_markers = TRUE,
+                             workspaces = NULL,
                              report_json = NULL) {
   require(CytoML)
   require(flowWorkspace)
@@ -766,13 +767,28 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # at a time. See src/loading/flowjo_workspace.R.
   wsp_paths <- find_workspace_files(wsp_path)
   wsp_names <- workspace_labels(wsp_paths)
-  n_wsp     <- length(wsp_paths)
+  n_found   <- length(wsp_paths)
 
   # Names, not full paths: they share a root, and 33 repetitions of it push the
   # part that matters — what failed — off the top of the log.
-  cat("Workspaces found (", n_wsp, ") under ", wsp_path, ":\n", sep = "")
+  cat("Workspaces found (", n_found, ") under ", wsp_path, ":\n", sep = "")
   cat(strwrap(paste(wsp_names, collapse = ", "), width = 78,
               prefix = "  ", initial = "  "), sep = "\n")
+
+  # Deselecting happens here, before the expensive part, so leaving a workspace
+  # out makes the run shorter as well as smaller.
+  keep_wsp <- select_workspaces(wsp_names, workspaces)
+  if (!all(keep_wsp)) {
+    cat("Excluded by --workspaces (", sum(!keep_wsp), "): ",
+        paste(wsp_names[!keep_wsp], collapse = ", "), "\n", sep = "")
+    wsp_paths <- wsp_paths[keep_wsp]
+    wsp_names <- wsp_names[keep_wsp]
+    if (!length(wsp_paths)) {
+      stop("--workspaces excluded every workspace; nothing to load.",
+           call. = FALSE)
+    }
+  }
+  n_wsp <- length(wsp_paths)
   fcs_index <- index_fcs_dir(fcs_dir)
   cat("FCS files indexed: ", length(fcs_index), " distinct name(s) under ",
       fcs_dir, "\n", sep = "")
@@ -837,6 +853,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     spec <- specs[[label]]
     cat(sprintf("\nBuilding GatingSet for '%s' — %s, %d listed sample(s)\n",
                 label, describe_group(spec), length(spec$listed)))
+    emit_progress("load", which(names(specs) == label) - 1L, length(specs), label)
     gs <- tryCatch(build_workspace_gatingset(spec),
                    error = function(e) {
                      if (!allow_missing_samples) stop(e)
@@ -1254,6 +1271,11 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   per_sample_subpop <- list()
   per_sample_wsp    <- character(0)
   no_marker_samples <- character(0)
+  # Progress is reported against the sample count the GatingSets actually hold,
+  # which is the only total that is known before the loop and true after it.
+  n_total_samples <- sum(vapply(gs_list, function(g)
+    length(flowWorkspace::sampleNames(g)), integer(1)))
+  n_done <- 0L
   for (w in names(gs_list)) {
     gs <- gs_list[[w]]
     if (n_wsp > 1) cat(sprintf("\n[%s]\n", w))
@@ -1288,6 +1310,8 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
 
       cat(sprintf("  %s: %d cells x %d markers\n", display, nrow(mtx),
                   ncol(mtx)))
+      n_done <- n_done + 1L
+      emit_progress("extract", n_done, n_total_samples, display)
       if (nrow(mtx) == 0) {
         warning("Sample '", display, "' has 0 cells in population '",
                 pop_by_wsp[[w]],
@@ -1439,6 +1463,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              match_mode = "content",
                              marker_aliases = NULL,
                              recover_markers = TRUE,
+                             workspaces = NULL,
                              report_json = NULL,
                              method = "umap") {
   require(ggplot2)
@@ -1458,7 +1483,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     allow_missing_samples = allow_missing_samples,
     population_map = population_map, match_mode = match_mode,
     marker_aliases = marker_aliases, recover_markers = recover_markers,
-    report_json = report_json)
+    workspaces = workspaces, report_json = report_json)
 
   # Inspect mode already printed and returned everything it has.
   if (isTRUE(ext$inspected)) return(invisible(ext))
@@ -1835,7 +1860,10 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
   files_unique <- unique(file_labels)
 
   # 7b & 7c. For each marker: one conjoint plot (all cells) + one plot per file.
+  n_marker_done <- 0L
   for (marker in use_markers) {
+    n_marker_done <- n_marker_done + 1L
+    emit_progress("plot", n_marker_done, length(use_markers), marker)
     # ONE colour scale per marker, shared by the conjoint plot and every per-file
     # plot, so a given colour means the same expression value in every plot of
     # this marker. The limits span the full min-max range of the marker across

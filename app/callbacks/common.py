@@ -45,6 +45,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("plot_height", "in-height", "value"),
     ("output_formats", "in-formats", "value"),
     ("population_map", "store-popmap", "data"),
+    ("excluded_workspaces", "store-wsp-exclude", "data"),
     ("selected_gates", "gate-tree", "selected"),
     ("checked_gates", "gate-tree", "checked"),
 ]
@@ -119,7 +120,23 @@ def output_dir_of(form: dict) -> str:
     return str(Path(parent) / name)
 
 
-def run_params(form: dict, populations: list[str]) -> dict:
+def workspace_selection(form: dict, inspect: dict | None) -> list[str]:
+    """The ``--workspaces`` INCLUDE list, or [] meaning "all of them".
+
+    The UI stores what is switched OFF; the CLI takes what to switch ON. The
+    conversion needs to know what loaded, which only the report does — so an
+    empty exclusion set returns [] and the flag is omitted entirely rather than
+    spelling out all thirty-three names for a run that excludes nothing.
+    """
+    excluded = set(form.get("excluded_workspaces") or [])
+    if not excluded:
+        return []
+    loaded = list((inspect or {}).get("populations_by_workspace") or {})
+    return [w for w in loaded if w not in excluded]
+
+
+def run_params(form: dict, populations: list[str],
+               inspect: dict | None = None) -> dict:
     """Everything ``rscript.run_argv`` needs, derived from the form.
 
     An explicit whitelist, not a copy of ``form``: gate selections and other
@@ -138,6 +155,7 @@ def run_params(form: dict, populations: list[str]) -> dict:
         "population_map": form.get("population_map") or {},
         "allow_missing_samples": bool(form.get("allow_missing_samples")),
         "match_mode": form.get("match_mode") or config.DEFAULTS["match_mode"],
+        "workspaces": workspace_selection(form, inspect),
         "marker_aliases": form.get("marker_aliases") or "",
         "recover_markers": bool(form.get("recover_markers", True)),
         "sample_metadata": (form.get("sample_metadata") or "").strip(),
