@@ -19,6 +19,8 @@ import subprocess
 import threading
 import time
 
+from app.services import detached
+
 #: Hard cap on retained log lines, so a pathological run cannot exhaust memory.
 MAX_LINES = 20000
 
@@ -65,6 +67,9 @@ class Runner:
         #: Latest ::progress:: line, and when its phase began (for the ETA).
         self._progress: dict = {}
         self._phase_started_at: float | None = None
+        #: Set when following a run that is not our child (see attach()).
+        self._detached_dir: str | None = None
+        self._detached_pid: int = 0
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -164,6 +169,15 @@ class Runner:
 
     def cancel(self) -> bool:
         """Terminate the active process group. No-op when idle."""
+        if self._detached_dir:
+            stopped = detached.stop(self._detached_dir)
+            if stopped:
+                with self._lock:
+                    self._cancelling = True
+                    self._status = CANCELLED
+                    self._finished_at = time.time()
+                    self._generation += 1
+            return stopped
         with self._lock:
             proc = self._proc
             if proc is None or self._status != RUNNING:
@@ -194,10 +208,121 @@ class Runner:
         threading.Thread(target=_hard_kill, daemon=True).start()
         return True
 
+    # -- detached runs -----------------------------------------------------
+
+    def start_detached(self, argv, cwd, output_dir, kind, meta=None):
+        """Launch a run that outlives the app, and follow its log.
+
+        Same single-slot rule as start(): one thing at a time. The difference is
+        where the output goes — a file in the run's own output directory rather
+        than a pipe — which is what makes it survivable and re-readable. See
+        app/services/detached.py.
+        """
+        with self._lock:
+            if self._status == RUNNING:
+                return False, "A run is already in progress."
+        try:
+            status = detached.launch(argv, cwd, output_dir, kind, meta)
+        except OSError as exc:
+            with self._lock:
+                self._status = FAILED
+                self._lines = [f"Failed to launch: {exc}", "", "Command was:",
+                               "  " + " ".join(argv)]
+                self._finished_at = time.time()
+                self._generation += 1
+            return False, str(exc)
+        self.attach(output_dir)
+        return True, "started"
+
+    def attach(self, output_dir) -> bool:
+        """Follow a detached run — ours, or one a previous app instance began.
+
+        Returns False when there is nothing there to follow. Refuses while
+        something else is running, so attaching cannot silently displace the run
+        the user is currently watching.
+        """
+        status = detached.read_status(output_dir)
+        if not status:
+            return False
+        with self._lock:
+            if self._status == RUNNING and self._detached_dir != str(output_dir):
+                return False
+            self._detached_dir = str(output_dir)
+            self._argv = list(status.get("argv") or [])
+            self._kind = status.get("kind") or "run"
+            self._meta = dict(status.get("meta") or {})
+            self._started_at = status.get("started_at")
+            self._detached_pid = int(status.get("pid") or 0)
+            self._status = RUNNING if status.get("running") else DONE
+            self._finished_at = None if status.get("running") else time.time()
+            self._progress = {}
+            self._phase_started_at = None
+            self._lines = []
+        self._refresh_detached()
+        return True
+
+    def _refresh_detached(self) -> None:
+        """Re-read the detached run's log and re-derive status and progress.
+
+        The log is the only channel — there is no pipe to a process we may not
+        even have started — so progress is recovered by scanning it. Cheap
+        enough at poll rate: the scan is a regex over the tail, and only the
+        LAST progress line of each phase matters.
+        """
+        directory = self._detached_dir
+        if not directory:
+            return
+        text = detached.read_log(directory)
+        alive = detached.is_alive(self._detached_pid)
+        lines = text.splitlines()
+
+        keep: list[str] = []
+        progress: dict = {}
+        for line in lines:
+            hit = _PROGRESS_RE.match(line)
+            if hit:
+                phase, done, total, label = hit.groups()
+                progress = {"phase": phase, "done": int(done),
+                            "total": int(total), "label": label}
+                continue
+            keep.append(line)
+
+        with self._lock:
+            if len(keep) > MAX_LINES:
+                self._truncated = True
+                keep = keep[-MAX_LINES:]
+            self._lines = keep
+            if progress.get("phase") != self._progress.get("phase"):
+                # Re-derived after an attach, so the phase clock starts now
+                # rather than pretending to know when the phase began. The ETA
+                # is therefore absent for a moment after attaching, which is
+                # better than an ETA computed from a start time we invented.
+                self._phase_started_at = time.time()
+            self._progress = progress
+            if not alive and self._status == RUNNING:
+                self._status = DONE if self._looks_finished(keep) else FAILED
+                self._finished_at = time.time()
+                self._generation += 1
+
+    @staticmethod
+    def _looks_finished(lines: list[str]) -> bool:
+        """Did the run reach its end, or did it stop?
+
+        A detached process's exit status is not ours to collect — nobody
+        wait()s for it — so completion is judged from what it printed. The R
+        side prints this line last and only on success.
+        """
+        tail = "\n".join(lines[-40:])
+        return "Done. Plots written to:" in tail or "Load report:" in tail
+
     # -- inspection --------------------------------------------------------
 
     def snapshot(self) -> dict:
         """A consistent view of the run for the UI."""
+        # A detached run has no pipe feeding the buffer, so its log and status
+        # are re-read here, at poll rate, before the view is taken.
+        if self._detached_dir:
+            self._refresh_detached()
         with self._lock:
             elapsed = None
             if self._started_at is not None:

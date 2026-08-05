@@ -1466,7 +1466,10 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              workspaces = NULL,
                              report_json = NULL,
                              method = "umap",
-                             n_cores = 1L) {
+                             n_cores = 1L,
+                             embed_cores = 1L,
+                             umap_init = "auto",
+                             umap_subsample = 0L) {
   require(ggplot2)
   if (!requireNamespace("viridis", quietly = TRUE)) {
     stop("Package 'viridis' is required for marker colour scales.")
@@ -1475,7 +1478,17 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # Resolved ONCE, here, so every phase and every log line agrees on the number
   # — and so "0" (decide for me) becomes a concrete count the run can report.
   n_cores <- resolve_cores(n_cores)
-  if (n_cores > 1L) cat("Using ", n_cores, " worker(s) for plotting.\n", sep = "")
+  # embed_cores is NOT n_cores, deliberately. Threading the embedding switches
+  # uwot to its batch optimiser, which is a DIFFERENT optimiser: same seed,
+  # different coordinates. Tying it to the plotting worker count meant the app
+  # (which defaults to every core) and pipeline F's DIMRED (which passes no
+  # threads at all) computed different embeddings from identical inputs, and
+  # nothing said so. Threading the embedding is now its own explicit choice,
+  # defaulting to the reproducible serial optimiser, and it is worth ~1% of a
+  # run — the plots are the cost, not this.
+  embed_cores <- resolve_cores(embed_cores)
+  cat("Cores: ", n_cores, " for plotting, ", embed_cores,
+      " for the embedding.\n", sep = "")
 
   ext <- extract_flowjo_population(
     wsp_path = wsp_path, fcs_dir = fcs_dir, population = population,
@@ -1532,22 +1545,29 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   cat("Computing shared ", method, " over ", nrow(combined_matrix),
       " cells x ", ncol(combined_matrix), " markers (n_neighbors=", n_neighbors,
       ", min_dist=", min_dist, ", metric=", metric, ", seed=", seed,
-      ", threads=", n_cores, ")...\n", sep = "")
-  if (n_cores > 1L) {
+      ", threads=", embed_cores, ")...\n", sep = "")
+  if (embed_cores > 1L) {
     cat("  Threaded embedding uses uwot's batch optimiser: reproducible from ",
-        "the seed, but not identical to a 1-core run.\n", sep = "")
+        "the seed, but NOT identical to a 1-core run, or to pipeline F unless ",
+        "it is given the same --embed_cores.\n", sep = "")
   }
   # Said BEFORE the call: the neighbour search runs before the first epoch and
   # reports nothing, so without this the bar would sit empty through a phase
   # that can take minutes on a few million cells.
-  emit_progress("embed", 0L, 100L, "building neighbour graph")
+  # uwot's own stage messages go to the log. Without them the pre-epoch phases —
+  # neighbour search, smooth-kNN calibration, and the spectral initialisation,
+  # which is a single-threaded eigendecomposition and on millions of cells is
+  # the longest of the three — are indistinguishable from a hang. There is no
+  # epoch to count yet, so the only honest signal is what uwot says it is doing.
+  emit_progress("embed", 0L, 100L, "neighbour graph + initialisation")
   dimred <- run_dimred(
     expr_matrix = combined_matrix,
     method      = method,
     output_dir  = output_dir,
     params = list(n_neighbors = n_neighbors, umap_min_dist = min_dist,
                   metric = metric, seed = seed, draw_plots = FALSE,
-                  n_threads = n_cores, progress = TRUE,
+                  n_threads = embed_cores, progress = TRUE, verbose = TRUE,
+                  umap_init = umap_init, umap_subsample = umap_subsample,
                   output_formats = output_formats,
                   plot_width = plot_width, plot_height = plot_height)
   )
@@ -1939,6 +1959,9 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
       )
       invisible(NULL)
     }
+    # This one really does return NULL, so a NULL is not evidence of a dead
+    # worker. Everything else parallel_lapply() runs is checked for it.
+    attr(plot_one_file, "returns_null") <- TRUE
     invisible(parallel_lapply(files_unique, plot_one_file, n_cores = n_cores))
     cat("Saved marker plots for:", marker, "\n")
   }

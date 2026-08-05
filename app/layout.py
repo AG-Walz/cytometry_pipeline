@@ -847,6 +847,7 @@ def _right_column() -> dmc.Paper:
                             # hidden again when nothing is running — a bar
                             # frozen at 40% after a finished run reads as a
                             # stalled job.
+                            html.Div(id="reattach-note"),
                             html.Div(id="progress-wrap"),
                             dmc.Space(h=10),
                             dmc.ScrollArea(

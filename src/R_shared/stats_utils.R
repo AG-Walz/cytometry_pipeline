@@ -205,16 +205,46 @@ run_pca <- function(expr_matrix, n_components = 2, scale = TRUE) {
 #' @return Matrix of UMAP coordinates
 run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
                      n_components = 2, metric = "euclidean", seed = 42,
-                     n_threads = 1L, progress = FALSE, verbose = FALSE) {
+                     n_threads = 1L, progress = FALSE, verbose = FALSE,
+                     init = "auto", subsample = 0L, chunk = 250000L) {
   set.seed(seed)
   n_threads <- max(1L, as.integer(n_threads))
+  n_obs <- nrow(expr_matrix)
 
-  # PROGRESS. uwot calls epoch_callback after every optimisation epoch, which is
-  # an exact count rather than an estimate — so the caller can report real
-  # progress through the one step that has none. The neighbour search runs
-  # BEFORE the first epoch and is not covered; on a large matrix it is a
-  # meaningful share of the time, which is why the caller announces the phase
-  # before calling in rather than waiting for epoch 1.
+  # ---------------------------------------------------------------------------
+  # WHY THIS FUNCTION IS MORE THAN A CALL TO uwot::umap
+  #
+  # uwot has two thread pools and three stages, and only some of them scale:
+  #
+  #   neighbour search   n_threads      parallel
+  #   smooth-kNN + graph —              largely serial
+  #   INITIALISATION     —              SERIAL, and on millions of points this
+  #                                     is the whole run. init = "spectral" (the
+  #                                     default) is an eigendecomposition of a
+  #                                     graph with one node per cell.
+  #   optimisation       n_sgd_threads  parallel
+  #
+  # Measured on this repo's data: a run over 7.9M cells sat at ~180% CPU with 29
+  # threads alive for hours — 28 workers idle while one did the initialisation.
+  # More cores cannot fix that; only a different algorithm can. Hence `init`
+  # and `subsample` below.
+  # ---------------------------------------------------------------------------
+
+  # "auto": spectral is the best initialisation and is affordable up to a few
+  # hundred thousand points. Past that its cost stops being worth it and PCA —
+  # which is cheap, deterministic and a perfectly good starting layout — is
+  # chosen instead. The switch is announced, because it changes the embedding.
+  SPECTRAL_LIMIT <- 300000L
+  if (identical(init, "auto")) {
+    init <- if (n_obs > SPECTRAL_LIMIT) "pca" else "spectral"
+    if (init == "pca") {
+      message("uwot: ", n_obs, " cells is past the ", SPECTRAL_LIMIT,
+              " point where spectral initialisation stops paying for itself ",
+              "(it is single-threaded); using init = \"pca\". Pass ",
+              "init = \"spectral\" to force it.")
+    }
+  }
+
   cb <- NULL
   if (isTRUE(progress) && exists("emit_progress", mode = "function")) {
     cb <- function(epoch, n_epochs, coords) {
@@ -223,38 +253,72 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
     }
   }
 
-  # THREADS AND REPRODUCIBILITY. uwot has two thread pools and they behave
-  # differently:
-  #   n_threads     — the neighbour search. Parallel and deterministic.
-  #   n_sgd_threads — the optimisation. Parallel and, by default, NOT
-  #                   deterministic: the default is asynchronous Hogwild SGD,
-  #                   where the interleaving of updates decides the result, so
-  #                   the same seed gives a slightly different embedding.
-  #
-  # batch = TRUE switches the optimisation to updating coordinates at the end of
-  # each epoch instead of during it, which makes multi-threaded SGD reproducible
-  # again. That is what lets this use every core WITHOUT giving up a figure you
-  # can regenerate.
-  #
-  # It is not free: batch mode is a different optimiser, so its coordinates are
-  # not identical to a single-threaded non-batch run. Serial stays the default
-  # so an existing analysis does not change under someone's feet; asking for
-  # threads is what opts into the (reproducible) batch optimiser, and the caller
-  # is told.
-  args <- list(X = expr_matrix,
-               n_neighbors = n_neighbors,
-               min_dist = min_dist,
-               n_components = n_components,
-               metric = metric,
-               n_threads = n_threads,
-               verbose = isTRUE(verbose))
+  # THREADS AND REPRODUCIBILITY. n_sgd_threads defaults to asynchronous Hogwild
+  # SGD, where the interleaving of updates decides the result — so the same seed
+  # gives a different embedding. batch = TRUE updates at the end of each epoch
+  # instead, which makes multi-threaded SGD reproducible again. Serial stays the
+  # default so an existing analysis does not change under someone's feet.
+  base_args <- list(n_neighbors = n_neighbors,
+                    min_dist = min_dist,
+                    n_components = n_components,
+                    metric = metric,
+                    init = init,
+                    n_threads = n_threads,
+                    verbose = isTRUE(verbose))
   if (n_threads > 1L) {
-    args$n_sgd_threads <- n_threads
-    args$batch <- TRUE
+    base_args$n_sgd_threads <- n_threads
+    base_args$batch <- TRUE
   }
-  if (!is.null(cb)) args$epoch_callback <- cb
+  if (!is.null(cb)) base_args$epoch_callback <- cb
 
-  do.call(uwot::umap, args)
+  subsample <- suppressWarnings(as.integer(subsample))
+  if (is.na(subsample)) subsample <- 0L
+
+  # --- the whole matrix, when it is small enough to be worth it ---------------
+  if (subsample <= 0L || subsample >= n_obs) {
+    return(do.call(uwot::umap, c(list(X = expr_matrix), base_args)))
+  }
+
+  # --- fit on a subsample, project the rest ----------------------------------
+  #
+  # Every stage above is superlinear in the number of points; the projection of
+  # an already-fitted model is not. So the expensive part is paid once on a
+  # sample big enough to describe the manifold, and the remaining millions are
+  # transformed onto it — which IS threaded and is roughly linear.
+  #
+  # This is a different estimator, not an approximation of the full run: the
+  # fitted cells get an exact embedding and the rest get an out-of-sample
+  # projection onto it. It is said out loud for that reason.
+  message("uwot: fitting on a ", subsample, "-cell subsample of ", n_obs,
+          ", then projecting the remaining ", n_obs - subsample, ".")
+  idx <- sort(sample.int(n_obs, subsample))
+  model <- do.call(uwot::umap, c(list(X = expr_matrix[idx, , drop = FALSE],
+                                      ret_model = TRUE), base_args))
+
+  coords <- matrix(NA_real_, nrow = n_obs, ncol = n_components)
+  coords[idx, ] <- model$embedding
+
+  rest <- setdiff(seq_len(n_obs), idx)
+  # Chunked so the transform reports progress and so a 7-million-row projection
+  # does not have to be resident all at once.
+  chunks <- split(rest, ceiling(seq_along(rest) / max(1L, as.integer(chunk))))
+  for (i in seq_along(chunks)) {
+    rows <- chunks[[i]]
+    coords[rows, ] <- uwot::umap_transform(
+      expr_matrix[rows, , drop = FALSE], model, n_threads = n_threads,
+      verbose = FALSE)
+    if (isTRUE(progress) && exists("emit_progress", mode = "function")) {
+      emit_progress("embed", i, length(chunks), "projecting")
+    }
+  }
+
+  # Every plot downstream indexes coordinates by row against the expression
+  # matrix, so a hole here would silently mis-colour cells rather than fail.
+  if (anyNA(coords)) {
+    stop("umap: ", sum(!stats::complete.cases(coords)), " cell(s) were left ",
+         "without coordinates by the subsample projection.", call. = FALSE)
+  }
+  coords
 }
 
 #' Calculate summary statistics for expression data grouped by cluster

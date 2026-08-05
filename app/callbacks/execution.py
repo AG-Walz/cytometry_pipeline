@@ -10,6 +10,7 @@ twice or missed.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import dash_mantine_components as dmc
@@ -17,7 +18,7 @@ from dash import Input, Output, State, callback, ctx, html, no_update
 
 from app import config
 from app.callbacks import common
-from app.services import report_cache, rscript, session_state
+from app.services import detached, report_cache, rscript, session_state
 from app.services.runner import (
     CANCELLED,
     DONE,
@@ -278,10 +279,18 @@ def register_callbacks() -> None:
         session_state.save(common.session_snapshot(form, populations))
 
         argv = rscript.run_argv(params)
-        RUNNER.start(
-            argv, cwd=str(config.REPO_ROOT), kind="run",
+        # Detached, always. A run over millions of cells is an overnight job:
+        # it has to survive the browser closing, the app being restarted and the
+        # app being redeployed. Its log goes into the run's own output directory
+        # so it can be re-read afterwards — by this app, by the next one, or by
+        # someone with tail -f. See app/services/detached.py.
+        ok, message = RUNNER.start_detached(
+            argv, cwd=str(config.REPO_ROOT),
+            output_dir=params["output_dir"], kind="run",
             meta={"output_dir": params["output_dir"]},
         )
+        if not ok:
+            return _alert(f"Could not start the run: {message}"), no_update
         return "", params["output_dir"]
 
     @callback(
@@ -292,6 +301,44 @@ def register_callbacks() -> None:
     def cancel(_clicks):
         RUNNER.cancel()
         return ""
+
+    # -- reattach ----------------------------------------------------------
+
+    @callback(
+        Output("reattach-note", "children"),
+        Output("store-results-dir", "data", allow_duplicate=True),
+        Input("poll", "n_intervals"),
+        State({"comp": "fb-input", "bid": "outparent"}, "value"),
+        prevent_initial_call=True,
+    )
+    def reattach(n_intervals, output_parent):
+        """Pick a still-running detached job back up after the app restarts.
+
+        Runs once, on the first poll. An overnight job that survives a restart
+        is only useful if the app can find it again in the morning — otherwise
+        it is a process nobody can see, writing into a directory nobody is
+        watching.
+
+        Only the newest live run is attached, and only when nothing else is
+        going, so this can never displace what the user is currently watching.
+        """
+        if n_intervals != 1 or RUNNER.busy or not (output_parent or "").strip():
+            return no_update, no_update
+
+        live = [s for s in detached.find_recent([output_parent.strip()])
+                if s.get("running")]
+        if not live:
+            return no_update, no_update
+
+        newest = live[0]
+        if not RUNNER.attach(newest["output_dir"]):
+            return no_update, no_update
+        started = time.strftime("%H:%M", time.localtime(newest["started_at"]))
+        return _alert(
+            f"Picked up a run started at {started} that is still going — "
+            f"{Path(newest['output_dir']).name}.",
+            color="blue",
+        ), newest["output_dir"]
 
     # -- poll --------------------------------------------------------------
 

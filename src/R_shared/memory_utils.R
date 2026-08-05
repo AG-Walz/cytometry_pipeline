@@ -262,11 +262,35 @@ parallel_lapply <- function(X, FUN, n_cores = 1L, ...) {
   }
   res <- parallel::mclapply(X, FUN, ..., mc.cores = min(n_cores, length(X)),
                             mc.preschedule = TRUE)
+
+  # An R-level error comes back as a try-error object and is re-raised with its
+  # own message.
   failed <- vapply(res, function(r) inherits(r, "try-error"), logical(1))
   if (any(failed)) {
     stop("a parallel worker failed: ",
          conditionMessage(attr(res[[which(failed)[1]]], "condition")),
          call. = FALSE)
+  }
+
+  # A worker killed by a SIGNAL does not. mclapply returns NULL for every
+  # element that worker was carrying, with nothing to distinguish it from a
+  # function that legitimately returned NULL — and the commonest way to be
+  # killed by a signal here is the OOM killer, on exactly the large run where
+  # forking many workers is most tempting. Silently losing a third of the plots
+  # to that is the worst outcome available, so the count is checked: mclapply
+  # always returns one element per input, so a short result or a NULL where the
+  # caller expects otherwise means a worker died.
+  if (length(res) != length(X)) {
+    stop("a parallel worker was killed (", length(res), " of ", length(X),
+         " results came back). The usual cause is the out-of-memory killer: ",
+         "each of the ", min(n_cores, length(X)), " workers needs its own ",
+         "working memory. Re-run with fewer cores.", call. = FALSE)
+  }
+  n_null <- sum(vapply(res, is.null, logical(1)))
+  if (n_null > 0L && !isTRUE(attr(FUN, "returns_null"))) {
+    stop(n_null, " of ", length(X), " parallel task(s) returned nothing, which ",
+         "is what a worker killed by a signal looks like. The usual cause is ",
+         "the out-of-memory killer. Re-run with fewer cores.", call. = FALSE)
   }
   res
 }
