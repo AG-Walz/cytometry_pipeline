@@ -371,13 +371,31 @@ get_subpop_membership <- function(gh, viable_idx, subpop_paths) {
 # match the scatter/Time exclusion regex (applied to the CHANNEL name only, so a
 # legitimate antibody whose marker string contains "FSC"/"Time" is not dropped).
 #
+# `dictionary` (channel -> marker, from channel_marker_dictionary()) fills in
+# marker names the FILE does not carry. More than half of a real cohort can ship
+# with no $PnS at all, and without this every one of those samples has zero
+# biological columns — it contributes nothing to the panel intersection and
+# takes the run down with it. `aliases` reconciles the spellings that remain.
+# Both are applied HERE, at the one point both marker paths already go through,
+# so the panel reported by list_populations mode still cannot drift from the one
+# a run uses.
+#
 # Returns list(keep = logical per column, markers = per-column marker names,
-# dropped = human-readable "channel [marker]" strings for the excluded columns).
-# Shared by extract_population_sample() and gs_common_markers() so the marker set
-# reported by list_populations mode can never drift from the one a run uses.
+# dropped = human-readable "channel [marker]" strings for the excluded columns,
+# recovered = channels whose marker name came from the dictionary).
+# Shared by extract_population_sample() and gs_common_markers().
 # -----------------------------------------------------------------------------
 select_marker_columns <- function(channels, markers,
-                                  exclude_pattern = "Time|FSC|SSC|scatter") {
+                                  exclude_pattern = "Time|FSC|SSC|scatter",
+                                  dictionary = NULL, aliases = NULL) {
+  recovered <- character(0)
+  if (!is.null(dictionary) && length(dictionary)) {
+    rec       <- recover_marker_names(channels, markers, dictionary)
+    markers   <- rec$markers
+    recovered <- rec$recovered
+  }
+  markers <- apply_marker_aliases(markers, aliases)
+
   keep <- vapply(seq_along(channels), function(i) {
     m <- markers[i]
     if (is.na(m) || m == "") return(FALSE)                    # empty marker
@@ -395,7 +413,7 @@ select_marker_columns <- function(channels, markers,
     character(0)
   }
 
-  list(keep = keep, markers = markers, dropped = dropped)
+  list(keep = keep, markers = markers, dropped = dropped, recovered = recovered)
 }
 
 # The flowFrame/cytoframe form. Reads parameters() rather than going through
@@ -403,9 +421,54 @@ select_marker_columns <- function(channels, markers,
 # for a fraction of the work, and it keeps this and gs_common_markers() on one
 # code path so the panel reported by list_populations cannot drift from the one
 # a run uses.
-marker_columns <- function(ff, exclude_pattern = "Time|FSC|SSC|scatter") {
+marker_columns <- function(ff, exclude_pattern = "Time|FSC|SSC|scatter",
+                           dictionary = NULL, aliases = NULL) {
   cm <- cf_channel_markers(ff)
-  select_marker_columns(cm$channels, cm$markers, exclude_pattern)
+  select_marker_columns(cm$channels, cm$markers, exclude_pattern,
+                        dictionary = dictionary, aliases = aliases)
+}
+
+# -----------------------------------------------------------------------------
+# Every loaded sample's channel/marker metadata, in one pass over the GatingSets.
+#
+# Metadata only — no events are read — so this is cheap even across a few
+# hundred samples, and it is what channel_marker_dictionary() needs to learn
+# what each detector carries before any sample is extracted.
+# -----------------------------------------------------------------------------
+gs_list_panels <- function(gs_list) {
+  out <- list()
+  for (w in names(gs_list)) {
+    gs <- gs_list[[w]]
+    for (s in flowWorkspace::sampleNames(gs)) {
+      cm <- cf_channel_markers(flowWorkspace::gh_pop_get_data(gs[[s]], y = "root"))
+      out[[length(out) + 1L]] <- list(workspace = w, sample = s,
+                                      channels = cm$channels,
+                                      markers = cm$markers)
+    }
+  }
+  out
+}
+
+# How many samples carry no marker name at all, and in which workspaces. This is
+# the number that explains an empty panel intersection, so it is reported before
+# anything tries to use the markers.
+format_unnamed_panel_report <- function(panels, max_show = 10L) {
+  bare <- Filter(function(p) !any(!is.na(p$markers) & nzchar(p$markers)), panels)
+  if (!length(bare)) return("")
+  by_wsp <- table(vapply(bare, function(p) p$workspace, character(1)))
+  lines <- c(sprintf(
+    "%d of %d sample(s) carry NO marker names ($PnS) in the FCS file itself.",
+    length(bare), length(panels)),
+    "Their markers are being recovered from the channel each was measured on, using",
+    "the samples that DO name theirs. Without that they would have no biological",
+    "columns at all and could not join the shared embedding.",
+    sprintf("    %-40s %d sample(s)", names(by_wsp), as.integer(by_wsp)))
+  if (length(by_wsp) > max_show) {
+    lines <- c(utils::head(lines, 4L + max_show),
+               sprintf("    ... and %d more workspace(s)",
+                       length(by_wsp) - max_show))
+  }
+  paste(lines, collapse = "\n")
 }
 
 # Channel and marker names of a cytoframe WITHOUT touching a single event.
@@ -430,14 +493,16 @@ cf_channel_markers <- function(cf) {
 # marker picker from a single workspace load.
 # -----------------------------------------------------------------------------
 gs_common_markers <- function(gs, sample_names,
-                              exclude_pattern = "Time|FSC|SSC|scatter") {
+                              exclude_pattern = "Time|FSC|SSC|scatter",
+                              dictionary = NULL, aliases = NULL) {
   per_sample <- lapply(sample_names, function(s) {
     # Metadata only: no rows are read, and no column is subset. At the root node
     # a sample is the whole FCS file, so anything that materialises exprs() here
     # is both wasteful and — since flowWorkspace 4.14 — a crash. See
     # cf_channel_markers().
     cm  <- cf_channel_markers(flowWorkspace::gh_pop_get_data(gs[[s]], y = "root"))
-    sel <- select_marker_columns(cm$channels, cm$markers, exclude_pattern)
+    sel <- select_marker_columns(cm$channels, cm$markers, exclude_pattern,
+                                 dictionary = dictionary, aliases = aliases)
     sel$markers[sel$keep]
   })
   if (length(per_sample) == 0) return(character(0))
@@ -454,13 +519,15 @@ gs_common_markers <- function(gs, sample_names,
 # -----------------------------------------------------------------------------
 extract_population_sample <- function(gh, population, subpop_paths, subpop_depths,
                                       subpop_labels, assignment = "depth",
-                                      exclude_pattern = "Time|FSC|SSC|scatter") {
+                                      exclude_pattern = "Time|FSC|SSC|scatter",
+                                      dictionary = NULL, aliases = NULL) {
   # NOTE: data is already compensated + transformed in the FlowJo working space.
   # We take exprs() AS-IS, no further transform.
   ff   <- flowWorkspace::gh_pop_get_data(gh, y = population)
   expr <- flowCore::exprs(ff)
 
-  sel     <- marker_columns(ff, exclude_pattern)
+  sel     <- marker_columns(ff, exclude_pattern, dictionary = dictionary,
+                            aliases = aliases)
   keep    <- sel$keep
   markers <- sel$markers
 
@@ -470,10 +537,12 @@ extract_population_sample <- function(gh, population, subpop_paths, subpop_depth
     cat("    excluded channels:", paste(sel$dropped, collapse = ", "), "\n")
   }
 
-  if (!any(keep)) {
-    stop("No biological marker columns found for a sample after excluding ",
-         "scatter/time/empty channels.")
-  }
+  # NULL, not stop(): one sample whose channels carry no marker name — and whose
+  # detectors the channel dictionary could not name either — is a sample to
+  # leave out, not a reason to abandon the other three hundred. The caller
+  # collects these and reports them together; if it turns out to be ALL of them,
+  # that is where it becomes an error.
+  if (!any(keep)) return(NULL)
 
   mtx <- expr[, keep, drop = FALSE]
   colnames(mtx) <- markers[keep]
@@ -640,7 +709,11 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              output_formats = list(pdf = FALSE, png = FALSE, svg = TRUE),
                              list_populations = FALSE,
                              allow_missing_samples = FALSE,
-                             population_map = NULL) {
+                             population_map = NULL,
+                             match_mode = "content",
+                             marker_aliases = NULL,
+                             recover_markers = TRUE,
+                             report_json = NULL) {
   require(CytoML)
   require(flowWorkspace)
   require(flowCore)
@@ -659,6 +732,11 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     stop("subpop_mode must be one of: ",
          paste(VALID_SUBPOP_MODE, collapse = ", "),
          " (got '", subpop_mode, "').")
+  }
+  VALID_MATCH_MODE <- c("content", "strict")
+  if (!match_mode %in% VALID_MATCH_MODE) {
+    stop("match_mode must be one of: ", paste(VALID_MATCH_MODE, collapse = ", "),
+         " (got '", match_mode, "').")
   }
 
   group <- as.character(group)
@@ -682,10 +760,12 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   cat("FCS files indexed: ", length(fcs_index), " distinct name(s) under ",
       fcs_dir, "\n", sep = "")
 
-  cat("Resolving ", n_wsp, " workspace(s) (group = \"", group, "\") ...\n",
-      sep = "")
+  cat("Resolving ", n_wsp, " workspace(s) (group = \"", group, "\", matching = \"",
+      match_mode, "\") ...\n", sep = "")
   resolved <- resolve_workspace_specs(wsp_paths, wsp_names, fcs_index, group,
-                                      allow_missing = allow_missing_samples)
+                                      allow_missing = allow_missing_samples,
+                                      match_mode = match_mode,
+                                      fcs_root = fcs_dir)
   report   <- format_resolution_report(resolved$problems, fcs_root = fcs_dir)
   if (nzchar(report)) {
     # The report is written out BEFORE stop(), not passed to it. R truncates the
@@ -707,18 +787,18 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   if (nzchar(dropped_report)) {
     cat("\nWARNING: ", dropped_report, "\n", sep = "")
   }
+  # What "content" mode has NOT decided yet. Said before the build so a long
+  # load is not silent about the samples it is still hoping to pair, and phrased
+  # as pending rather than lost — the load records below are what settle it.
+  deferred_report <- format_deferred_report(resolved$deferred)
+  if (nzchar(deferred_report)) {
+    cat("\n", deferred_report, "\n", sep = "")
+  }
   if (!length(specs)) {
     stop("every workspace was dropped: not one FCS file named by any of the ",
          n_wsp, " workspace(s) was found under ", fcs_dir,
          ". This is a wrong --fcs_dir, not a gap in the data.", call. = FALSE)
   }
-
-  # What DID work, stated as plainly as what did not. Without this the log only
-  # ever names failures, and a reader cannot tell a run that lost two controls
-  # from one that lost half the study.
-  n_samples <- sum(vapply(specs, function(s) nrow(s$files), integer(1)))
-  cat(sprintf("\nGOING INTO THE UMAP: %d of %d workspace(s), %d sample(s).\n",
-              length(specs), n_wsp, n_samples))
 
   # Overlapping workspaces double-count cells rather than failing, so this is
   # said loudly and early, before the slow part.
@@ -735,17 +815,24 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # workspace CytoML refuses is a workspace whose data is unusable here.
   gs_list <- list()
   build_failed <- list()
+  load_records <- list()
   for (label in names(specs)) {
     spec <- specs[[label]]
-    cat(sprintf("\nBuilding GatingSet for '%s' — %s, %d sample(s)\n",
-                label, describe_group(spec), nrow(spec$files)))
+    cat(sprintf("\nBuilding GatingSet for '%s' — %s, %d listed sample(s)\n",
+                label, describe_group(spec), length(spec$listed)))
     gs <- tryCatch(build_workspace_gatingset(spec),
                    error = function(e) {
                      if (!allow_missing_samples) stop(e)
                      build_failed[[label]] <<- conditionMessage(e)
                      NULL
                    })
-    if (!is.null(gs)) gs_list[[label]] <- gs
+    if (!is.null(gs)) {
+      gs_list[[label]] <- gs
+      # The only place that knows what ARRIVED rather than what was asked for.
+      # Every count from here on is taken from these records.
+      load_records[[label]] <- workspace_load_record(
+        spec, flowWorkspace::sampleNames(gs))
+    }
   }
   if (length(build_failed)) {
     cat("\nWARNING: ", length(build_failed),
@@ -758,6 +845,80 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   }
   if (!length(gs_list)) {
     stop("no workspace could be loaded; see the failures above.", call. = FALSE)
+  }
+
+  # What DID work, stated as plainly as what did not, and counted from the
+  # GatingSets themselves. Counting the RESOLVED files here instead — as this
+  # used to — understates a run by every sample CytoML paired by content: on a
+  # renamed cohort that was the difference between a reported 26 and an actual
+  # 311, with the headline claiming the smaller number.
+  n_samples <- sum(vapply(load_records, function(r) r$n_loaded, integer(1)))
+  cat(sprintf("\nGOING INTO THE UMAP: %d of %d workspace(s), %d sample(s).\n",
+              length(gs_list), n_wsp, n_samples))
+  routes_line <- format_match_routes(load_records)
+  if (nzchar(routes_line)) cat(routes_line, "\n", sep = "")
+  records_report <- format_load_records(load_records)
+  if (nzchar(records_report)) cat("\n", records_report, "\n", sep = "")
+
+  # --- 1c. Reconcile the marker panels. --------------------------------------
+  # Done once, over every loaded sample's channel metadata, BEFORE anything is
+  # extracted — so the panel the run uses and the panel list_populations reports
+  # are built from exactly the same dictionary.
+  marker_alias_map <- parse_marker_aliases(marker_aliases)
+  panels <- gs_list_panels(gs_list)
+  unnamed_report <- format_unnamed_panel_report(panels)
+  if (nzchar(unnamed_report)) cat("\n", unnamed_report, "\n", sep = "")
+
+  channel_dict <- if (isTRUE(recover_markers)) {
+    channel_marker_dictionary(panels, aliases = marker_alias_map)
+  } else {
+    list(dictionary = character(0),
+         conflicts = data.frame(channel = character(0), names = character(0),
+                                chosen = character(0), counts = character(0),
+                                stringsAsFactors = FALSE))
+  }
+  dict_report <- format_channel_dictionary(channel_dict)
+  if (nzchar(dict_report)) cat("\n", dict_report, "\n", sep = "")
+
+  # What each workspace's panel looks like AFTER recovery and aliasing, and what
+  # is still not shared. An empty intersection is the most common reason a
+  # multi-workspace run cannot proceed, so the divergence is named rather than
+  # left to be inferred from "Common markers (0)".
+  panel_by_wsp <- lapply(split(panels, vapply(panels, function(p) p$workspace,
+                                             character(1))),
+    function(ps) {
+      unique(unlist(lapply(ps, function(p) {
+        sel <- select_marker_columns(p$channels, p$markers,
+                                     dictionary = channel_dict$dictionary,
+                                     aliases = marker_alias_map)
+        sel$markers[sel$keep]
+      }), use.names = FALSE))
+    })
+  panel_cmp <- compare_marker_sets(panel_by_wsp)
+  if (length(panel_cmp$not_common)) {
+    cat(sprintf("\n%d marker(s) are NOT shared by every workspace and cannot enter a joint UMAP:\n",
+                length(panel_cmp$not_common)))
+    for (m in panel_cmp$not_common) {
+      have <- colnames(panel_cmp$presence)[panel_cmp$presence[m, ]]
+      cat(sprintf("    %-16s in %d of %d: %s\n", m, length(have),
+                  ncol(panel_cmp$presence), paste(have, collapse = ", ")))
+    }
+    sugg <- suggest_marker_aliases(panel_by_wsp)
+    if (nrow(sugg)) {
+      cat("\n  Some of those look like the same marker spelled differently. Nothing is\n",
+          "  merged automatically — pass the ones you agree with as marker_aliases:\n",
+          sep = "")
+      for (i in seq_len(nrow(sugg))) {
+        cat(sprintf("    %-24s -> %-12s (%s)\n", sugg$names[i],
+                    sugg$suggested[i], sugg$confidence[i]))
+      }
+      others <- lapply(strsplit(sugg$names, ", ", fixed = TRUE), identity)
+      pairs <- unlist(lapply(seq_len(nrow(sugg)), function(i)
+        sprintf("%s=%s", setdiff(others[[i]], sugg$suggested[i]),
+                sugg$suggested[i])))
+      cat("    e.g. --marker_aliases \"", paste(pairs, collapse = ";"), "\"\n",
+          sep = "")
+    }
   }
 
   # A population map is also a workspace SELECTION: a workspace with no entry
@@ -852,13 +1013,27 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     # do not depend on which population is eventually selected. Intersected
     # across every workspace as well as every sample.
     markers_by_wsp <- lapply(names(gs_list), function(w)
-      gs_common_markers(gs_list[[w]], flowWorkspace::sampleNames(gs_list[[w]])))
+      gs_common_markers(gs_list[[w]], flowWorkspace::sampleNames(gs_list[[w]]),
+                        dictionary = channel_dict$dictionary,
+                        aliases = marker_alias_map))
+    names(markers_by_wsp) <- names(gs_list)
     common_markers <- Reduce(intersect, markers_by_wsp)
     common_markers <- markers_by_wsp[[1]][markers_by_wsp[[1]] %in% common_markers]
     cat("\nCommon markers (", length(common_markers), "):\n", sep = "")
     for (m in common_markers) cat("  ", m, "\n", sep = "")
     if (length(common_markers) == 0) {
-      cat("  (no marker common to all samples — check the panel / group)\n")
+      cat("  (no marker common to all samples — see the per-workspace panels ",
+          "below)\n", sep = "")
+    }
+
+    # Each workspace's own panel. The intersection above collapses to nothing
+    # the moment one workspace spells a marker differently, and then the only
+    # way to see WHY is to compare the panels side by side. Four-space indent,
+    # same contract as the other per-workspace blocks.
+    cat("\nMarkers by workspace (", length(markers_by_wsp), "):\n", sep = "")
+    for (w in names(markers_by_wsp)) {
+      cat(sprintf("    %s | %d marker(s)\n", w, length(markers_by_wsp[[w]])))
+      for (m in markers_by_wsp[[w]]) cat("      ", m, "\n", sep = "")
     }
 
     cat("\nSample annotations (", length(annot_cols), "):\n", sep = "")
@@ -883,11 +1058,14 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       for (p in pops_by_wsp[[w]]) cat("      ", p, "\n", sep = "")
     }
 
-    cat("\nWorkspaces resolved (", length(specs), "):\n", sep = "")
-    for (label in names(specs)) {
+    # Counted from the GatingSets, not from the resolved file list: a sample
+    # CytoML paired by content is in the analysis and has to be in the count.
+    cat("\nWorkspaces resolved (", length(gs_list), "):\n", sep = "")
+    for (label in names(gs_list)) {
       spec <- specs[[label]]
       cat(sprintf("    %s | %s | %s | %d sample(s)\n",
-                  label, spec$wsp, describe_group(spec), nrow(spec$files)))
+                  label, spec$wsp, describe_group(spec),
+                  load_records[[label]]$n_loaded))
     }
 
     divergent <- setdiff(unique(unlist(pops_by_wsp, use.names = FALSE)),
@@ -903,6 +1081,30 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     if (length(divergent) == 0 && n_wsp > 1) {
       cat("    (none — every workspace has the same gating tree)\n")
     }
+
+    # The same load, as data. Written after the prose so that a failure to write
+    # it cannot cost anyone the report they were reading. See
+    # visualization/umap_load_report.R for why this exists.
+    write_load_report(build_load_report(
+      inputs = list(wsp = wsp_path, fcs_dir = fcs_dir, group = group,
+                    match_mode = match_mode,
+                    allow_missing_samples = isTRUE(allow_missing_samples),
+                    recover_markers = isTRUE(recover_markers)),
+      workspaces_found = wsp_names,
+      load_records = load_records, specs = specs,
+      problems = resolved$problems, dropped = resolved$dropped,
+      deferred = resolved$deferred, build_failed = build_failed,
+      pops_by_wsp = pops_by_wsp, shared_pops = shared_pops,
+      markers_by_wsp = markers_by_wsp, common_markers = common_markers,
+      panel_cmp = panel_cmp,
+      suggestions = suggest_marker_aliases(panel_by_wsp),
+      channel_dict = channel_dict, samples = sample_index,
+      annotations = stats::setNames(
+        lapply(annot_cols, function(cl) unique(sample_annotations[[cl]])),
+        annot_cols),
+      unnamed_samples = sum(vapply(panels, function(p)
+        !any(!is.na(p$markers) & nzchar(p$markers)), logical(1)))
+    ), report_json)
 
     cat("\nSelect one with population = (leading '/' optional), e.g.:\n")
     if (length(shared_pops)) {
@@ -1034,6 +1236,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   per_sample_mtx    <- list()
   per_sample_subpop <- list()
   per_sample_wsp    <- character(0)
+  no_marker_samples <- character(0)
   for (w in names(gs_list)) {
     gs <- gs_list[[w]]
     if (n_wsp > 1) cat(sprintf("\n[%s]\n", w))
@@ -1045,7 +1248,16 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       res <- extract_population_sample(gs[[s]], pop_by_wsp[[w]],
                                        subpop_paths_by_wsp[[w]],
                                        subpop_depths, subpop_labels,
-                                       assignment = subpop_assignment)
+                                       assignment = subpop_assignment,
+                                       dictionary = channel_dict$dictionary,
+                                       aliases = marker_alias_map)
+      # No usable channel on this sample. Collected rather than fatal — see
+      # extract_population_sample() — and reported together below.
+      if (is.null(res)) {
+        no_marker_samples <- c(no_marker_samples, display)
+        cat(sprintf("  %s: SKIPPED — no named marker channel\n", display))
+        next
+      }
       mtx <- res$mtx
       sp  <- res$subpop
 
@@ -1068,6 +1280,23 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       per_sample_subpop[[display]] <- sp
       per_sample_wsp[display]      <- w
     }
+  }
+
+  # Samples with no usable channel at all. Said once, in full, rather than as
+  # one line lost among three hundred — these cells are not in the embedding.
+  if (length(no_marker_samples)) {
+    cat(sprintf(
+      paste0("\nWARNING: %d sample(s) are NOT in the embedding: no channel of theirs ",
+             "carries a\nmarker name, and the channel dictionary could not name one ",
+             "either. Their\ndetectors are named differently from the rest of the ",
+             "cohort:\n"),
+      length(no_marker_samples)))
+    for (s in no_marker_samples) cat("    ", s, "\n", sep = "")
+  }
+  if (!length(per_sample_mtx)) {
+    stop("no sample had a usable marker channel: every one of them is missing ",
+         "$PnS and no other sample's channels could supply the names. Check the ",
+         "panel, or pass marker_aliases.", call. = FALSE)
   }
 
   # Drop samples that contributed no cells (keeps alignment + plotting sane).

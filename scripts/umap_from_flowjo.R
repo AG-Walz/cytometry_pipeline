@@ -65,6 +65,27 @@ option_list <- list(
                             "gates.")),
   make_option("--list_populations", action = "store_true", default = FALSE,
               help = "Print the population tree (gs_get_pop_paths) and exit."),
+  make_option("--annotation_preview", type = "character", default = NULL,
+              help = paste0("Resolve --sample_metadata / --sample_pattern ",
+                            "against a list of sample names and write the ",
+                            "result to this path as JSON, then exit. Reads no ",
+                            "FCS file and opens no workspace, so it answers in ",
+                            "milliseconds — it exists so a GUI can show which ",
+                            "columns a metadata table offers and how many ",
+                            "samples it matches WITHOUT re-running a load, and ",
+                            "without a second implementation of the matching ",
+                            "rules that would drift from this one. Sample ",
+                            "names come from --preview_samples.")),
+  make_option("--preview_samples", type = "character", default = NULL,
+              help = paste0("Newline-separated file of sample display names, ",
+                            "for --annotation_preview.")),
+  make_option("--report_json", type = "character", default = NULL,
+              help = paste0("With --list_populations, also write the whole ",
+                            "load to this path as JSON: every workspace with ",
+                            "its status, sample counts, how each sample was ",
+                            "paired, its gating tree and its marker panel, ",
+                            "plus what diverges between them. This is what the ",
+                            "Dash app reads instead of parsing the text above.")),
   make_option("--group", type = "character", default = "1",
               help = paste0("FlowJo sample group to load: an index (e.g. 1) ",
                             "or a group NAME (e.g. \"All Samples\"). A name ",
@@ -80,6 +101,16 @@ option_list <- list(
                             "still fatal: the sample is not absent, it is ",
                             "unidentifiable, and guessing would put the wrong ",
                             "cells in the embedding. [default %default]")),
+  make_option("--match_mode", type = "character", default = "content",
+              help = paste0("How a workspace's samples are paired with FCS ",
+                            "files. 'content' (default): try the file NAME ",
+                            "first, then let CytoML pair the rest by the $FIL ",
+                            "keyword stored inside each file plus its event ",
+                            "count — which survives a rename on disk, the ",
+                            "usual reason a real cohort will not load. ",
+                            "'strict': a sample whose file name does not match ",
+                            "is missing, full stop (the behaviour before this ",
+                            "option existed). [default %default]")),
   make_option("--expected_samples", type = "integer", default = 0,
               help = paste0("If > 0, warn when the run does not total exactly ",
                             "this many samples across all workspaces ",
@@ -107,6 +138,23 @@ option_list <- list(
   make_option("--markers", type = "character", default = NULL,
               help = paste0("Optional comma-separated subset of marker names to ",
                             "use/plot. Default: all common non-scatter markers.")),
+  make_option("--marker_aliases", type = "character", default = NULL,
+              help = paste0("Treat differently-spelled marker names as the same ",
+                            "marker. Either inline \"INFy=IFN;TNFa=TNF\" or a ",
+                            "path to a two-column file (as written, to use). ",
+                            "Needed when workspaces disagree about spelling, ",
+                            "which makes the shared panel come back EMPTY. The ",
+                            "run prints the spellings it saw and suggests ",
+                            "pairings; nothing is ever merged on its own.")),
+  make_option("--no_recover_markers", action = "store_true", default = FALSE,
+              help = paste0("Do NOT fill in missing marker names from the ",
+                            "channel they were measured on. By default a file ",
+                            "with no $PnS borrows its marker names from the ",
+                            "files that do have them, keyed on detector — ",
+                            "without which a cohort where half the files were ",
+                            "acquired from an unfilled template has no usable ",
+                            "channels at all. Turn this off to see the panel ",
+                            "exactly as the files carry it.")),
   make_option("--subpop_mode", type = "character", default = "furthest",
               help = paste0("Colour the shared embedding by the FlowJo subgates ",
                             "found UNDER --population. One of: 'furthest' (label ",
@@ -218,6 +266,11 @@ source(file.path(shared_dir, "flowframe_utils.R")) # explore_data
 source(file.path(src_dir, "loading", "flowjo_workspace.R"))
 # Per-sample annotations (patient, timepoint, ...) from a CSV or a name regex
 source(file.path(src_dir, "loading", "sample_annotations.R"))
+# Marker-panel reconciliation: channel -> marker recovery, aliases, comparison.
+# Sourced AFTER shared_dir is set, which is what their source guards look for.
+source(file.path(src_dir, "harmonization", "panel_homogenization.R"))
+source(file.path(src_dir, "harmonization", "panel_comparison.R"))
+source(file.path(src_dir, "visualization", "umap_load_report.R"))  # build/write JSON
 source(file.path(src_dir, "visualization", "umap_from_flowjo.R"))  # umap_from_flowjo
 
 # -----------------------------------------------------------------------------
@@ -234,6 +287,25 @@ split_csv <- function(s) {
 parse_formats <- function(s) {
   parts <- trimws(strsplit(s, ",")[[1]])
   list(pdf = "pdf" %in% parts, png = "png" %in% parts, svg = "svg" %in% parts)
+}
+
+# -----------------------------------------------------------------------------
+# Annotation preview: answer and exit, before anything slow happens.
+#
+# This deliberately sits ahead of umap_from_flowjo() — it needs neither a
+# workspace nor an FCS file, only the sample NAMES, and the whole reason it
+# exists is to be fast enough to run while someone is typing a path into a form.
+# The matching itself is resolve_sample_annotations(), the same function a run
+# uses, so the preview and the run cannot disagree.
+# -----------------------------------------------------------------------------
+if (!is.null(opt$annotation_preview)) {
+  preview_annotations(
+    out_path  = opt$annotation_preview,
+    samples   = opt$preview_samples,
+    metadata  = opt$sample_metadata,
+    pattern   = opt$sample_pattern,
+    id_column = opt$sample_id_column)
+  quit(status = 0)
 }
 
 umap_from_flowjo(
@@ -263,5 +335,9 @@ umap_from_flowjo(
   output_formats   = parse_formats(opt$output_formats),
   list_populations = opt$list_populations,
   allow_missing_samples = opt$allow_missing_samples,
-  population_map   = opt$population_map
+  population_map   = opt$population_map,
+  match_mode       = opt$match_mode,
+  marker_aliases   = opt$marker_aliases,
+  recover_markers  = !opt$no_recover_markers,
+  report_json      = opt$report_json
 )

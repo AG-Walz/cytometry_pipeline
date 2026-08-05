@@ -10,7 +10,8 @@ from dash import ALL, Input, Output, State, callback, ctx, html, no_update
 
 from app import config
 from app.callbacks import common
-from app.services import annotations, fs_tree, gating, rscript, session_state
+from app.components import health
+from app.services import fs_tree, gating, rscript, session_state
 
 #: Last state written to the session file, so it is only rewritten on a change.
 _last_saved: dict | None = None
@@ -144,7 +145,13 @@ def register_callbacks() -> None:
     )
     def nav_availability(active, inspect, selected):
         active = active or 0
-        loaded = bool((inspect or {}).get("populations"))
+        # "Loaded" is "at least one workspace came in", NOT "there is a shared
+        # gate". Those differ exactly when the workspaces were gated
+        # independently — which is when the per-workspace population picker in
+        # step 2 is the thing you need, so blocking the way to it was backwards.
+        inspect = inspect or {}
+        loaded = bool(inspect.get("populations")
+                      or inspect.get("populations_by_workspace"))
         has_population = bool(selected)
         if active == 0:
             forward_blocked = not loaded
@@ -155,6 +162,70 @@ def register_callbacks() -> None:
         else:
             forward_blocked = False
         return active == 0, forward_blocked
+
+    # -- data health -------------------------------------------------------
+    #
+    # Pure rendering: the panel shows what R reported and works nothing out.
+    # See app/components/health.py.
+
+    @callback(
+        Output("health-panel", "children"),
+        Output("health-badge", "children"),
+        Input("store-inspect", "data"),
+    )
+    def fill_health(inspect):
+        return health.panel(inspect), health.badge(inspect)
+
+    @callback(
+        Output("acc-health", "value"),
+        Input("store-inspect", "data"),
+        prevent_initial_call=True,
+    )
+    def open_health_when_it_matters(inspect):
+        """Open the panel on its own only when something needs attention.
+
+        A load where every workspace came in and every panel agrees has nothing
+        in here worth reading, and popping it open each time would train people
+        to close it without looking — which is precisely when they would miss
+        the load that lost eleven workspaces.
+        """
+        report = (inspect or {}).get("report")
+        if not report:
+            return no_update
+        totals = report.get("totals") or {}
+        markers = report.get("markers") or {}
+        trouble = (
+            totals.get("workspaces_loaded") != totals.get("workspaces_found")
+            or not markers.get("common")
+            or bool(markers.get("not_common"))
+        )
+        return "health" if trouble else None
+
+    @callback(
+        Output("in-marker-aliases", "value"),
+        Input({"comp": "alias-suggestions"}, "value"),
+        State("in-marker-aliases", "value"),
+        prevent_initial_call=True,
+    )
+    def apply_alias_suggestions(picked, current):
+        """Fold the ticked suggestions into the alias field.
+
+        Merged rather than replaced, and de-duplicated on the left-hand side, so
+        an alias typed by hand is not thrown away by ticking a box — and so
+        ticking two suggestions that name the same spelling cannot produce a map
+        R will reject as a duplicate.
+        """
+        chosen: list[str] = []
+        for group in picked or []:
+            for value in group or []:
+                chosen.extend(v for v in value.split(";") if v)
+
+        merged: dict[str, str] = {}
+        for pair in [p for p in (current or "").split(";") if p] + chosen:
+            written, _, used = pair.partition("=")
+            if written.strip() and used.strip():
+                merged[written.strip()] = used.strip()
+        return rscript.alias_string(merged)
 
     # -- gating tree -------------------------------------------------------
 
@@ -196,8 +267,11 @@ def register_callbacks() -> None:
             if wsp not in by_wsp:
                 wsp = next(iter(by_wsp))
             populations = by_wsp.get(wsp) or []
+            gate_labels = (inspect.get("gate_labels_by_workspace")
+                           or {}).get(wsp) or {}
         else:
             populations = inspect.get("populations") or []
+            gate_labels = inspect.get("population_labels") or {}
 
         if not populations:
             return (
@@ -545,7 +619,7 @@ def register_callbacks() -> None:
         rate shown instantly instead of after a workspace load.
         """
         samples = (inspect or {}).get("samples") or []
-        columns, preview = annotations.describe(
+        columns, preview = rscript.describe_annotations(
             (metadata or "").strip(), (pattern or "").strip(), samples)
 
         kept = [c for c in (current or []) if c in set(columns)]

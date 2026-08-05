@@ -135,6 +135,95 @@ def _step_data(state: dict) -> list:
                                     ),
                                     checked=state["allow_missing_samples"],
                                 ),
+                                dmc.Space(h=14),
+                                dmc.Divider(
+                                    label="Pairing samples with files",
+                                    labelPosition="center",
+                                ),
+                                dmc.Space(h=10),
+                                dmc.RadioGroup(
+                                    id="in-match-mode",
+                                    value=state["match_mode"],
+                                    label="How a sample is matched to its FCS file",
+                                    children=dmc.Stack(
+                                        [
+                                            dmc.Radio(
+                                                label="By content, then by name "
+                                                      "(recommended)",
+                                                value="content",
+                                            ),
+                                            dmc.Radio(
+                                                label="By file name only",
+                                                value="strict",
+                                            ),
+                                        ],
+                                        gap=4,
+                                    ),
+                                    size="sm",
+                                ),
+                                dmc.Space(h=8),
+                                dmc.Text(
+                                    "A workspace records the file name each "
+                                    "sample was gated from. Rename the files "
+                                    "afterwards and none of those names match "
+                                    "any more — which is the usual reason a "
+                                    "real cohort will not load. “By content” "
+                                    "tries the name first and then pairs the "
+                                    "rest on the $FIL keyword stored inside "
+                                    "each file plus its event count, so a "
+                                    "renamed cohort still loads. It is the "
+                                    "stricter test of the two: a name can be "
+                                    "edited to anything, the contents cannot. "
+                                    "“By file name only” is the old behaviour, "
+                                    "where a name that does not match means the "
+                                    "sample is missing.",
+                                    size="xs",
+                                    c="dimmed",
+                                ),
+                                dmc.Space(h=14),
+                                dmc.Divider(
+                                    label="Marker names",
+                                    labelPosition="center",
+                                ),
+                                dmc.Space(h=10),
+                                # Lives here, not in the Data health panel that
+                                # populates it: the panel is rendered only after
+                                # a load, and a callback reading a component
+                                # that is not mounted yet fails on every page
+                                # load. It is an input, so it belongs with the
+                                # other inputs.
+                                dmc.TextInput(
+                                    id="in-marker-aliases",
+                                    label="Marker aliases",
+                                    value=state["marker_aliases"],
+                                    description=(
+                                        "written=used, separated by ';'. Two "
+                                        "workspaces spelling one marker "
+                                        "differently (INFy / IFN) share no "
+                                        "panel at all, and no joint UMAP is "
+                                        "possible until they are reconciled. "
+                                        "Load once, then tick the pairs Data "
+                                        "health suggests and load again."
+                                    ),
+                                    placeholder="INFy=IFN;TNFa=TNF",
+                                ),
+                                dmc.Space(h=10),
+                                dmc.Switch(
+                                    id="sw-recover-markers",
+                                    label="Recover marker names from the channel",
+                                    description=(
+                                        "A file whose $PnS keywords were never "
+                                        "filled in carries no marker names at "
+                                        "all, and has no usable channels. On by "
+                                        "default: such a file borrows its "
+                                        "marker names from the files that do "
+                                        "have them, matched on the detector "
+                                        "each was measured on. Turn off to see "
+                                        "the panel exactly as the files carry "
+                                        "it."
+                                    ),
+                                    checked=state["recover_markers"],
+                                ),
                             ]
                         ),
                     ],
@@ -150,6 +239,32 @@ def _step_data(state: dict) -> list:
         ),
         dmc.Space(h=12),
         html.Div(id="inspect-feedback"),
+        dmc.Space(h=12),
+        # Collapsed by default: on a clean dataset there is nothing here worth
+        # reading, and the summary above says so. On a messy one it is the whole
+        # point of the step, which is why the feedback line points at it by name.
+        dmc.Accordion(
+            id="acc-health",
+            value=None,
+            variant="contained",
+            children=[
+                dmc.AccordionItem(
+                    value="health",
+                    children=[
+                        dmc.AccordionControl(
+                            dmc.Group(
+                                [
+                                    dmc.Text("Data health", size="sm", fw=500),
+                                    html.Div(id="health-badge"),
+                                ],
+                                gap="xs",
+                            )
+                        ),
+                        dmc.AccordionPanel(html.Div(id="health-panel")),
+                    ],
+                )
+            ],
+        ),
     ]
 
 

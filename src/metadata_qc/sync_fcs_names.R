@@ -56,6 +56,13 @@ FCS_NAME_LIKE_KEYWORDS <- c("$FIL", "FILENAME", "GUID", "$SRC", "TUBE NAME",
 # convention FlowJo uses for its own export provenance (ORIGINALGUID).
 FCS_ORIGINAL_NAME_KEYWORD <- "ORIGINALFIL"
 
+# Which probe column holds the CURRENT value of each keyword the planner writes.
+# Used to print "old -> new" per keyword in the change list: a keyword not
+# listed here simply shows no old value rather than guessing at one.
+.SYNC_KEYWORD_COLUMN <- list(
+  "$FIL" = "fil", "GUID" = "guid", "$SRC" = "src", "TUBE NAME" = "tube",
+  "FILENAME" = "filename_kw", "ORIGINALFIL" = "originalfil")
+
 # The keywords a cohort is usually compared on. Ordering for the keyword table,
 # and the subset shown before "show every keyword" is switched on.
 FCS_IDENTITY_KEYWORDS <- c("$FIL", FCS_ORIGINAL_NAME_KEYWORD, "GUID", "$SRC",
@@ -478,6 +485,108 @@ revert_from_ledger <- function(ledger_path, run_id = NULL, verbose = TRUE) {
   out
 }
 
+# -----------------------------------------------------------------------------
+# Would this sync break the FlowJo workspaces that read these files?
+#
+# The tool's whole job is to make $FIL agree with the file name on disk. That is
+# right when FlowJo is showing a column of identical sample labels. It is
+# CATASTROPHIC in the other direction, and the two look identical from inside
+# this script:
+#
+#   A cohort was gated, THEN renamed on disk. The workspaces still ask for the
+#   old names. Nothing matches by name any more — but $FIL still holds the old
+#   names, and that is the one thing still pairing each sample to its gates
+#   (CytoML's greedy_match). Overwriting $FIL with the new disk names destroys
+#   the last copy of that link, and the UMAP silently drops from 311 samples to
+#   26 with no error anywhere.
+#
+# So this counts rather than guesses: how many current $FIL values does a
+# workspace refer to, and how many would the NEW values refer to? A sync that
+# lowers that number is removing matches, and is refused by default.
+#
+# Returns list(status, before, after, n_workspaces, message). `status` is one of
+# "ok" (nothing to say), "none" (no workspace found to check against) or
+# "regression".
+# -----------------------------------------------------------------------------
+check_workspace_match <- function(plan, wsp_paths) {
+  none <- list(status = "none", before = 0L, after = 0L,
+               n_workspaces = length(wsp_paths), message = "")
+  if (!length(wsp_paths)) return(none)
+  referenced <- wsp_referenced_names(wsp_paths)
+  if (!length(referenced)) return(none)
+
+  # The value $FIL holds now, and the value this run would give it. A file the
+  # plan does not touch keeps what it has, and counts on both sides.
+  new_fil <- vapply(seq_len(nrow(plan)), function(i) {
+    s <- plan$sets[[i]]
+    if (!is.null(s) && "$FIL" %in% names(s)) unname(s[["$FIL"]])
+    else plan$fil[i]
+  }, character(1))
+
+  before <- sum(tolower(plan$fil) %in% referenced, na.rm = TRUE)
+  after  <- sum(tolower(new_fil)  %in% referenced, na.rm = TRUE)
+  if (after >= before) {
+    return(list(status = "ok", before = before, after = after,
+                n_workspaces = length(wsp_paths), message = ""))
+  }
+
+  msg <- paste(c(
+    sprintf("THIS SYNC WOULD COST %d FLOWJO SAMPLE MATCH(ES).", before - after),
+    "",
+    sprintf("%d workspace(s) nearby refer to these files. Right now %d file(s) carry a",
+            length(wsp_paths), before),
+    sprintf("$FIL that a workspace asks for; after this sync only %d would.", after),
+    "",
+    "Giving these files longer, unique, consistently-formatted names is a reasonable",
+    "thing to want. The catch is that $FIL is not just a label: when the name on disk",
+    "no longer matches what a workspace asks for, $FIL is what CytoML falls back to",
+    "in order to pair each sample with its gates. Overwrite it and that pairing is",
+    "gone — with no error anywhere. The UMAP simply comes out with fewer samples.",
+    "",
+    "Three ways forward, in the order they are usually wanted:",
+    "",
+    "  1. Put the informative name in a DIFFERENT keyword and leave $FIL alone.",
+    "     This is the only option that costs nothing:",
+    "       --set '$SRC={name}'          (or any keyword you like)",
+    "     The UMAP tool does not need the rename — it already pairs these files",
+    "     correctly as they are.",
+    "",
+    "  2. Rename copies, not the originals:",
+    "       --apply --output_dir <somewhere else>",
+    "     The workspaces keep working against the originals.",
+    "",
+    "  3. Go ahead anyway:",
+    "       --allow workspace_match",
+    sprintf("     The old $FIL is preserved in %s, so --revert can put it back,",
+            FCS_ORIGINAL_NAME_KEYWORD),
+    "     but FlowJo and CytoML will not read that keyword — only $FIL.",
+    "",
+    "Nothing was written."), collapse = "\n")
+
+  list(status = "regression", before = before, after = after,
+       n_workspaces = length(wsp_paths), message = msg)
+}
+
+# Workspaces worth checking against: under the FCS folder, and — because a study
+# almost always keeps them in a SIBLING folder (wsp/ next to FCS/) rather than
+# among the data — one level up as well. Explicit `extra` paths win over both.
+find_nearby_workspaces <- function(fcs_dir, extra = character(),
+                                   recursive = TRUE) {
+  if (length(extra)) {
+    hits <- unlist(lapply(extra, function(p) {
+      if (dir.exists(p)) list.files(p, pattern = "\\.wsp$", recursive = TRUE,
+                                    full.names = TRUE, ignore.case = TRUE)
+      else if (file.exists(p)) p else character(0)
+    }), use.names = FALSE)
+    return(unique(hits))
+  }
+  roots <- unique(c(fcs_dir, dirname(fcs_dir)))
+  hits <- unlist(lapply(roots, function(r)
+    list.files(r, pattern = "\\.wsp$", recursive = recursive,
+               full.names = TRUE, ignore.case = TRUE)), use.names = FALSE)
+  unique(hits)
+}
+
 #' The census, as text.
 format_probe_report <- function(probe, plan = NULL, collisions = NULL,
                                 workspaces = character()) {
@@ -622,7 +731,13 @@ format_sync_report <- function(results) {
 #'   long-format CSV. Read-only, and done before any write, so it also works
 #'   with probe_only.
 #' @param write_original Preserve the replaced $FIL in ORIGINALFIL (write-once).
-#' @return invisible list(probe, plan, collisions, results, report).
+#' @param wsp FlowJo workspaces (files or folders) to check the sync against.
+#'   Default: any .wsp under the FCS folder or its parent, which is where a
+#'   study normally keeps them. See check_workspace_match() — a sync that would
+#'   cost the workspaces their $FIL matches is refused unless
+#'   `allow = "workspace_match"`.
+#' @return invisible list(probe, plan, collisions, workspace_match, results,
+#'   report).
 sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
                            output_dir = NULL, also = character(),
                            set = character(), unset = character(),
@@ -632,6 +747,7 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
                            revert = FALSE, allow = character(),
                            ledger = "fcs_name_sync_ledger.csv",
                            keyword_table = NULL, write_original = TRUE,
+                           wsp = character(),
                            n_list = 3L, verbose = TRUE) {
   guid <- match.arg(guid)
   if (!dir.exists(fcs_dir)) {
@@ -718,12 +834,28 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
   workspaces <- list.files(fcs_dir, pattern = "\\.(wsp|jo)$", recursive = TRUE,
                            ignore.case = TRUE)
 
+  # Does anything read these files by $FIL? Checked on EVERY mode, census and
+  # dry run included, because the answer is the thing someone needs before they
+  # decide to apply — not after.
+  wsp_paths <- find_nearby_workspaces(fcs_dir, extra = wsp,
+                                      recursive = recursive)
+  wsp_check <- check_workspace_match(plan, wsp_paths)
+
   report <- format_probe_report(probe, plan, collisions, workspaces)
-  if (verbose) cat(report, "\n", sep = "")
+  if (verbose) {
+    cat(report, "\n", sep = "")
+    if (identical(wsp_check$status, "regression")) {
+      cat("\n", wsp_check$message, "\n", sep = "")
+    } else if (identical(wsp_check$status, "ok") && wsp_check$before > 0) {
+      cat(sprintf(
+        "\n%d nearby workspace(s) match %d file(s) by $FIL; this sync keeps %d of them.\n",
+        wsp_check$n_workspaces, wsp_check$before, wsp_check$after))
+    }
+  }
 
   out <- list(probe = probe, plan = plan, collisions = collisions,
-              workspaces = workspaces, results = list(), report = report,
-              ledger = ledger_path)
+              workspaces = workspaces, workspace_match = wsp_check,
+              results = list(), report = report, ledger = ledger_path)
 
   if (probe_only) return(invisible(out))
 
@@ -731,6 +863,15 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
     stop(length(collisions$exact), " group(s) of files would still share a name ",
          "after the sync. Nothing was written. See the report above.",
          call. = FALSE)
+  }
+
+  # Refused only when it would actually WRITE. A dry run has already printed the
+  # warning above, which is exactly when it is most useful to read it.
+  if (apply && identical(wsp_check$status, "regression") &&
+      !("workspace_match" %in% allow)) {
+    stop("this sync would break ", wsp_check$before - wsp_check$after,
+         " FlowJo sample match(es). Nothing was written. See the report above, ",
+         "and use --allow workspace_match to override.", call. = FALSE)
   }
 
   # --- the change list -------------------------------------------------------
@@ -779,6 +920,20 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
     if (verbose) {
       cat(sprintf("  %-9s %-9s %s\n", r$status,
                   if (is.na(r$strategy)) "" else r$strategy, plan$rel[i]))
+      # The VALUES, not just the file name. "ok rewrite <file>" tells you a
+      # write is planned but not what it would write, which is the one thing you
+      # need in order to approve it — and $FIL is exactly the keyword where
+      # being wrong is expensive. Only changed keywords are shown, so a file
+      # already in sync stays a single line.
+      for (k in names(plan$sets[[i]])) {
+        new <- plan$sets[[i]][[k]]
+        col <- .SYNC_KEYWORD_COLUMN[[k]]
+        old <- if (is.null(col)) NA_character_ else plan[[col]][i]
+        if (!is.na(old) && identical(old, new)) next
+        cat(sprintf("              %-12s %s -> %s\n", k,
+                    if (is.na(old)) "<absent>" else sprintf("\"%s\"", old),
+                    sprintf("\"%s\"", new)))
+      }
     }
   }
   out$results <- results

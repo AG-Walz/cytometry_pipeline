@@ -358,6 +358,66 @@ wsp_recorded_files <- function(wsp_path) {
 }
 
 # -----------------------------------------------------------------------------
+# A readable label for one gate path.
+#
+# FlowJo lets a gate be named with nothing but spaces, and real workspaces
+# contain them — two siblings called " " and "  " sit under "Live cells" in the
+# study this was written for. Rendered verbatim they are invisible rows in a
+# tree: impossible to see, impossible to tell apart, and impossible to click on
+# with any confidence about which one you got.
+#
+# The PATH is never changed — it is what --population has to resolve against, so
+# it stays byte-for-byte what the workspace said. Only the label shown to a
+# human is substituted, and it states the width so two blank siblings remain
+# distinguishable.
+# -----------------------------------------------------------------------------
+gate_display_label <- function(path) {
+  vapply(path, function(p) {
+    leaf <- sub(".*/", "", p)
+    if (nzchar(trimws(leaf))) return(leaf)
+    n <- nchar(leaf)
+    if (n == 0L) "(unnamed gate)"
+    else sprintf("(blank name: %d space%s)", n, if (n == 1L) "" else "s")
+  }, character(1), USE.NAMES = FALSE)
+}
+
+# -----------------------------------------------------------------------------
+# Every file name a workspace refers to, from the XML alone.
+#
+# The union of two things, because CytoML will match on either:
+#   * each <DataSet uri>'s base name — the file FlowJo opened when gating;
+#   * each sample's NAME — the editable label, which greedy_match compares
+#     against the $FIL keyword stored inside the file.
+#
+# xml2 only: no CytoML, no GatingSet, no FCS reads. That is what lets the FCS
+# name-sync tool consult it before deciding whether a rewrite is safe, without
+# dragging the cytometry stack into a keyword editor.
+#
+# Returns a character vector, lower-cased and de-duplicated, or an empty one for
+# any workspace that will not parse — a check is a nicety and must never be the
+# reason a tool refuses to run.
+# -----------------------------------------------------------------------------
+wsp_referenced_names <- function(wsp_paths) {
+  if (!requireNamespace("xml2", quietly = TRUE)) return(character(0))
+  out <- unlist(lapply(wsp_paths, function(p) {
+    tryCatch({
+      doc <- xml2::read_xml(p)
+      uris <- xml2::xml_attr(xml2::xml_find_all(doc, "//DataSet"), "uri")
+      uris <- uris[!is.na(uris)]
+      base <- if (length(uris))
+        path_basename(vapply(uris, utils::URLdecode, character(1),
+                             USE.NAMES = FALSE)) else character(0)
+      # Sample labels live on the <SampleNode> under each <Sample>; the
+      # top-level node is the sample, deeper ones are gates.
+      nodes <- xml2::xml_attr(
+        xml2::xml_find_all(doc, "//Sample/SampleNode"), "name")
+      c(base, nodes[!is.na(nodes)])
+    }, error = function(e) character(0))
+  }), use.names = FALSE)
+  unique(tolower(out[nzchar(out)]))
+}
+
+# -----------------------------------------------------------------------------
 # Resolve --group against one workspace. `group` is a character string holding
 # EITHER an integer index (the original meaning, unchanged) OR a group name.
 #
@@ -441,19 +501,52 @@ describe_group <- function(spec) {
 #   * A workspace that fails to OPEN, or a bad --group, stays fatal: that is a
 #     broken input, not a gap in the data.
 #
+# `match_mode` decides what a FILE NAME is worth:
+#
+#   "strict"  — the original contract, above. A name that does not resolve is
+#               the end of the matter for that sample.
+#   "content" — a name that does not resolve is not a verdict. The workspace is
+#               handed to CytoML anyway, with the FCS ROOT as its search path,
+#               and greedy_match pairs each sample by the $FIL keyword stored
+#               INSIDE the file plus its event count. That is a CONTENT match:
+#               it survives a rename on disk, which is the single most common
+#               reason a real cohort will not load. It is also stricter than
+#               matching names, not looser — a name can be edited to anything,
+#               while ($FIL, $TOT) has to agree with what FlowJo gated.
+#
+#               Names stay the fast path: anything they resolve is used as-is
+#               and recorded as such, so the usual case does not change. Only
+#               the leftovers are deferred to CytoML. Ambiguous names are also
+#               deferred rather than fatal here, because ambiguity is a property
+#               of the NAME and content is what decides.
+#
 # Returns list(specs = per-workspace specs, problems = per-workspace problem
-# records, dropped = per-workspace records of what `allow_missing` discarded).
+# records, dropped = per-workspace records of what `allow_missing` discarded,
+# deferred = per-workspace records of what "content" mode left to CytoML).
 # A spec carries:
-#   label, wsp, group_index, group_name, files (data.frame sampleID/name/file),
-#   dirs (the unique directories its files live in)
+#   label, wsp, group_index, group_name, files (data.frame sampleID/name/file/
+#   via), dirs (the directories to search)
 # A dropped record carries: label, wsp, samples (the dropped names), kept, total.
 # A workspace whose samples ALL go missing yields a dropped record with kept = 0
-# and no spec — it is reported as dropped, not silently absent.
+# and no spec — it is reported as dropped, not silently absent. In "content"
+# mode it yields a spec instead, because "no name matched" and "no cells are
+# there" are different claims and only CytoML can tell them apart.
+#
+# `fcs_root` is only consulted in "content" mode, where it is the search path a
+# workspace with unresolved names needs. It defaults to "" so every existing
+# caller and test keeps working unchanged.
 # -----------------------------------------------------------------------------
 resolve_workspace_specs <- function(wsp_paths, labels, fcs_index, group,
                                     open_ws = NULL, read_samples = NULL,
                                     allow_missing = FALSE,
-                                    read_recorded = NULL) {
+                                    read_recorded = NULL,
+                                    match_mode = "strict", fcs_root = "") {
+  match_mode <- match.arg(match_mode, c("strict", "content"))
+  by_content <- identical(match_mode, "content")
+  if (by_content && !nzchar(fcs_root)) {
+    stop("match_mode = \"content\" needs fcs_root: a workspace whose names do ",
+         "not resolve has no directory of its own to search.")
+  }
   if (is.null(open_ws))      open_ws      <- wsp_open
   if (is.null(read_samples)) read_samples <- function(ws, idx) wsp_sample_files(ws, idx)
   if (is.null(read_recorded)) read_recorded <- wsp_recorded_files
@@ -461,6 +554,7 @@ resolve_workspace_specs <- function(wsp_paths, labels, fcs_index, group,
   specs    <- list()
   problems <- list()
   dropped  <- list()
+  deferred <- list()
   # Built once: every workspace diagnoses against the same FCS folder.
   loose <- loose_fcs_index(fcs_index)
 
@@ -482,8 +576,13 @@ resolve_workspace_specs <- function(wsp_paths, labels, fcs_index, group,
       res <- resolve_fcs_names(smp$name, fcs_index, recorded = recorded,
                                loose_index = loose)
 
-      fatal <- length(res$ambiguous) > 0 ||
-               (length(res$missing) > 0 && !allow_missing)
+      # In "content" mode nothing about a NAME is fatal and nothing is dropped:
+      # the unresolved samples are handed to CytoML, which pairs them on $FIL +
+      # event count. Only a workspace that would not open or a bad --group
+      # (handled by the error branch below) can still fail here.
+      fatal <- !by_content &&
+               (length(res$ambiguous) > 0 ||
+                (length(res$missing) > 0 && !allow_missing))
       if (fatal) {
         return(list(problem = list(label = label, wsp = path,
                                    missing = res$missing,
@@ -492,26 +591,54 @@ resolve_workspace_specs <- function(wsp_paths, labels, fcs_index, group,
                                    total = nrow(smp))))
       }
 
+      # The group's FULL sample listing, before anything is dropped. Kept so the
+      # load record can compare what arrived against what the workspace actually
+      # asked for, rather than against the trimmed set we chose to look for.
+      listed <- smp$name
+
       out <- list()
-      if (length(res$missing)) {
+      if (by_content) {
+        unresolved <- unique(c(res$missing, names(res$ambiguous)))
+        if (length(unresolved)) {
+          out$deferred <- list(label = label, wsp = path,
+                               samples = unresolved, why = res$why,
+                               ambiguous = res$ambiguous,
+                               resolved = sum(!is.na(res$file)),
+                               total = nrow(smp))
+        }
+      } else if (length(res$missing)) {
         keep <- !is.na(res$file)
         out$dropped <- list(label = label, wsp = path,
                             samples = res$missing, why = res$why,
                             kept = sum(keep), total = length(keep))
         smp <- smp[keep, , drop = FALSE]
         res$file <- res$file[keep]
+        res$via  <- res$via[keep]
         # Nothing survived: report the workspace as dropped and emit no spec.
         if (!nrow(smp)) return(out)
       }
       smp$file <- res$file
+      # How each sample was paired, so the run can say so afterwards instead of
+      # leaving "it loaded" as the only fact. NA here means no name matched;
+      # whether that sample arrives at all is then CytoML's answer to give.
+      smp$via  <- res$via
+
+      # Which directories CytoML is pointed at. Resolved files supply their own;
+      # "content" mode adds the FCS root, because the samples whose names did
+      # not resolve could be anywhere under it — and a workspace where NOTHING
+      # resolved would otherwise have no search path at all.
+      dirs <- unique(dirname(res$file[!is.na(res$file)]))
+      if (by_content) dirs <- unique(c(dirs, fcs_root))
+
       out$spec <- list(label = label, wsp = path,
                        group_index = grp$index, group_name = grp$name,
-                       files = smp, dirs = unique(dirname(res$file)),
+                       files = smp, listed = listed, dirs = dirs,
                        # `partial` is what build_workspace_gatingset() keys on to
                        # name the samples it wants. Without it a partial spec
                        # would be handed a DIRECTORY and CytoML would go looking
                        # for the very files that were just dropped.
                        partial = !is.null(out$dropped),
+                       match_mode = match_mode,
                        groups = tbl)
       out
     }, error = function(e) {
@@ -522,12 +649,14 @@ resolve_workspace_specs <- function(wsp_paths, labels, fcs_index, group,
 
   for (i in seq_along(wsp_paths)) {
     got <- one(wsp_paths[i], labels[i])
-    if (!is.null(got$spec))    specs[[labels[i]]]    <- got$spec
-    if (!is.null(got$problem)) problems[[labels[i]]] <- got$problem
-    if (!is.null(got$dropped)) dropped[[labels[i]]]  <- got$dropped
+    if (!is.null(got$spec))     specs[[labels[i]]]    <- got$spec
+    if (!is.null(got$problem))  problems[[labels[i]]] <- got$problem
+    if (!is.null(got$dropped))  dropped[[labels[i]]]  <- got$dropped
+    if (!is.null(got$deferred)) deferred[[labels[i]]] <- got$deferred
   }
 
-  list(specs = specs, problems = problems, dropped = dropped)
+  list(specs = specs, problems = problems, dropped = dropped,
+       deferred = deferred)
 }
 
 # -----------------------------------------------------------------------------
@@ -734,7 +863,11 @@ format_shared_file_report <- function(specs, max_show = 10L) {
 
   owners <- list()
   for (spec in specs) {
-    for (f in spec$files$file) {
+    # NA in "content" mode means no NAME matched, so there is no file to
+    # attribute yet — CytoML has not been asked. Counting those would group
+    # every such sample under one "NA" key and invent an overlap that is really
+    # just "not looked up".
+    for (f in spec$files$file[!is.na(spec$files$file)]) {
       owners[[f]] <- c(owners[[f]], spec$label)
     }
   }
@@ -815,31 +948,180 @@ build_workspace_gatingset <- function(spec) {
     cat(sprintf("    %s: FCS files span %d directories; searching under %s\n",
                 spec$label, length(spec$dirs), root))
   }
-  gs <- wsp_to_gatingset(ws, group = spec$group_index, path = root,
-                         greedy_match = TRUE)
+  wsp_to_gatingset(ws, group = spec$group_index, path = root,
+                   greedy_match = TRUE)
+}
 
-  # Which of the samples we resolved did CytoML actually load? Reported BY NAME,
-  # because "15 listed, 7 loaded" tells the person whose data it is nothing they
-  # can act on. CytoML keys a sample on its name AND its event count, so the
-  # usual cause of a name we resolved not arriving is a DIFFERENT acquisition
-  # sitting under the expected file name.
-  loaded_raw <- flowWorkspace::sampleNames(gs)
+# -----------------------------------------------------------------------------
+# What a build actually produced, as data.
+#
+# Everything upstream of this describes what we ASKED for. This is the only
+# place that knows what ARRIVED, and the two are routinely different — so the
+# run's headline counts are taken from here and nowhere else.
+#
+# Three outcomes are recorded, because each says something different:
+#
+#   rejected — the workspace listed the sample and it did not arrive. CytoML
+#              keys a sample on its name AND its event count, so a file of the
+#              right name with the wrong count is a different acquisition and is
+#              refused rather than used. Those cells are NOT in the analysis.
+#   rescued  — we could not find a file of that NAME and had written the sample
+#              off, and CytoML loaded it anyway by content. The cells ARE in the
+#              analysis. This is the measure of what content matching is worth,
+#              and in "strict" mode it is the measure of how wrong the run's own
+#              dropped-sample report was.
+#   unlisted — CytoML loaded a sample the group listing never mentioned at all.
+#              Rare, and a real signal: fj_ws_get_samples(group_id=) and
+#              flowjo_to_gatingset(name=) index groups independently, so this is
+#              what a disagreement about which group is "group N" looks like.
+#
+# `routes` counts how each loaded sample was paired, so "content" mode can show
+# what it bought: name / recorded (the file name in the workspace XML) /
+# content (CytoML's $FIL + event-count match).
+#
+# Pure over character vectors — `loaded_raw` is flowWorkspace::sampleNames(gs) —
+# so it is testable without the cytometry stack.
+# -----------------------------------------------------------------------------
+workspace_load_record <- function(spec, loaded_raw) {
   # Sample names come back as "<name>_<$TOT>"; compare on the name part.
   loaded <- sub("_[0-9]+$", "", loaded_raw)
-  wanted <- spec$files$name
-  absent <- setdiff(wanted, loaded)
-  if (length(absent)) {
-    warning(sprintf(paste0(
-      "Workspace '%s': %d of %d resolved sample(s) were REJECTED by CytoML and ",
-      "are not in the analysis:\n  %s\n",
-      "CytoML matches a sample on its name AND its event count. A file of the ",
-      "right name whose event count differs is a different acquisition, so it ",
-      "is refused rather than used. Check whether an older export sits under ",
-      "these names in the FCS folder."),
-      spec$label, length(absent), length(wanted),
-      paste(absent, collapse = "\n  ")), call. = FALSE)
+  sought <- spec$files$name
+  # `listed` is the group's full sample list; older specs predate it and can
+  # only offer the sought set, which makes "rescued" empty rather than wrong.
+  listed <- if (is.null(spec$listed)) sought else spec$listed
+  via    <- if (is.null(spec$files$via)) rep(NA_character_, length(sought))
+            else spec$files$via
+
+  # A sample no name matched can only have been paired by content; a sample we
+  # did look up is credited to whichever lookup won.
+  route_of <- function(nm) {
+    i <- match(nm, sought)
+    if (is.na(i) || is.na(via[i])) "content" else via[i]
   }
-  gs
+  routes <- vapply(loaded, route_of, character(1), USE.NAMES = FALSE)
+
+  list(
+    label       = spec$label,
+    wsp         = spec$wsp,
+    group_index = spec$group_index,
+    group_name  = spec$group_name,
+    match_mode  = if (is.null(spec$match_mode)) "strict" else spec$match_mode,
+    n_listed    = length(listed),
+    n_sought    = length(sought),
+    n_loaded    = length(loaded),
+    loaded      = loaded,
+    rejected    = setdiff(listed, loaded),
+    # A sample no file NAME accounted for, that arrived anyway. Taken from the
+    # route rather than from set arithmetic on `sought`: in "content" mode the
+    # unresolved samples stay in the spec (with file = NA), so `sought` and
+    # `listed` are the same set there and the difference would always be empty.
+    # `unlisted` is subtracted so a sample is never reported twice under two
+    # different headings — it is the more specific finding of the two.
+    rescued     = setdiff(loaded[routes == "content"], setdiff(loaded, listed)),
+    unlisted    = setdiff(loaded, listed),
+    routes      = c(name     = sum(routes == "name"),
+                    recorded = sum(routes == "recorded"),
+                    content  = sum(routes == "content"))
+  )
+}
+
+# -----------------------------------------------------------------------------
+# The load records as a block of prose. Returns "" when every workspace loaded
+# exactly what it listed, so the caller can stay quiet in the ordinary case.
+# -----------------------------------------------------------------------------
+format_load_records <- function(records, max_show = 20L) {
+  odd <- Filter(function(r)
+    length(r$rejected) || length(r$rescued) || length(r$unlisted), records)
+  if (!length(odd)) return("")
+
+  show <- function(x) {
+    c(paste0("      ", utils::head(x, max_show)),
+      if (length(x) > max_show)
+        sprintf("      ... and %d more", length(x) - max_show))
+  }
+
+  lines <- c("WHAT ACTUALLY LOADED, sample by sample, against what each workspace listed.")
+  for (r in odd) {
+    lines <- c(lines, sprintf("  %s — listed %d, loaded %d",
+                              r$label, r$n_listed, r$n_loaded))
+    if (length(r$rescued)) {
+      lines <- c(lines, sprintf(
+        "    %d sample(s) had NO file of a matching name and loaded anyway, paired by",
+        length(r$rescued)),
+        "    the $FIL keyword inside the file plus its event count. These cells ARE in",
+        "    the analysis:",
+        show(r$rescued),
+        if (identical(r$match_mode, "strict"))
+          "    -> Strict matching reported these as lost. They were not." else NULL)
+    }
+    if (length(r$rejected)) {
+      lines <- c(lines, sprintf(
+        "    %d listed sample(s) did NOT arrive and are not in the analysis. CytoML",
+        length(r$rejected)),
+        "    matches on the sample name AND its event count, so a file of the right",
+        "    name with a different count is a different acquisition:",
+        show(r$rejected))
+    }
+    if (length(r$unlisted)) {
+      lines <- c(lines, sprintf(
+        "    %d sample(s) ARE in the analysis that this workspace's group listing never",
+        length(r$unlisted)),
+        "    mentioned, so nothing checked them against your FCS folder. The group",
+        sprintf("    accessor and the loader disagree about which group is number %d —",
+                r$group_index),
+        "    naming the group instead of numbering it usually settles it:",
+        show(r$unlisted))
+    }
+  }
+  paste(lines, collapse = "\n")
+}
+
+# -----------------------------------------------------------------------------
+# How the loaded samples were paired, across the whole run. One line, because in
+# the ordinary case it is reassurance rather than news — but on a renamed cohort
+# it is the difference between "26 samples" and "311".
+# -----------------------------------------------------------------------------
+format_match_routes <- function(records) {
+  if (!length(records)) return("")
+  total <- c(name = 0L, recorded = 0L, content = 0L)
+  for (r in records) total <- total + r$routes
+  if (sum(total) == 0L) return("")
+  parts <- c(
+    if (total[["name"]])     sprintf("%d by file name", total[["name"]]),
+    if (total[["recorded"]]) sprintf("%d by the name the workspace recorded",
+                                     total[["recorded"]]),
+    if (total[["content"]])  sprintf("%d by content ($FIL + event count)",
+                                     total[["content"]]))
+  sprintf("Samples paired: %s.", paste(parts, collapse = ", "))
+}
+
+# -----------------------------------------------------------------------------
+# Report what "content" mode left to CytoML. Returns "" when nothing was.
+#
+# This is NOT a list of losses — that is the whole point of the mode, and saying
+# "42 samples could not be found" about samples that then loaded fine would be
+# worse than saying nothing. It is stated as pending work, before the build, and
+# the load records above are what settles it afterwards.
+# -----------------------------------------------------------------------------
+format_deferred_report <- function(deferred, max_show = 10L) {
+  if (length(deferred) == 0) return("")
+  n <- sum(vapply(deferred, function(d) length(d$samples), integer(1)))
+  lines <- c(sprintf(
+    paste0("%d sample(s) in %d workspace(s) have no file of a matching NAME in your ",
+           "FCS folder."), n, length(deferred)),
+    "They are not being dropped: CytoML will try to pair each one by the $FIL keyword",
+    "stored inside the files plus the event count, which survives a rename on disk.",
+    "What actually loaded is reported once the workspaces are built.", "")
+  for (d in deferred) {
+    lines <- c(lines, sprintf("  %s — %d of %d matched by name, %d left to content",
+                              d$label, d$resolved, d$total, length(d$samples)))
+    lines <- c(lines, paste0("      ", utils::head(d$samples, max_show)))
+    if (length(d$samples) > max_show) {
+      lines <- c(lines, sprintf("      ... and %d more",
+                                length(d$samples) - max_show))
+    }
+  }
+  paste(lines, collapse = "\n")
 }
 
 # -----------------------------------------------------------------------------

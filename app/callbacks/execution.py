@@ -10,6 +10,8 @@ twice or missed.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import dash_mantine_components as dmc
 from dash import Input, Output, State, callback, html, no_update
 
@@ -38,6 +40,54 @@ def _alert(children, color="red", title=None):
     return dmc.Alert(children, color=color, title=title, variant="light")
 
 
+def _inspect_feedback(report: dict, parsed: dict):
+    """One line about the load, pointing at whatever needs attention.
+
+    Reports the load as it actually happened rather than as pass/fail: a load
+    where twenty of thirty-three workspaces came in is neither, and calling it a
+    success hides the ten that did not while calling it a failure hides the
+    twenty that did.
+    """
+    totals = report.get("totals") or {}
+    found = totals.get("workspaces_found") or 0
+    loaded = totals.get("workspaces_loaded") or 0
+    samples = totals.get("samples") or 0
+    gates = len(parsed.get("populations") or [])
+    markers = len(parsed.get("markers") or [])
+
+    if not loaded:
+        return _alert(
+            "No workspace loaded. Open Data health below — it names each one "
+            "and why."
+        )
+
+    lines = [
+        dmc.Text(f"Loaded {samples} sample(s) from {loaded} of {found} "
+                 f"workspace(s).", fw=600, size="sm"),
+    ]
+    colour = "green"
+    if loaded < found:
+        colour = "yellow"
+        lines.append(dmc.Text(
+            f"{found - loaded} workspace(s) are not in the analysis — Data "
+            f"health names each one and why.", size="xs"))
+    if not gates:
+        colour = "yellow"
+        lines.append(dmc.Text(
+            "No gate is shared by every workspace, so there is nothing to pick "
+            "in step 2. Choose the gate per workspace there instead.",
+            size="xs"))
+    if not markers:
+        colour = "yellow"
+        lines.append(dmc.Text(
+            "No marker is shared by every workspace. Data health shows which "
+            "spellings differ and can suggest aliases.", size="xs"))
+    if gates and markers and loaded == found:
+        lines.append(dmc.Text(f"{gates} shared gate(s), {markers} shared "
+                              f"marker(s). Continue to step 2.", size="xs"))
+    return _alert(dmc.Stack(lines, gap=4), color=colour)
+
+
 def register_callbacks() -> None:
     # -- start: inspect ----------------------------------------------------
 
@@ -48,9 +98,12 @@ def register_callbacks() -> None:
         State({"comp": "fb-input", "bid": "fcs"}, "value"),
         State("in-group", "value"),
         State("sw-allow-missing", "checked"),
+        State("in-match-mode", "value"),
+        State("in-marker-aliases", "value"),
         prevent_initial_call=True,
     )
-    def start_inspect(_clicks, wsp, fcs_dir, group, allow_missing):
+    def start_inspect(_clicks, wsp, fcs_dir, group, allow_missing,
+                      match_mode, marker_aliases):
         form = {"wsp": wsp, "fcs_dir": fcs_dir, "group": group}
         problems = common.validate_inspect(form)
         if problems:
@@ -64,11 +117,26 @@ def register_callbacks() -> None:
                 color="yellow",
             )
 
-        argv = rscript.inspect_argv(wsp.strip(), fcs_dir.strip(), group,
-                                    allow_missing_samples=bool(allow_missing))
+        # A fresh path per load, so a failed run cannot leave the previous
+        # report sitting there to be read as if it were this one's.
+        report_json = str(config.CACHE_DIR / "load_report.json")
+        try:
+            config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            Path(report_json).unlink(missing_ok=True)
+        except OSError as exc:
+            return _alert(f"Could not prepare the report directory: {exc}")
+
+        argv = rscript.inspect_argv(
+            wsp.strip(), fcs_dir.strip(), group,
+            allow_missing_samples=bool(allow_missing),
+            match_mode=match_mode or config.DEFAULTS["match_mode"],
+            marker_aliases=marker_aliases or "",
+            report_json=report_json,
+        )
         ok, message = RUNNER.start(
             argv, cwd=str(config.REPO_ROOT), kind="inspect",
-            meta={"wsp": wsp, "fcs_dir": fcs_dir, "group": group},
+            meta={"wsp": wsp, "fcs_dir": fcs_dir, "group": group,
+                  "report_json": report_json},
         )
         if not ok:
             return _alert(f"Could not start R: {message}")
@@ -165,20 +233,20 @@ def register_callbacks() -> None:
 
         if kind == "inspect":
             if status == DONE:
-                parsed = rscript.parse_inspect(snap["log"])
-                if not parsed["populations"]:
-                    n_wsp = len(parsed.get("workspaces") or [])
-                    feedback = _alert(
-                        "The workspaces loaded but no usable gate was "
-                        "reported — with several workspaces the tree is the "
-                        "gates they all share, so this means their gating "
-                        "trees have nothing in common. See the Log tab."
-                        if n_wsp > 1 else
-                        "The workspace loaded but no gating populations were "
-                        "reported. Check the Log tab and the sample group."
-                    )
-                else:
+                try:
+                    report = rscript.read_report(
+                        snap["meta"].get("report_json") or "")
+                except rscript.ReportError as exc:
+                    feedback = _alert(str(exc))
+                    report = None
+
+                if report is not None:
+                    parsed = rscript.inspect_from_report(report)
                     remembered = session_state.load().get("population") or ""
+                    # Stored even when nothing is usable: the health panel is
+                    # most needed exactly then, and the old behaviour — throw
+                    # the result away and print one line about the Log tab —
+                    # left the user with 862 lines of prose and no next step.
                     new_inspect = {
                         **parsed,
                         "wsp": snap["meta"].get("wsp"),
@@ -186,20 +254,7 @@ def register_callbacks() -> None:
                         "group": snap["meta"].get("group"),
                         "remembered_population": remembered,
                     }
-                    note = ""
-                    if not parsed["markers"]:
-                        note = (
-                            " No marker is common to all samples — the marker "
-                            "picker will be empty."
-                        )
-                    n_wsp = len(parsed.get("workspaces") or [])
-                    where = f" across {n_wsp} workspaces" if n_wsp > 1 else ""
-                    feedback = _alert(
-                        f"Loaded {len(parsed['samples'])} sample(s){where} and "
-                        f"{len(parsed['populations'])} gate(s)."
-                        f"{note} Continue to step 2.",
-                        color="green",
-                    )
+                    feedback = _inspect_feedback(report, parsed)
             elif status == CANCELLED:
                 feedback = _alert("Workspace load cancelled.", color="orange")
             else:

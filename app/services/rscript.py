@@ -1,22 +1,34 @@
-"""Build and parse the ``scripts/umap_from_flowjo.R`` command line.
+"""Build the ``scripts/umap_from_flowjo.R`` command line, and read what it wrote.
 
 Everything the GUI does ultimately becomes one of two invocations:
 
-* **inspect** — ``--list_populations``, which loads the workspace and prints the
-  sample list, the gating tree and the common marker panel;
+* **inspect** — ``--list_populations``, which loads the workspaces and, with
+  ``--report_json``, writes the whole load out as data;
 * **run** — the full analysis.
 
-The parser below reads the inspect output. Its block headers are a contract
-shared with ``src/visualization/umap_from_flowjo.R``; both sides carry a comment
-saying so.
+This module builds those command lines and reads the JSON back. It does not
+compute anything: every number, gate, marker and diagnosis in the report is R's,
+because R is the only side that can see a GatingSet.
+
+There used to be a ~120-line regular-expression parser here that recovered all of
+that from the run's stdout, against four block headers and three significant
+indentation levels held in sync by a comment on each side. It is gone. The R
+side writes ``--report_json`` instead — see
+``src/visualization/umap_load_report.R`` for why.
 """
 
 from __future__ import annotations
 
-import re
+import json
 import shlex
+from pathlib import Path
 
 from app import config
+
+#: Major schema version this reader understands. R writes ``schema`` into every
+#: report; a mismatch here means the two have drifted and is reported rather
+#: than papered over with ``.get()`` calls that quietly return nothing.
+REPORT_SCHEMA_MAJOR = 1
 
 
 def _base_argv(script=None) -> list[str]:
@@ -33,8 +45,11 @@ def _base_argv(script=None) -> list[str]:
 
 
 def inspect_argv(wsp: str, fcs_dir: str, group: str,
-                 allow_missing_samples: bool = False) -> list[str]:
-    """Argv that loads the workspace(s) and prints samples/populations/markers.
+                 allow_missing_samples: bool = False,
+                 match_mode: str = "content",
+                 marker_aliases: str = "",
+                 report_json: str = "") -> list[str]:
+    """Argv that loads the workspace(s) and writes the load report.
 
     ``group`` is passed through as text: the R side takes either an index or a
     sample-group *name*, which is what lets one value cover a folder of
@@ -44,6 +59,11 @@ def inspect_argv(wsp: str, fcs_dir: str, group: str,
     the R side resolves every FCS file before it will print a population tree,
     so without it a single absent file leaves the form with no populations to
     pick from and the toggle further down unreachable.
+
+    ``match_mode`` and ``marker_aliases`` are passed here too, and for the same
+    reason: both change WHICH workspaces load and WHICH markers they agree on,
+    so an inspect that omitted them would populate the form from a different
+    dataset than the run it is configuring.
     """
     argv = _base_argv() + [
         "--wsp", wsp,
@@ -53,6 +73,12 @@ def inspect_argv(wsp: str, fcs_dir: str, group: str,
     ]
     if allow_missing_samples:
         argv.append("--allow_missing_samples")
+    if match_mode and match_mode != config.DEFAULTS["match_mode"]:
+        argv.extend(["--match_mode", match_mode])
+    if (marker_aliases or "").strip():
+        argv.extend(["--marker_aliases", marker_aliases.strip()])
+    if report_json:
+        argv.extend(["--report_json", report_json])
     return argv
 
 
@@ -85,6 +111,15 @@ def run_argv(params: dict) -> list[str]:
     # A bare flag, so `add` (which appends a value) does not apply.
     if params.get("allow_missing_samples"):
         argv.append("--allow_missing_samples")
+
+    # Both of these decide WHICH data the run sees, not how it is drawn, so they
+    # are passed whenever they differ from the R default — never inferred.
+    add("--match_mode", params.get("match_mode"), config.DEFAULTS["match_mode"])
+    aliases = (params.get("marker_aliases") or "").strip()
+    if aliases:
+        argv.extend(["--marker_aliases", aliases])
+    if not params.get("recover_markers", True):
+        argv.append("--no_recover_markers")
 
     # Per-workspace populations override --population entirely on the R side, so
     # the two are never both meaningful. ';' separates pairs because a FlowJo
@@ -202,121 +237,155 @@ def command_string(argv: list[str]) -> str:
     return shlex.join(argv)
 
 
-# --- inspect output parsing --------------------------------------------------
-
-_SAMPLES_HEADER = re.compile(r"^Samples in loaded group \(\s*(\d+)\s*\):\s*$")
-_POPS_HEADER = re.compile(r"^Population tree \(\s*(\d+)\s* nodes\):\s*$")
-_MARKERS_HEADER = re.compile(r"^Common markers \(\s*(\d+)\s*\):\s*$")
-_WORKSPACES_HEADER = re.compile(r"^Workspaces resolved \(\s*(\d+)\s*\):\s*$")
-
-_SAMPLE_ITEM = re.compile(r"^  - (.+?)\s*$")
-# Not anchored on "/": gs_get_pop_paths() lists the bare "root" node first, and
-# requiring a leading slash made _collect stop on that very first line — so the
-# population list came back EMPTY for every real workspace.
-_POP_ITEM = re.compile(r"^  (\S.*?)\s*$")
-_MARKER_ITEM = re.compile(r"^  (\S.*?)\s*$")
-# Four-space indent, deliberately: it keeps the two-space item patterns above
-# from swallowing this block, which is printed after them.
-_WORKSPACE_ITEM = re.compile(r"^    (\S.*?)\s*$")
-
-_POPS_BY_WSP_HEADER = re.compile(r"^Populations by workspace \(\s*(\d+)\s*\):\s*$")
-# Inside that block the workspace rows keep the four-space indent and its gates
-# take six, which is what lets the two levels be told apart on the way back in.
-_PBW_WORKSPACE = re.compile(r"^    (\S.*?)\s*\|\s*\d+ node\(s\)\s*$")
-_PBW_GATE = re.compile(r"^      (\S.*?)\s*$")
+# --- reading the load report -------------------------------------------------
 
 
-def _collect(lines: list[str], start: int, item_re: re.Pattern) -> list[str]:
-    """Consume consecutive ``item_re`` matches starting at ``start``."""
-    out: list[str] = []
-    for line in lines[start:]:
-        m = item_re.match(line.rstrip("\n"))
-        if not m:
-            break
-        out.append(m.group(1))
-    return out
+class ReportError(Exception):
+    """The report is missing, unreadable, or of a schema we do not know."""
 
 
-def parse_inspect(stdout: str) -> dict:
-    """Extract samples, populations, markers and workspaces from inspect output.
+def read_report(path: str | Path) -> dict:
+    """Load one ``--report_json`` document.
 
-    Missing blocks come back as empty lists rather than raising: the caller
-    decides what is fatal (no populations is; an empty marker list is only a
-    warning, since the R side prints an explanatory line in that case).
-
-    With several workspaces the samples are the run-wide display labels and the
-    populations are the gates *shared by every workspace* — the only ones a run
-    can use, since the R side refuses a population it cannot resolve everywhere.
+    Raises ``ReportError`` with something a user can act on. The caller treats
+    that as "the load did not produce a usable result", which is the same thing
+    it did when the stdout parser came back with no populations — except that
+    now the reason is specific.
     """
-    lines = stdout.splitlines()
-    result: dict = {
-        "samples": [], "populations": [], "markers": [], "workspaces": [],
-        # {workspace label: its own gates}. Each workspace's FULL tree, unlike
-        # "populations", which is the intersection and collapses to a few nodes
-        # when the workspaces were gated independently.
-        "populations_by_workspace": {},
+    p = Path(path)
+    if not p.is_file():
+        raise ReportError(
+            "R did not write its load report. The workspaces may have failed "
+            "before finishing — see the Log tab."
+        )
+    try:
+        report = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReportError(f"The load report could not be read: {exc}") from exc
+
+    schema = str(report.get("schema") or "")
+    major = schema.split(".", 1)[0]
+    if major != str(REPORT_SCHEMA_MAJOR):
+        raise ReportError(
+            f"The load report is schema {schema or '(none)'}, but this app "
+            f"reads schema {REPORT_SCHEMA_MAJOR}.x. The R side and the app are "
+            f"from different versions of the repo."
+        )
+    return report
+
+
+def inspect_from_report(report: dict) -> dict:
+    """The report, reshaped into what the form's callbacks already expect.
+
+    A translation layer, deliberately: the rest of the app was written against
+    the keys the old parser produced, and changing R's vocabulary and every
+    callback in one step would make both harder to review. The report itself is
+    kept under ``"report"`` so the health panel can render the parts that have
+    no equivalent in the old shape.
+    """
+    loaded = [w for w in report.get("workspaces") or []
+              if w.get("status") == "loaded"]
+
+    return {
+        # Gates every workspace shares — the only ones --population can use.
+        "populations": [g["path"] for g in report.get("populations") or []],
+        # {path: label}, so a gate FlowJo named "  " is visible in the tree.
+        # R decides the label; see gate_display_label().
+        "population_labels": {g["path"]: g["label"]
+                              for g in report.get("populations") or []},
+        "markers": list((report.get("markers") or {}).get("common") or []),
+        "samples": [s["display"] for s in report.get("samples") or []],
+        "workspaces": [
+            {"label": w["label"], "wsp": w.get("wsp") or "",
+             "group": w.get("group") or "",
+             "samples": f"{w.get('n_loaded', 0)} sample(s)"}
+            for w in loaded
+        ],
+        "populations_by_workspace": {
+            w["label"]: [g["path"] for g in w.get("gates") or []]
+            for w in loaded
+        },
+        "gate_labels_by_workspace": {
+            w["label"]: {g["path"]: g["label"] for g in w.get("gates") or []}
+            for w in loaded
+        },
+        "markers_by_workspace": {w["label"]: list(w.get("markers") or [])
+                                 for w in loaded},
+        "annotations": report.get("annotations") or {},
+        "report": report,
     }
 
-    for i, raw in enumerate(lines):
-        line = raw.rstrip("\n")
-        if _SAMPLES_HEADER.match(line):
-            result["samples"] = _collect(lines, i + 1, _SAMPLE_ITEM)
-        elif _POPS_HEADER.match(line):
-            # The R side prints a parenthetical when no gate is shared; prose,
-            # not a gate name (same convention as the marker block).
-            result["populations"] = [
-                p for p in _collect(lines, i + 1, _POP_ITEM)
-                if not p.startswith("(")
-            ]
-        elif _MARKERS_HEADER.match(line):
-            markers = _collect(lines, i + 1, _MARKER_ITEM)
-            # The R side prints an explanatory parenthetical when the set is
-            # empty; that is prose, not a marker name.
-            result["markers"] = [m for m in markers if not m.startswith("(")]
-        elif _POPS_BY_WSP_HEADER.match(line):
-            result["populations_by_workspace"] = _collect_pops_by_workspace(
-                lines, i + 1)
-        elif _WORKSPACES_HEADER.match(line):
-            result["workspaces"] = [
-                _parse_workspace_row(row)
-                for row in _collect(lines, i + 1, _WORKSPACE_ITEM)
-            ]
-    return result
+
+def alias_string(pairs: dict) -> str:
+    """``{written: used}`` as the ``--marker_aliases`` CLI form."""
+    return ";".join(f"{k}={v}" for k, v in pairs.items() if k and v)
 
 
-def _collect_pops_by_workspace(lines: list[str], start: int) -> dict:
-    """Two-level block: a workspace row, then its gates, until neither matches."""
-    out: dict[str, list[str]] = {}
-    current: str | None = None
-    for line in lines[start:]:
-        line = line.rstrip("\n")
-        ws = _PBW_WORKSPACE.match(line)
-        if ws:
-            current = ws.group(1)
-            out[current] = []
-            continue
-        gate = _PBW_GATE.match(line)
-        if gate and current is not None:
-            out[current].append(gate.group(1))
-            continue
-        break
-    return out
+# --- annotation preview ------------------------------------------------------
 
 
-def _parse_workspace_row(row: str) -> dict:
-    """One ``label | path | group N "name" | K sample(s)`` row.
+def annotation_preview_argv(samples_path: str, out_path: str, metadata: str,
+                            pattern: str, id_column: str = "") -> list[str]:
+    """Argv for ``--annotation_preview``: no workspace, no FCS, no GatingSet."""
+    argv = _base_argv() + [
+        "--annotation_preview", out_path,
+        "--preview_samples", samples_path,
+    ]
+    if (metadata or "").strip():
+        argv.extend(["--sample_metadata", metadata.strip()])
+    elif (pattern or "").strip():
+        argv.extend(["--sample_pattern", pattern.strip()])
+    if (id_column or "").strip():
+        argv.extend(["--sample_id_column", id_column.strip()])
+    return argv
 
-    Anything unexpected degrades to a label-only entry rather than raising —
-    this block is for display, and a formatting drift should not break a load
-    that otherwise succeeded.
+
+def describe_annotations(metadata: str, pattern: str,
+                         samples: list[str]) -> tuple[list[str], dict]:
+    """``(columns, preview)`` for the current metadata/pattern settings.
+
+    Runs R synchronously — the same choice, and for the same reason, as the FCS
+    keyword table: it opens no FCS file and no workspace, so it answers in
+    milliseconds and the caller is waiting for it.
+
+    This used to be a Python reimplementation of the matching rules in
+    ``src/loading/sample_annotations.R``, which its own docstring described as a
+    mirror that R would win against if the two disagreed. Calling the real thing
+    removes the question.
     """
-    parts = [p.strip() for p in row.split("|")]
-    entry = {"label": parts[0] if parts else row, "wsp": "", "group": "",
-             "samples": ""}
-    if len(parts) >= 2:
-        entry["wsp"] = parts[1]
-    if len(parts) >= 3:
-        entry["group"] = parts[2]
-    if len(parts) >= 4:
-        entry["samples"] = parts[3]
-    return entry
+    if not (metadata or "").strip() and not (pattern or "").strip():
+        return [], {}
+
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="umap_annot_") as tmp:
+        samples_path = str(Path(tmp) / "samples.txt")
+        out_path = str(Path(tmp) / "preview.json")
+        Path(samples_path).write_text("\n".join(samples), encoding="utf-8")
+        argv = annotation_preview_argv(samples_path, out_path, metadata, pattern)
+        try:
+            proc = subprocess.run(argv, cwd=str(config.REPO_ROOT),
+                                  capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return [], {"error": f"Could not run R: {exc}"}
+        if not Path(out_path).is_file():
+            detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            return [], {"error": "R could not resolve the annotations: "
+                                 + (detail[-1] if detail else "no output")}
+        try:
+            preview = json.loads(Path(out_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return [], {"error": f"Could not read the annotation preview: {exc}"}
+
+    if preview.get("error"):
+        return [], {"error": preview["error"]}
+    columns = list(preview.get("columns") or [])
+    # The form wants a level COUNT per column; R sends the levels themselves,
+    # which is the more useful thing to have in the document.
+    preview["levels"] = {c: len(v or [])
+                         for c, v in (preview.get("levels") or {}).items()}
+    preview["unmatched"] = list(preview.get("unmatched") or [])
+    if preview.get("source"):
+        preview["source"] = f"From {preview['source']}"
+    return columns, preview
