@@ -34,6 +34,7 @@ _PROGRESS_RE = re.compile(
 PROGRESS_PHASES = {
     "load": "Building gating sets",
     "extract": "Extracting cells",
+    "embed": "Computing the embedding",
     "plot": "Drawing plots",
 }
 

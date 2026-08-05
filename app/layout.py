@@ -426,6 +426,19 @@ def _step_params(state: dict) -> list:
             description="0 = every cell",
         ),
         dmc.Space(h=12),
+        _number(
+            "in-cores",
+            "CPU cores",
+            state["n_cores"],
+            min=0,
+            step=1,
+            allowDecimal=False,
+            description=(
+                "0 = all but one. Spreads the per-file plots, which are most "
+                "of a run."
+            ),
+        ),
+        dmc.Space(h=12),
         dmc.Group(
             [
                 _number("in-neighbors", "n_neighbors", state["n_neighbors"],

@@ -169,6 +169,7 @@ def run_argv(params: dict) -> list[str]:
 
     add("--normalize", params.get("normalize"), config.DEFAULTS["normalize"])
     add("--downsample", params.get("downsample"), config.DEFAULTS["downsample"])
+    add("--n_cores", params.get("n_cores"), config.DEFAULTS["n_cores"])
     add("--n_neighbors", params.get("n_neighbors"), config.DEFAULTS["n_neighbors"])
     add("--min_dist", params.get("min_dist"), config.DEFAULTS["min_dist"])
     add("--metric", params.get("metric"), config.DEFAULTS["metric"])

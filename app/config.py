@@ -71,6 +71,9 @@ DEFAULTS: dict = {
     "subpop_select": [],
     "normalize": "none",
     "downsample": 0,
+    # Worker processes for the per-file plots, which are ~90% of a run.
+    # 0 = decide automatically (all cores but one, capped by the cgroup quota).
+    "n_cores": 0,
     "n_neighbors": 15,
     "min_dist": 0.1,
     "metric": "euclidean",

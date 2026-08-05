@@ -155,6 +155,7 @@ plot_umap_from_matrix <- function(expr_matrix, sample_labels = NULL,
                                    n_neighbors = 15,
                                    min_dist = 0.1,
                                    metric = "euclidean",
+                                   n_threads = 1L, progress = FALSE,
                                    umap_coords = NULL,
                                    output_formats = list(pdf = FALSE, png = TRUE, svg = TRUE),
                                    plot_width = 10, plot_height = 8,
@@ -189,7 +190,8 @@ plot_umap_from_matrix <- function(expr_matrix, sample_labels = NULL,
     cat("Computing UMAP on", nrow(expr_subset), "cells x",
         ncol(expr_subset), "markers...\n")
     umap_coords <- run_umap(expr_subset, n_neighbors = n_neighbors,
-                             min_dist = min_dist, metric = metric, seed = seed)
+                             min_dist = min_dist, metric = metric, seed = seed,
+                             n_threads = n_threads, progress = progress)
   } else {
     cat("Using pre-computed UMAP coordinates for", nrow(umap_coords), "cells\n")
   }

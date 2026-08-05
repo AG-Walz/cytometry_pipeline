@@ -178,3 +178,95 @@ get_available_memory_gb <- function() {
   if (is.null(mem)) return(NA_real_)
   mem["available_mb"] / 1024
 }
+
+# =============================================================================
+# CPU: how many workers a run may actually use
+# =============================================================================
+# detectCores() reports the HOST's CPUs, which is the wrong number twice over on
+# an analysis server: it ignores a cgroup CPU limit (so a container allotted two
+# cores happily forks sixteen and thrashes), and it ignores the fact that other
+# people are using the machine. Both matter here — highmem2 is shared, and the
+# app is served from a container by PBIAppLauncher.
+# =============================================================================
+
+#' The CPU quota this process is actually allowed, or NA when unlimited.
+#'
+#' cgroup v2 writes "$MAX $PERIOD" (or "max $PERIOD") to cpu.max; v1 splits it
+#' across cpu.cfs_quota_us and cpu.cfs_period_us with -1 meaning unlimited.
+#' Both are read because hosts in the wild still run either.
+.cgroup_cpu_quota <- function() {
+  v2 <- "/sys/fs/cgroup/cpu.max"
+  if (file.exists(v2)) {
+    parts <- tryCatch(strsplit(trimws(readLines(v2, warn = FALSE))[1], "\\s+")[[1]],
+                      error = function(e) NULL)
+    if (length(parts) == 2L && parts[1] != "max") {
+      q <- suppressWarnings(as.numeric(parts[1]))
+      p <- suppressWarnings(as.numeric(parts[2]))
+      if (!is.na(q) && !is.na(p) && p > 0) return(q / p)
+    }
+    return(NA_real_)
+  }
+  q_file <- "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"
+  p_file <- "/sys/fs/cgroup/cpu/cpu.cfs_period_us"
+  if (file.exists(q_file) && file.exists(p_file)) {
+    q <- suppressWarnings(as.numeric(readLines(q_file, warn = FALSE)[1]))
+    p <- suppressWarnings(as.numeric(readLines(p_file, warn = FALSE)[1]))
+    if (!is.na(q) && q > 0 && !is.na(p) && p > 0) return(q / p)
+  }
+  NA_real_
+}
+
+#' How many workers to use.
+#'
+#' @param requested 0 or NULL = decide automatically; N = use N.
+#' @return An integer >= 1.
+#'
+#' Automatic leaves one core free. On a shared host that is the difference
+#' between a run that finishes and a run everyone else notices; on a laptop it
+#' is the difference between working through it and watching a frozen cursor.
+#' An explicit N is honoured but still capped at what the cgroup allows, because
+#' asking for more workers than the quota does not buy throughput — it buys
+#' context switching.
+resolve_cores <- function(requested = 0L) {
+  detected <- tryCatch(parallel::detectCores(logical = TRUE),
+                       error = function(e) NA_integer_)
+  if (is.na(detected) || detected < 1L) detected <- 1L
+  quota <- .cgroup_cpu_quota()
+  allowed <- if (is.na(quota)) detected else max(1L, min(detected, floor(quota)))
+
+  requested <- suppressWarnings(as.integer(requested %||% 0L))
+  if (is.na(requested) || requested <= 0L) {
+    return(as.integer(max(1L, allowed - 1L)))
+  }
+  as.integer(max(1L, min(requested, allowed)))
+}
+
+#' lapply, over `n_cores` forked workers.
+#'
+#' n_cores = 1 runs plain lapply — same code path as before this existed, which
+#' is what makes "did parallelism break it?" answerable by setting one flag.
+#'
+#' mclapply returns a try-error OBJECT rather than raising, so a failure in a
+#' worker would otherwise be discovered later as a corrupt result. Every element
+#' is checked and the first failure is re-raised with its original message.
+#'
+#' Forking only: the payload here is large shared data (a coordinate frame and an
+#' expression matrix) that copy-on-write shares for free, where a socket cluster
+#' would serialise it to every worker. That does mean Linux and macOS only —
+#' this repo's stated target — and Windows falls back to serial.
+parallel_lapply <- function(X, FUN, n_cores = 1L, ...) {
+  n_cores <- as.integer(n_cores)
+  if (is.na(n_cores) || n_cores <= 1L || .Platform$OS.type != "unix" ||
+      length(X) <= 1L) {
+    return(lapply(X, FUN, ...))
+  }
+  res <- parallel::mclapply(X, FUN, ..., mc.cores = min(n_cores, length(X)),
+                            mc.preschedule = TRUE)
+  failed <- vapply(res, function(r) inherits(r, "try-error"), logical(1))
+  if (any(failed)) {
+    stop("a parallel worker failed: ",
+         conditionMessage(attr(res[[which(failed)[1]]], "condition")),
+         call. = FALSE)
+  }
+  res
+}

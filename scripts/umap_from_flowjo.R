@@ -117,6 +117,13 @@ option_list <- list(
                             "Applied before any GatingSet is built, so leaving ",
                             "one out makes the run shorter as well as smaller. ",
                             "Names are the ones --list_populations reports.")),
+  make_option("--n_cores", type = "integer", default = 0,
+              help = paste0("Worker processes for the per-file plots, which ",
+                            "are the bulk of a run (7 markers x N samples). ",
+                            "0 = decide automatically, leaving one core free; ",
+                            "1 = no parallelism. Capped at the cgroup CPU ",
+                            "quota, so asking for more than a container allows ",
+                            "does nothing. [default %default]")),
   make_option("--expected_samples", type = "integer", default = 0,
               help = paste0("If > 0, warn when the run does not total exactly ",
                             "this many samples across all workspaces ",
@@ -266,6 +273,7 @@ if (!dir.exists(shared_dir)) {
 
 source(file.path(shared_dir, "io_utils.R"))        # make_outdir
 source(file.path(shared_dir, "plot_utils.R"))      # save_plot_formats, create_safe_filename
+source(file.path(shared_dir, "memory_utils.R"))    # resolve_cores, parallel_lapply
 source(file.path(shared_dir, "stats_utils.R"))     # run_umap
 source(file.path(shared_dir, "dimred_dispatch.R")) # run_dimred (umap/tsne/dm)
 source(file.path(shared_dir, "flowframe_utils.R")) # explore_data
@@ -346,6 +354,7 @@ umap_from_flowjo(
   match_mode       = opt$match_mode,
   marker_aliases   = opt$marker_aliases,
   workspaces       = opt$workspaces,
+  n_cores          = opt$n_cores,
   recover_markers  = !opt$no_recover_markers,
   report_json      = opt$report_json
 )

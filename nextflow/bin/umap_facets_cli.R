@@ -28,13 +28,17 @@ option_list <- list(
   make_option("--point_alpha", type = "double", default = 0.6),
   make_option("--plot_width", type = "double", default = 10),
   make_option("--plot_height", type = "double", default = 8),
-  make_option("--output_formats", type = "character", default = "png")
+  make_option("--output_formats", type = "character", default = "png"),
+  # Nextflow passes task.cpus here, so the process uses exactly what the
+  # executor allocated it rather than whatever the host happens to have.
+  make_option("--n_cores", type = "integer", default = 0)
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
+source(file.path(shared_dir, "memory_utils.R"))
 source(file.path(shared_dir, "plot_utils.R"))
 source(file.path(shared_dir, "stats_utils.R"))
 source(file.path(shared_dir, "flowframe_utils.R"))
@@ -85,7 +89,8 @@ plot_flowjo_umap_facets(
   annot_cols = labels$annot_cols, population = labels$population,
   output_dir = opt$output_dir, n_workspaces = length(labels$workspaces),
   subpop_mode_tag = labels$subpop_mode_tag %||% "",
-  normalize = opt$normalize, point_size = opt$point_size,
+  normalize = opt$normalize, n_cores = resolve_cores(opt$n_cores),
+  point_size = opt$point_size,
   point_alpha = opt$point_alpha, plot_width = opt$plot_width,
   plot_height = opt$plot_height, output_formats = output_formats)
 

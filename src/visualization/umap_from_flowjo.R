@@ -1465,11 +1465,17 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              recover_markers = TRUE,
                              workspaces = NULL,
                              report_json = NULL,
-                             method = "umap") {
+                             method = "umap",
+                             n_cores = 1L) {
   require(ggplot2)
   if (!requireNamespace("viridis", quietly = TRUE)) {
     stop("Package 'viridis' is required for marker colour scales.")
   }
+
+  # Resolved ONCE, here, so every phase and every log line agrees on the number
+  # — and so "0" (decide for me) becomes a concrete count the run can report.
+  n_cores <- resolve_cores(n_cores)
+  if (n_cores > 1L) cat("Using ", n_cores, " worker(s) for plotting.\n", sep = "")
 
   ext <- extract_flowjo_population(
     wsp_path = wsp_path, fcs_dir = fcs_dir, population = population,
@@ -1523,15 +1529,25 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # matrix, and going through it means `method` can be tsne or diffusion_map
   # here without another line of code. draw_plots = FALSE because the figures
   # below are this path's own — the standard by-sample plot is not one of them.
-  cat("Computing shared ", method, " (n_neighbors=", n_neighbors,
-      ", min_dist=", min_dist, ", metric=", metric,
-      ", seed=", seed, ")...\n", sep = "")
+  cat("Computing shared ", method, " over ", nrow(combined_matrix),
+      " cells x ", ncol(combined_matrix), " markers (n_neighbors=", n_neighbors,
+      ", min_dist=", min_dist, ", metric=", metric, ", seed=", seed,
+      ", threads=", n_cores, ")...\n", sep = "")
+  if (n_cores > 1L) {
+    cat("  Threaded embedding uses uwot's batch optimiser: reproducible from ",
+        "the seed, but not identical to a 1-core run.\n", sep = "")
+  }
+  # Said BEFORE the call: the neighbour search runs before the first epoch and
+  # reports nothing, so without this the bar would sit empty through a phase
+  # that can take minutes on a few million cells.
+  emit_progress("embed", 0L, 100L, "building neighbour graph")
   dimred <- run_dimred(
     expr_matrix = combined_matrix,
     method      = method,
     output_dir  = output_dir,
     params = list(n_neighbors = n_neighbors, umap_min_dist = min_dist,
                   metric = metric, seed = seed, draw_plots = FALSE,
+                  n_threads = n_cores, progress = TRUE,
                   output_formats = output_formats,
                   plot_width = plot_width, plot_height = plot_height)
   )
@@ -1566,7 +1582,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     use_markers = use_markers, subpop_labels = subpop_labels,
     annot_cols = annot_cols, population = population,
     output_dir = output_dir, n_workspaces = length(gs_list),
-    subpop_mode_tag = subpop_mode_tag,
+    subpop_mode_tag = subpop_mode_tag, n_cores = n_cores,
     normalize = normalize, point_size = point_size,
     point_alpha = point_alpha, plot_width = plot_width,
     plot_height = plot_height, output_formats = output_formats)
@@ -1602,7 +1618,7 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
                                     subpop_labels, annot_cols, population,
                                     output_dir, n_workspaces = 1L,
                                     subpop_mode_tag = "",
-                                    normalize = "none",
+                                    normalize = "none", n_cores = 1L,
                                     point_size = 0.4, point_alpha = 0.6,
                                     plot_width = 10, plot_height = 8,
                                     output_formats = list(pdf = FALSE,
@@ -1890,9 +1906,21 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
 
     # PER FILE — subset rows by file label; SAME coordinates and the SAME colour
     # scale as the conjoint plot, so colours are directly comparable.
-    for (f in files_unique) {
+    #
+    # This is the run: 7 markers x 311 files is 2,177 of the 2,187 plots, and on
+    # the study this was written for it was 2h54m of a 3h15m run. Every
+    # iteration is independent — it reads two shared read-only objects, builds a
+    # ggplot and writes one file whose name is unique to (marker, file) — so it
+    # is spread across forked workers. Fork rather than a socket cluster because
+    # umap_df and combined_matrix are then shared copy-on-write instead of being
+    # serialised to each worker.
+    #
+    # The OUTER loop over markers stays serial: marker_limits has to be computed
+    # once per marker anyway, progress reads sensibly per marker, and 311 items
+    # is already far more parallelism than any core count here will absorb.
+    plot_one_file <- function(f) {
       rows <- which(file_labels == f)               # index-aligned subset
-      if (length(rows) == 0) next                    # nothing to plot for this file
+      if (length(rows) == 0) return(invisible(NULL)) # nothing for this file
       df_f <- umap_df[rows, , drop = FALSE]
       df_f$expr <- combined_matrix[rows, marker]    # aligned colour vector
 
@@ -1909,7 +1937,9 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
         create_safe_filename(
           paste0("umap_", pop_tag, "_marker_", marker, "_file_", f))
       )
+      invisible(NULL)
     }
+    invisible(parallel_lapply(files_unique, plot_one_file, n_cores = n_cores))
     cat("Saved marker plots for:", marker, "\n")
   }
 

@@ -26,6 +26,7 @@ process UMAP_FACETS {
         --point_alpha ${params.point_alpha} \
         --plot_width ${params.plot_width} \
         --plot_height ${params.plot_height} \
-        --output_formats ${params.output_formats}
+        --output_formats ${params.output_formats} \
+        --n_cores ${task.cpus}
     """
 }

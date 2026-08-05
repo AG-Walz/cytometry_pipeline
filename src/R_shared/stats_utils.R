@@ -204,13 +204,57 @@ run_pca <- function(expr_matrix, n_components = 2, scale = TRUE) {
 #' @param seed Random seed
 #' @return Matrix of UMAP coordinates
 run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
-                     n_components = 2, metric = "euclidean", seed = 42) {
+                     n_components = 2, metric = "euclidean", seed = 42,
+                     n_threads = 1L, progress = FALSE, verbose = FALSE) {
   set.seed(seed)
-  uwot::umap(expr_matrix,
-             n_neighbors = n_neighbors,
-             min_dist = min_dist,
-             n_components = n_components,
-             metric = metric)
+  n_threads <- max(1L, as.integer(n_threads))
+
+  # PROGRESS. uwot calls epoch_callback after every optimisation epoch, which is
+  # an exact count rather than an estimate — so the caller can report real
+  # progress through the one step that has none. The neighbour search runs
+  # BEFORE the first epoch and is not covered; on a large matrix it is a
+  # meaningful share of the time, which is why the caller announces the phase
+  # before calling in rather than waiting for epoch 1.
+  cb <- NULL
+  if (isTRUE(progress) && exists("emit_progress", mode = "function")) {
+    cb <- function(epoch, n_epochs, coords) {
+      emit_progress("embed", epoch, n_epochs, "optimising")
+      NULL
+    }
+  }
+
+  # THREADS AND REPRODUCIBILITY. uwot has two thread pools and they behave
+  # differently:
+  #   n_threads     — the neighbour search. Parallel and deterministic.
+  #   n_sgd_threads — the optimisation. Parallel and, by default, NOT
+  #                   deterministic: the default is asynchronous Hogwild SGD,
+  #                   where the interleaving of updates decides the result, so
+  #                   the same seed gives a slightly different embedding.
+  #
+  # batch = TRUE switches the optimisation to updating coordinates at the end of
+  # each epoch instead of during it, which makes multi-threaded SGD reproducible
+  # again. That is what lets this use every core WITHOUT giving up a figure you
+  # can regenerate.
+  #
+  # It is not free: batch mode is a different optimiser, so its coordinates are
+  # not identical to a single-threaded non-batch run. Serial stays the default
+  # so an existing analysis does not change under someone's feet; asking for
+  # threads is what opts into the (reproducible) batch optimiser, and the caller
+  # is told.
+  args <- list(X = expr_matrix,
+               n_neighbors = n_neighbors,
+               min_dist = min_dist,
+               n_components = n_components,
+               metric = metric,
+               n_threads = n_threads,
+               verbose = isTRUE(verbose))
+  if (n_threads > 1L) {
+    args$n_sgd_threads <- n_threads
+    args$batch <- TRUE
+  }
+  if (!is.null(cb)) args$epoch_callback <- cb
+
+  do.call(uwot::umap, args)
 }
 
 #' Calculate summary statistics for expression data grouped by cluster

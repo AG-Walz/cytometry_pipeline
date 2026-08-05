@@ -70,6 +70,8 @@ run_dimred <- function(expr_matrix, method = "umap",
         # call run_umap() directly — and keep its own copy of every other UMAP
         # option — just to choose cosine over euclidean.
         metric          = params$metric %||% "euclidean",
+        n_threads       = params$n_threads %||% 1L,
+        progress        = params$progress %||% FALSE,
         umap_coords     = params$umap_coords %||% NULL,
         output_formats  = output_formats,
         plot_width      = plot_width,
