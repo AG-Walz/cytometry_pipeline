@@ -1399,6 +1399,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     workspace_labels = wsp_labels_per_cell,
     subpop_labels_per_cell = combined_subpop,
     subpop_levels   = subpop_labels,
+    subpop_mode_tag = subpop_mode_tag,
     n_cells_per     = n_cells_per,
     sample_index    = sample_index,
     sample_annotations = sample_annotations,
@@ -1468,6 +1469,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   wsp_labels_per_cell <- ext$workspace_labels
   combined_subpop     <- ext$subpop_labels_per_cell
   subpop_labels       <- ext$subpop_levels
+  subpop_mode_tag     <- ext$subpop_mode_tag
   n_cells_per         <- ext$n_cells_per
   sample_index        <- ext$sample_index
   sample_annotations  <- ext$sample_annotations
@@ -1539,6 +1541,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     use_markers = use_markers, subpop_labels = subpop_labels,
     annot_cols = annot_cols, population = population,
     output_dir = output_dir, n_workspaces = length(gs_list),
+    subpop_mode_tag = subpop_mode_tag,
     normalize = normalize, point_size = point_size,
     point_alpha = point_alpha, plot_width = plot_width,
     plot_height = plot_height, output_formats = output_formats)
@@ -1573,6 +1576,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
 plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
                                     subpop_labels, annot_cols, population,
                                     output_dir, n_workspaces = 1L,
+                                    subpop_mode_tag = "",
                                     normalize = "none",
                                     point_size = 0.4, point_alpha = 0.6,
                                     plot_width = 10, plot_height = 8,
@@ -1585,6 +1589,19 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
   }
   stopifnot(nrow(umap_df) == nrow(combined_matrix))
   n_wsp <- n_workspaces
+
+  # umap_df already carries these, one row per cell, and they are the ONLY
+  # copy now that extraction happens in a different process: bound back to the
+  # names the plotting below uses so there is one source of truth for each and
+  # no chance of a second, unaligned vector being passed in beside the frame.
+  file_labels         <- umap_df$file
+  wsp_labels_per_cell <- umap_df$workspace
+  combined_subpop     <- umap_df$subpop
+
+  # Whether there is a subpopulation partition to colour by is a property of the
+  # gate set itself, so it is derived here rather than passed — one fewer
+  # argument that a caller could set inconsistently with the labels it supplies.
+  do_subpop <- length(subpop_labels) > 0
 
   # --- 7. Plotting. ----------------------------------------------------------
   make_outdir(output_dir)
@@ -1632,11 +1649,31 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
   # plot_height (so the coord_fixed panel matches every other plot exactly) and
   # only the WIDTH grows — by ncol legend columns — so a long, many-label legend
   # spreads sideways instead of squishing or clipping the panel.
+  # ggplot2 refuses a canvas over 50 inches. A per-sample legend reaches that on
+  # a real cohort — 311 samples with names 48 characters long want a 14-column
+  # legend about 70 inches wide — and the run died there rather than producing
+  # the figure. Past a few dozen keys the legend has stopped being readable
+  # anyway, so it is dropped and the plot says so: a figure whose colours are
+  # unlabelled is worth more than no figure, as long as it does not pretend
+  # otherwise. The other colourings (subpopulation, workspace, annotation) have
+  # few enough levels that this never triggers.
+  MAX_CANVAS_IN <- 45
   save_categorical <- function(p, basename_no_ext, legend_strings, ncol = 1L) {
+    width <- plot_width + ncol * legend_width_in(legend_strings)
+    if (width > MAX_CANVAS_IN) {
+      n_keys <- max(0L, length(legend_strings) - 1L)
+      cat(sprintf(
+        "    %s: %d legend entries would need a %.0f-inch canvas; drawing it without a legend.\n",
+        basename_no_ext, n_keys, width))
+      p <- p + theme(legend.position = "none") +
+        labs(caption = sprintf(
+          "%d levels - legend omitted, it would not fit on the canvas", n_keys))
+      width <- plot_width
+    }
     save_plot_formats(
       p,
       file.path(output_dir, basename_no_ext),
-      width   = plot_width + ncol * legend_width_in(legend_strings),
+      width   = width,
       height  = plot_height,
       formats = output_formats
     )

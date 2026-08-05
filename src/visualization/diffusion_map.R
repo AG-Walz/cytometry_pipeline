@@ -5,7 +5,17 @@
 # Diffusion map dimensionality reduction using the destiny package
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# Respect a shared_dir the caller already set — the CLI convention used by
+# nextflow/bin/*_cli.R and scripts/*.R — and only guess from the working
+# directory when there is none. The unconditional assignment this replaces
+# clobbered the caller's value, so sourcing this file from anywhere but the
+# subproject directory sent every source() below to a path that does not exist.
+# That is not hypothetical: run_dimred() source()s this file, and the FlowJo
+# UMAP run died on "/tmp/src/R_shared/io_utils.R: No such file or directory".
+# Same guard as loading/load_flowjo_wsp.R.
+if (!exists("shared_dir")) {
+  shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+}
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "plot_utils.R"))
 source(file.path(shared_dir, "stats_utils.R"))

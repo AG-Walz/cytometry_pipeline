@@ -28,14 +28,25 @@ include { PIPELINE_B } from './subworkflows/pipeline_B'
 include { PIPELINE_C } from './subworkflows/pipeline_C'
 include { PIPELINE_D } from './subworkflows/pipeline_D'
 include { PIPELINE_E } from './subworkflows/pipeline_E'
+include { PIPELINE_F } from './subworkflows/pipeline_F'
 
 // Validate required params
 def validateParams() {
     if (!params.pipeline) {
-        error "ERROR: --pipeline is required. Choose A, B, C, D, or E."
+        error "ERROR: --pipeline is required. Choose A, B, C, D, E, or F."
     }
-    if (!params.input_dir && params.pipeline != 'D') {
+    // D reads workspaces, F reads workspaces AND an FCS folder; neither takes
+    // an --input_dir, so requiring one would reject a correct invocation.
+    if (!params.input_dir && !(params.pipeline in ['D', 'F'])) {
         error "ERROR: --input_dir is required for pipeline ${params.pipeline}."
+    }
+    if (params.pipeline == 'F') {
+        if (!params.wsp) {
+            error "ERROR: --wsp is required for pipeline F (a .wsp file, or a folder of them)."
+        }
+        if (!params.fcs_dir) {
+            error "ERROR: --fcs_dir is required for pipeline F."
+        }
     }
 }
 
@@ -71,7 +82,10 @@ workflow {
         case 'E':
             PIPELINE_E()
             break
+        case 'F':
+            PIPELINE_F()
+            break
         default:
-            error "Unknown pipeline '${params.pipeline}'. Choose A, B, C, D, or E."
+            error "Unknown pipeline '${params.pipeline}'. Choose A, B, C, D, E, or F."
     }
 }
