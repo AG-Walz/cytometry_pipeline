@@ -925,6 +925,54 @@ eq("an unknown channel stays empty",
 eq("no dictionary is a no-op",
    recover_marker_names("PE-A", "", character(0))$markers, "")
 
+# --- assign_subpop_levels ----------------------------------------------------
+# One labelling per gating level, so a CD4+ cell that also fires IL-2 still
+# appears in the lineage picture instead of being renamed by its deepest gate.
+cat("\nassign_subpop_levels()\n")
+
+lab6 <- c("CD4+", "CD8+", "CD107a+", "CD4+/CD107a+", "CD8+/CD107a+")
+dep6 <- c(1L, 1L, 1L, 2L, 2L)
+#            CD4+   CD8+   CD107a+ CD4/107 CD8/107
+mem6 <- cbind(c(T,T,F,F), c(F,F,T,F), c(T,F,T,F), c(T,F,F,F), c(F,F,T,F))
+colnames(mem6) <- lab6
+lvl <- suppressMessages(assign_subpop_levels(mem6, dep6, lab6))
+
+eq("one entry per gating level", names(lvl), c("level 1", "level 2"))
+eq("level 1 uses the gates that BRANCH, not the flat ones beside them",
+   as.character(lvl[["level 1"]]), c("CD4+", "CD4+", "CD8+", NA))
+eq("level 2 labels by the leaf name, not the full relative path",
+   as.character(lvl[["level 2"]]), c("CD107a+", NA, "CD107a+", NA))
+ok("a cell in no gate at a level is NA, not a labelled class",
+   is.na(as.character(lvl[["level 1"]])[4]))
+ok("NA is not a factor level, so it stays out of the legend",
+   !any(is.na(levels(lvl[["level 1"]]))) &&
+     !("NA" %in% levels(lvl[["level 1"]])))
+
+# An explicit spec overrides the guess — the escape hatch for a workspace that
+# hangs lineage and functional gates off the same node.
+spec <- suppressMessages(assign_subpop_levels(
+  mem6, dep6, lab6, spec = list(c("CD4+", "CD8+"), c("CD107a+"))))
+eq("an explicit spec decides the levels", names(spec), c("level 1", "level 2"))
+eq("...and which gates are in level 1",
+   as.character(spec[["level 1"]]), c("CD4+", "CD4+", "CD8+", NA))
+ok("a spec naming no real gate warns rather than inventing a level",
+   inherits(tryCatch(assign_subpop_levels(mem6, dep6, lab6,
+                                          spec = list(c("NoSuchGate"))),
+                     warning = function(w) w), "warning"))
+
+# Overlapping gates at one level collapse to "(multiple)", and that is the
+# signal that the level is not a partition.
+mem_ov <- cbind(c(T, T), c(T, F), c(F, F), c(F, F), c(F, F))
+colnames(mem_ov) <- lab6
+ov <- suppressWarnings(suppressMessages(
+  assign_subpop_levels(mem_ov, dep6, lab6, spec = list(c("CD4+", "CD8+")))))
+eq("a cell in two gates at one level is '(multiple)'",
+   as.character(ov[["level 1"]])[1], .SUBPOP_MULTI)
+
+eq("no candidates means no levels",
+   length(assign_subpop_levels(matrix(nrow = 3, ncol = 0), integer(0),
+                               character(0))), 0L)
+
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
 
 # --- summary -----------------------------------------------------------------

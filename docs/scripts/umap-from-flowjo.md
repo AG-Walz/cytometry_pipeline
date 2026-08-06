@@ -353,6 +353,54 @@ Rscript scripts/umap_from_flowjo.R --subpop_select \
 
 ---
 
+## Quoting on the command line
+
+Every option is passed through your shell first, so the rule is a shell rule,
+not a rule of this script: **quote a value if it contains a space, a `;`, a
+`*`, a `(`, a `$`, or a `+`.** Nothing is harmed by quoting a value that did not
+need it, so when in doubt, quote.
+
+In practice that means:
+
+```bash
+# Spaces — the usual case. Gate paths and group names almost always have them.
+--population "Lymphocytes/Single Cells/Viable cells"
+--group "All Samples"
+
+# Semicolons — these separate entries, and an unquoted ';' ENDS THE COMMAND.
+# Without the quotes the shell runs everything after the first ';' as a
+# separate command, and the script silently receives only the first pair.
+--marker_aliases "TNF=TNFa;IFN=INFy"
+--population_map "MTB016=/Lymphocytes/Live cells;MTB023=/Lymphocytes/Viable"
+
+# Parentheses and '+' — real FlowJo workspaces contain both.
+--workspaces "MTB061_ (2),MTB074"
+--subpop_select "CD4+/IFN,CD8+/IFN"
+
+# No spaces or shell characters — quotes optional, and usually omitted.
+--n_neighbors 15
+--match_mode content
+--output_formats png,svg
+```
+
+Two things that are NOT about quoting and catch people anyway:
+
+* **Commas separate list items; do not put spaces after them.** `--markers
+  "CD4, CD8"` asks for a marker literally called `" CD8"`. Write
+  `--markers CD4,CD8`.
+* **A gate name containing a comma** cannot go in a comma-separated list. That
+  is why `--population_map` and `--marker_aliases` use `;` between entries — a
+  FlowJo gate may contain a comma but, in practice, never a semicolon.
+
+Inside a params YAML (`config/pipeline_F_params.yaml`) there is no shell, so
+these rules do not apply — quote only what YAML itself requires:
+
+```yaml
+population: Lymphocytes/Single Cells/Viable cells   # no quotes needed
+marker_aliases: "TNF=TNFa;IFN=INFy"                 # quoted: starts a YAML flow
+group: "1"                                          # quoted: keep it a string
+```
+
 ## Options
 
 | Option | Default | Description |
