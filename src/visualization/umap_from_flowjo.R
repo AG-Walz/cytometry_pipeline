@@ -309,6 +309,53 @@ assign_subpop <- function(mem, subpop_depths, subpop_labels,
   if (n == 0L) return(character(0))
   if (ncol(mem) == 0L) return(rep(none_label, n))
 
+  # LEAF: the rule of thumb — a cell is named by the deepest thing the gating
+  # tree actually says about it. A cell inside CD4+/IFN+ is inside CD4+ too, and
+  # the useful label is the former; the tree already encodes which is which, so
+  # nothing has to be inferred from cell counts.
+  #
+  # This replaced size-based "specificity", which used the SMALLEST gate as a
+  # proxy for the most specific one. That proxy breaks on exactly the gates
+  # people care about: the all-negative boolean leaf (CD107a-IFNg-IL2-TNF-) is
+  # usually the biggest population in the sample, so smallest-wins labelled
+  # those cells by their parent CD4+ and the leaf never appeared. Size is not
+  # specificity; position in the tree is.
+  #
+  # A leaf is a candidate with no other candidate beneath it. A cell is labelled
+  # by the leaf it is in; a cell that reaches only interior gates (its branch
+  # was not gated further) keeps the deepest of those, because "CD4+" is the
+  # true answer for a CD4+ cell nobody sub-gated.
+  if (assignment == "leaf") {
+    is_leaf <- !vapply(subpop_labels, function(lab)
+      any(startsWith(subpop_labels, paste0(lab, "/"))), logical(1))
+
+    # A cell is in SEVERAL leaves at once, and that is normal rather than an
+    # error: the fixture gates CD4+ into CD107a-, IFNg-, IL2-, TNF- AND the
+    # four-way combination CD107a-IFNg-IL2-TNF-, all leaves at the same depth.
+    # Calling that "(multiple)" throws away the answer — the four-way gate is
+    # plainly the most informative of them.
+    #
+    # So: leaves beat interior gates (the rule), then depth, then the SMALLEST
+    # gate. Size is a poor definition of specificity on its own — that is what
+    # this replaced — but it is a good tie-break BETWEEN LEAVES, where the
+    # smaller gate is the more restrictive statement about the same cell.
+    sizes <- colSums(mem)
+    pick <- function(cols) {
+      if (!length(cols)) return(NA_integer_)
+      cols <- cols[subpop_depths[cols] == max(subpop_depths[cols])]
+      cols[which.min(sizes[cols])]
+    }
+    out <- rep(none_label, n)
+    for (i in seq_len(n)) {
+      inside <- which(mem[i, ])
+      if (!length(inside)) next
+      leaves <- inside[is_leaf[inside]]
+      chosen <- if (length(leaves)) pick(leaves) else pick(inside)
+      out[i] <- subpop_labels[chosen]
+    }
+    return(out)
+  }
+
   if (assignment == "specificity") {
     sizes <- colSums(mem)                         # per-sample gate sizes
     pri   <- sizes - 1e-6 * subpop_depths         # smaller gate wins; deeper breaks ties
@@ -345,6 +392,136 @@ assign_subpop <- function(mem, subpop_depths, subpop_labels,
 # An NA entry in `subpop_paths` means the gate belongs to a different workspace
 # (see merge_subgate_candidates) and is likewise left all-FALSE.
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# One assignment PER GATING LEVEL, instead of one assignment overall.
+#
+# The default "furthest" mode labels each cell by the deepest gate it reaches,
+# which means a CD4+ cell that also falls in CD4+/CD107a+ is reported as
+# CD107a+ and disappears from the CD4+/CD8+ picture entirely. That is the right
+# answer to "what is this cell, most specifically" and the wrong answer to
+# "how do the lineages split" — and both questions get asked of the same
+# embedding.
+#
+# So this returns one labelling per depth relative to the reference population:
+# level 1 is the immediate children (CD4+ / CD8+), level 2 their children
+# (CD107a+ / IL-2+ / …), and so on. A cell is labelled at a level only by the
+# gates AT that level; a cell of the reference population in none of them is
+# NA, not "(none)".
+#
+# NA rather than a label is the point: these cells are the parent population
+# doing nothing at this level, they are not a category, and drawing them as one
+# more coloured class in the legend makes the classes that matter unreadable.
+# The plotting side renders NA grey and keeps it out of the legend.
+#
+# Returns a named list, "level 1", "level 2", …, each a factor with one entry
+# per cell. Factors rather than character vectors because at seven million
+# cells the difference is an integer vector versus millions of string pointers.
+# -----------------------------------------------------------------------------
+assign_subpop_levels <- function(mem, subpop_depths, subpop_labels,
+                                 multiple_label = .SUBPOP_MULTI,
+                                 spec = NULL) {
+  n <- nrow(mem)
+  out <- list()
+  if (n == 0L || ncol(mem) == 0L) return(out)
+
+  # AN EXPLICIT SPEC ALWAYS WINS. The automatic rule below is a guess about
+  # which gates constitute a level, and on a tree that mixes lineage with
+  # functional gates at the same depth there is no guess that works: the
+  # reference fixture has CD4+, CD8+, bare CD107a+/IFNg-/TNF- and sixteen
+  # boolean combinations all at depth 1, several of which also branch. A cell
+  # is in a handful of them at once and every automatic grouping collapses to
+  # "(multiple)". When that happens, say which gates you mean:
+  #     --subpop_levels_select "CD4+,CD8+;CD4+/CD107a+,CD8+/CD107a+"
+  # Levels separated by ';', gates within a level by ','. Names match the way
+  # --subpop_select matches: relative path, or bare gate name.
+  if (!is.null(spec) && length(spec)) {
+    for (i in seq_along(spec)) {
+      want <- spec[[i]]
+      at <- which(subpop_labels %in% want | basename(subpop_labels) %in% want)
+      if (!length(at)) {
+        warning("subpop level ", i, " names no gate that exists: ",
+                paste(want, collapse = ", "))
+        next
+      }
+      out[[paste("level", i)]] <- .subpop_level_factor(
+        mem[, at, drop = FALSE], basename(subpop_labels[at]), n, multiple_label)
+    }
+    return(out)
+  }
+
+  # WHICH GATES BELONG TO A LEVEL. Depth alone is not enough. A real workspace
+  # hangs the lineage split AND a pile of flat functional gates off the same
+  # node: under "Viable cells" this fixture has CD4+ and CD8+ next to CD107a+,
+  # IFNg-, and sixteen boolean combinations — 27 gates at depth 1. Those are not
+  # alternatives, they are several different questions, so every cell is inside
+  # a handful of them at once and grouping by depth alone labels the entire
+  # plot "(multiple)".
+  #
+  # A level is therefore built from the gates at that depth which BRANCH — the
+  # ones with a deeper gate beneath them. Those are the structural nodes, the
+  # ones the tree is actually organised by, and at depth 1 that is exactly
+  # {CD4+, CD8+}. Where a depth has no branching gates (the bottom of the tree,
+  # where the answers live) its leaves are used instead.
+  has_child <- vapply(subpop_labels, function(lab) {
+    any(startsWith(subpop_labels, paste0(lab, "/")))
+  }, logical(1))
+
+  for (d in sort(unique(subpop_depths))) {
+    at <- which(subpop_depths == d)
+    if (!length(at)) next
+    branching <- at[has_child[at]]
+    dropped <- length(at) - length(branching)
+    if (length(branching)) {
+      if (dropped > 0L) {
+        message("level ", d, ": using the ", length(branching),
+                " gate(s) that branch; ", dropped,
+                " leaf gate(s) at this depth are shown at their own level.")
+      }
+      at <- branching
+    }
+    sub_mem <- mem[, at, drop = FALSE]
+    # Label by the LEAF name at this level, not the relative path: at level 2
+    # "CD4+/CD107a+" and "CD8+/CD107a+" are the same functional gate under
+    # different parents, and showing the full path makes a legend nobody reads.
+    # The parent split is exactly what level 1 already shows.
+    lab <- basename(subpop_labels[at])
+
+    out[[paste("level", d)]] <- .subpop_level_factor(sub_mem, lab, n,
+                                                    multiple_label)
+  }
+
+  # A level where most cells are "(multiple)" is not a partition, and the plot
+  # will be one colour. Said once, loudly, with the way out — this is the most
+  # likely reason a level plot looks wrong.
+  for (ln in names(out)) {
+    v <- out[[ln]]
+    frac <- sum(!is.na(v) & v == multiple_label) / max(1L, sum(!is.na(v)))
+    if (frac > 0.5) {
+      warning(ln, ": ", round(100 * frac), "% of gated cells are in more than ",
+              "one gate at this level, so the plot will be mostly one colour. ",
+              "These gates are not alternatives. Name the ones you mean with ",
+              "--subpop_levels_select, e.g. \"CD4+,CD8+\".", call. = FALSE)
+    }
+  }
+  out
+}
+
+# One level's labelling: the gate a cell is in, "(multiple)" when several, NA
+# when none. Shared by the explicit and the automatic paths so they cannot
+# disagree about what a level plot means.
+.subpop_level_factor <- function(sub_mem, lab, n, multiple_label) {
+  cnt <- rowSums(sub_mem)
+  vals <- rep(NA_character_, n)
+  multi <- cnt > 1L
+  vals[multi] <- multiple_label
+  singles <- which(cnt == 1L)
+  if (length(singles)) {
+    col_idx <- max.col(sub_mem[singles, , drop = FALSE], ties.method = "first")
+    vals[singles] <- lab[col_idx]
+  }
+  factor(vals, levels = c(unique(lab), if (any(multi)) multiple_label))
+}
+
 get_subpop_membership <- function(gh, viable_idx, subpop_paths) {
   nv <- sum(viable_idx)
   M  <- matrix(FALSE, nrow = nv, ncol = length(subpop_paths))
@@ -520,7 +697,8 @@ gs_common_markers <- function(gs, sample_names,
 extract_population_sample <- function(gh, population, subpop_paths, subpop_depths,
                                       subpop_labels, assignment = "depth",
                                       exclude_pattern = "Time|FSC|SSC|scatter",
-                                      dictionary = NULL, aliases = NULL) {
+                                      dictionary = NULL, aliases = NULL,
+                                      levels = FALSE, level_spec = NULL) {
   # NOTE: data is already compensated + transformed in the FlowJo working space.
   # We take exprs() AS-IS, no further transform.
   ff   <- flowWorkspace::gh_pop_get_data(gh, y = population)
@@ -559,12 +737,26 @@ extract_population_sample <- function(gh, population, subpop_paths, subpop_depth
   # order, so the membership matrix (also subset by viable_idx) is row-aligned.
   viable_idx <- flowWorkspace::gh_pop_get_indices(gh, population)
   stopifnot(sum(viable_idx) == nrow(mtx))   # length/order alignment guard
-  subpop <- assign_subpop(
-    get_subpop_membership(gh, viable_idx, subpop_paths),
-    subpop_depths, subpop_labels, assignment = assignment)
+  # Built ONCE and used twice: the overall assignment and the per-level ones
+  # read the same membership matrix, so a cell can never be in a gate for one
+  # picture and out of it for the other.
+  mem <- get_subpop_membership(gh, viable_idx, subpop_paths)
+  subpop <- assign_subpop(mem, subpop_depths, subpop_labels,
+                          assignment = assignment)
   stopifnot(length(subpop) == nrow(mtx))
 
-  list(mtx = mtx, subpop = subpop)
+  # Character, not factor, per sample: the levels differ between samples (a gate
+  # can be empty here and populated there) and unifying them once at
+  # concatenation is cheaper and safer than reconciling factors sample by sample.
+  levels_out <- NULL
+  if (isTRUE(levels)) {
+    levels_out <- lapply(assign_subpop_levels(mem, subpop_depths, subpop_labels,
+                                              spec = level_spec),
+                         as.character)
+    for (v in levels_out) stopifnot(length(v) == nrow(mtx))
+  }
+
+  list(mtx = mtx, subpop = subpop, levels = levels_out)
 }
 
 # -----------------------------------------------------------------------------
@@ -726,7 +918,10 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
                              sample_metadata = NULL, sample_pattern = NULL,
                              annotate = NULL, sample_id_column = NULL,
                              markers = NULL, subpop_mode = "furthest",
-                             subpop_select = NULL, normalize = "none",
+                             subpop_select = NULL, normalize = NULL,
+                             normalize_data = "none", normalize_umap = "none",
+                             subpop_levels = TRUE,
+                             subpop_levels_select = NULL,
                              downsample = 0L, seed = 42L,
                              list_populations = FALSE,
                              allow_missing_samples = FALSE,
@@ -740,10 +935,33 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   require(flowWorkspace)
   require(flowCore)
 
+  # NORMALISATION HAPPENS IN TWO INDEPENDENT PLACES, and conflating them was the
+  # complaint: changing the scale to recolour a figure also moved every point,
+  # because the same matrix fed the embedding and the colour scales.
+  #
+  #   normalize_data  the values the EMBEDDING is computed from. Changing it is
+  #                   a different analysis and the points move — as they should.
+  #   normalize_umap  the values the MARKER COLOURS are taken from, applied
+  #                   after the embedding exists. Changing it recolours the same
+  #                   coordinates and nothing moves.
+  #
+  # `normalize` is kept as a deprecated alias for normalize_data so existing
+  # commands, params files and the app's saved form state keep working.
   VALID_NORMALIZE <- c("none", "zscore", "minmax")
-  if (!normalize %in% VALID_NORMALIZE) {
-    stop("normalize must be one of: ", paste(VALID_NORMALIZE, collapse = ", "),
-         " (got '", normalize, "').")
+  if (!is.null(normalize) && nzchar(normalize)) {
+    if (!identical(normalize_data, "none")) {
+      stop("Pass either --normalize (deprecated) or --normalize_data, not both.")
+    }
+    message("--normalize is deprecated; it now means --normalize_data. ",
+            "Use --normalize_umap to change only the marker colour scales.")
+    normalize_data <- normalize
+  }
+  for (nm in c("normalize_data", "normalize_umap")) {
+    v <- get(nm)
+    if (!v %in% VALID_NORMALIZE) {
+      stop(nm, " must be one of: ", paste(VALID_NORMALIZE, collapse = ", "),
+           " (got '", v, "').")
+    }
   }
   VALID_SUBPOP_MODE <- c("furthest", "cd4cd8", "direct", "deepest", "none")
   if (!subpop_mode %in% VALID_SUBPOP_MODE) {
@@ -846,7 +1064,15 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # different acquisition. With --allow_missing_samples that costs the run one
   # workspace, not all of them: the flag says "load what is loadable", and a
   # workspace CytoML refuses is a workspace whose data is unusable here.
+  #
+  # A workspace normally yields ONE GatingSet named after itself. It yields
+  # several when its samples were acquired with different channel sets, which
+  # CytoML cannot hold in one cytoset — see build_workspace_gatingsets(). The
+  # parts are separate entries in gs_list because everything downstream works
+  # per GatingSet, and `gs_source` maps each back to the workspace it came from
+  # so counts, specs and the population map stay per WORKSPACE.
   gs_list <- list()
+  gs_source <- character(0)
   build_failed <- list()
   load_records <- list()
   for (label in names(specs)) {
@@ -854,27 +1080,45 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     cat(sprintf("\nBuilding GatingSet for '%s' — %s, %d listed sample(s)\n",
                 label, describe_group(spec), length(spec$listed)))
     emit_progress("load", which(names(specs) == label) - 1L, length(specs), label)
-    gs <- tryCatch(build_workspace_gatingset(spec),
-                   error = function(e) {
-                     if (!allow_missing_samples) stop(e)
-                     build_failed[[label]] <<- conditionMessage(e)
-                     NULL
-                   })
-    if (!is.null(gs)) {
-      gs_list[[label]] <- gs
+    parts <- tryCatch(build_workspace_gatingsets(spec),
+                      error = function(e) {
+                        if (!allow_missing_samples) stop(e)
+                        build_failed[[label]] <<- conditionMessage(e)
+                        NULL
+                      })
+    if (!is.null(parts)) {
+      for (part in names(parts)) {
+        gs_list[[part]]   <- parts[[part]]
+        gs_source[[part]] <- label
+      }
+      # A part that still refused after the split costs its own samples and
+      # nothing else, but it is a real loss and is reported as one.
+      failed_parts <- attr(parts, "failed_parts")
+      for (part in names(failed_parts)) {
+        build_failed[[part]] <- failed_parts[[part]]
+      }
       # The only place that knows what ARRIVED rather than what was asked for.
-      # Every count from here on is taken from these records.
+      # Every count from here on is taken from these records — over ALL parts,
+      # so a split workspace is still one workspace with one sample tally.
       load_records[[label]] <- workspace_load_record(
-        spec, flowWorkspace::sampleNames(gs))
+        spec, unlist(lapply(parts, flowWorkspace::sampleNames),
+                     use.names = FALSE))
     }
   }
   if (length(build_failed)) {
     cat("\nWARNING: ", length(build_failed),
-        " workspace(s) resolved their files but could NOT be loaded, and are\n",
-        "not in the analysis. Each reason is CytoML's own:\n", sep = "")
+        " workspace(s) or channel-set part(s) resolved their files but could\n",
+        "NOT be loaded, and are not in the analysis. Each reason is CytoML's own:\n",
+        sep = "")
     for (label in names(build_failed)) {
       cat(sprintf("  %s\n    %s\n", label,
                   gsub("\n", "\n    ", build_failed[[label]])))
+      if (is_channel_inconsistency(build_failed[[label]])) {
+        cat("    (its samples do not all carry the same channels and could not be\n",
+            "     split into consistent groups either — the FCS files whose names\n",
+            "     the workspace records were not all found, so their channels are\n",
+            "     unknown. Check --fcs_dir covers every acquisition.)\n", sep = "")
+      }
     }
   }
   if (!length(gs_list)) {
@@ -888,7 +1132,11 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # 311, with the headline claiming the smaller number.
   n_samples <- sum(vapply(load_records, function(r) r$n_loaded, integer(1)))
   cat(sprintf("\nGOING INTO THE UMAP: %d of %d workspace(s), %d sample(s).\n",
-              length(gs_list), n_wsp, n_samples))
+              length(load_records), n_wsp, n_samples))
+  if (length(gs_list) > length(load_records)) {
+    cat(sprintf("  (%d of them were split by channel set into %d parts; see above.)\n",
+                sum(table(gs_source) > 1L), length(gs_list)))
+  }
   routes_line <- format_match_routes(load_records)
   if (nzchar(routes_line)) cat(routes_line, "\n", sep = "")
   records_report <- format_load_records(load_records)
@@ -918,8 +1166,11 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # is still not shared. An empty intersection is the most common reason a
   # multi-workspace run cannot proceed, so the divergence is named rather than
   # left to be inferred from "Common markers (0)".
-  panel_by_wsp <- lapply(split(panels, vapply(panels, function(p) p$workspace,
-                                             character(1))),
+  # Keyed by the SOURCE workspace: a workspace split by channel set is one panel
+  # to the person reading this, and its parts differing is exactly the kind of
+  # thing the marker dictionary above exists to reconcile.
+  panel_by_wsp <- lapply(split(panels, vapply(panels, function(p)
+                                 gs_source[[p$workspace]], character(1))),
     function(ps) {
       unique(unlist(lapply(ps, function(p) {
         sel <- select_marker_columns(p$channels, p$markers,
@@ -959,10 +1210,14 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # contributes no gate and therefore no cells. Applied here, before anything
   # downstream is derived, so sample labels, annotations and the shared-file
   # accounting all describe the run that is actually happening.
-  pop_map <- parse_population_map(population_map, names(gs_list))
+  # Keyed on WORKSPACE labels, not on gs_list names: a workspace split by
+  # channel set must still be selected by its own name, not by "[panel 2]".
+  pop_map <- parse_population_map(population_map, names(load_records))
   if (!is.null(pop_map) && !isTRUE(list_populations)) {
-    dropped_by_map <- setdiff(names(gs_list), names(pop_map))
-    gs_list <- gs_list[names(gs_list) %in% names(pop_map)]
+    dropped_by_map <- setdiff(names(load_records), names(pop_map))
+    gs_list   <- gs_list[gs_source[names(gs_list)] %in% names(pop_map)]
+    gs_source <- gs_source[names(gs_list)]
+    load_records <- load_records[names(load_records) %in% names(pop_map)]
     specs   <- specs[names(specs) %in% names(pop_map)]
     if (!length(gs_list)) {
       stop("the population map excludes every workspace that loaded.",
@@ -980,7 +1235,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # produces the same legends and the same file names as it always did.
   sample_index <- do.call(rbind, lapply(names(gs_list), function(w) {
     raw <- flowWorkspace::sampleNames(gs_list[[w]])
-    data.frame(workspace = rep(w, length(raw)), raw = raw,
+    data.frame(workspace = rep(gs_source[[w]], length(raw)), raw = raw,
                clean = clean_sample_label(raw), stringsAsFactors = FALSE)
   }))
   sample_index$display <- disambiguate_sample_labels(sample_index$clean,
@@ -1028,6 +1283,19 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   shared_pops <- Reduce(intersect, pops_by_wsp)
   shared_pops <- pops_by_wsp[[1]][pops_by_wsp[[1]] %in% shared_pops]
 
+  # Everything above is keyed per GATINGSET, because that is the unit a gate has
+  # to resolve in. Everything a person reads is keyed per WORKSPACE. When a
+  # workspace was split by channel set the two differ, and the bridge is an
+  # INTERSECTION, never a union: a gate only one part carries is not a gate that
+  # workspace can offer the run, and claiming otherwise would put it in the
+  # health panel as available and then fail at extraction.
+  by_source <- function(x) {
+    if (!length(x)) return(x)
+    grouped <- split(names(x), unname(gs_source[names(x)]))
+    out <- lapply(grouped, function(ks) Reduce(intersect, x[ks]))
+    out[intersect(names(load_records), names(out))]
+  }
+
   # --- 2. list_populations mode: print the tree + markers, then return. ------
   # This is the "inspect" entry point: one workspace load reports everything a
   # caller needs to configure a run (samples above, populations and the common
@@ -1051,6 +1319,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
                         dictionary = channel_dict$dictionary,
                         aliases = marker_alias_map))
     names(markers_by_wsp) <- names(gs_list)
+    markers_by_source <- by_source(markers_by_wsp)
     common_markers <- Reduce(intersect, markers_by_wsp)
     common_markers <- markers_by_wsp[[1]][markers_by_wsp[[1]] %in% common_markers]
     cat("\nCommon markers (", length(common_markers), "):\n", sep = "")
@@ -1064,10 +1333,10 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     # the moment one workspace spells a marker differently, and then the only
     # way to see WHY is to compare the panels side by side. Four-space indent,
     # same contract as the other per-workspace blocks.
-    cat("\nMarkers by workspace (", length(markers_by_wsp), "):\n", sep = "")
-    for (w in names(markers_by_wsp)) {
-      cat(sprintf("    %s | %d marker(s)\n", w, length(markers_by_wsp[[w]])))
-      for (m in markers_by_wsp[[w]]) cat("      ", m, "\n", sep = "")
+    cat("\nMarkers by workspace (", length(markers_by_source), "):\n", sep = "")
+    for (w in names(markers_by_source)) {
+      cat(sprintf("    %s | %d marker(s)\n", w, length(markers_by_source[[w]])))
+      for (m in markers_by_source[[w]]) cat("      ", m, "\n", sep = "")
     }
 
     cat("\nSample annotations (", length(annot_cols), "):\n", sep = "")
@@ -1086,29 +1355,33 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     # almost nothing when the workspaces were gated independently. Six-space
     # indent for the gates so the two- and four-space item patterns in
     # app/services/rscript.py cannot swallow them; part of the same contract.
-    cat("\nPopulations by workspace (", length(pops_by_wsp), "):\n", sep = "")
-    for (w in names(pops_by_wsp)) {
-      cat(sprintf("    %s | %d node(s)\n", w, length(pops_by_wsp[[w]])))
-      for (p in pops_by_wsp[[w]]) cat("      ", p, "\n", sep = "")
+    pops_by_source <- by_source(pops_by_wsp)
+    cat("\nPopulations by workspace (", length(pops_by_source), "):\n", sep = "")
+    for (w in names(pops_by_source)) {
+      cat(sprintf("    %s | %d node(s)\n", w, length(pops_by_source[[w]])))
+      for (p in pops_by_source[[w]]) cat("      ", p, "\n", sep = "")
     }
 
     # Counted from the GatingSets, not from the resolved file list: a sample
     # CytoML paired by content is in the analysis and has to be in the count.
-    cat("\nWorkspaces resolved (", length(gs_list), "):\n", sep = "")
-    for (label in names(gs_list)) {
-      spec <- specs[[label]]
-      cat(sprintf("    %s | %s | %s | %d sample(s)\n",
+    cat("\nWorkspaces resolved (", length(load_records), "):\n", sep = "")
+    for (label in names(load_records)) {
+      spec  <- specs[[label]]
+      parts <- names(gs_source)[gs_source == label]
+      cat(sprintf("    %s | %s | %s | %d sample(s)%s\n",
                   label, spec$wsp, describe_group(spec),
-                  load_records[[label]]$n_loaded))
+                  load_records[[label]]$n_loaded,
+                  if (length(parts) > 1L)
+                    sprintf(" | %d channel-set parts", length(parts)) else ""))
     }
 
-    divergent <- setdiff(unique(unlist(pops_by_wsp, use.names = FALSE)),
+    divergent <- setdiff(unique(unlist(pops_by_source, use.names = FALSE)),
                          shared_pops)
     cat("\nPopulations not shared by all workspaces (", length(divergent),
         "):\n", sep = "")
     for (p in divergent) {
-      absent <- names(pops_by_wsp)[!vapply(pops_by_wsp,
-                                           function(x) p %in% x, logical(1))]
+      absent <- names(pops_by_source)[!vapply(pops_by_source,
+                                              function(x) p %in% x, logical(1))]
       cat(sprintf("    %s   [missing in: %s]\n", p,
                   paste(absent, collapse = ", ")))
     }
@@ -1128,8 +1401,8 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       load_records = load_records, specs = specs,
       problems = resolved$problems, dropped = resolved$dropped,
       deferred = resolved$deferred, build_failed = build_failed,
-      pops_by_wsp = pops_by_wsp, shared_pops = shared_pops,
-      markers_by_wsp = markers_by_wsp, common_markers = common_markers,
+      pops_by_wsp = pops_by_source, shared_pops = shared_pops,
+      markers_by_wsp = markers_by_source, common_markers = common_markers,
       panel_cmp = panel_cmp,
       suggestions = suggest_marker_aliases(panel_by_wsp),
       channel_dict = channel_dict, samples = sample_index,
@@ -1137,7 +1410,8 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
         lapply(annot_cols, function(cl) unique(sample_annotations[[cl]])),
         annot_cols),
       unnamed_samples = sum(vapply(panels, function(p)
-        !any(!is.na(p$markers) & nzchar(p$markers)), logical(1)))
+        !any(!is.na(p$markers) & nzchar(p$markers)), logical(1))),
+      panel_parts = as.list(table(gs_source))
     ), report_json)
 
     cat("\nSelect one with population = (leading '/' optional), e.g.:\n")
@@ -1170,7 +1444,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # instruction that could not be carried out.
   if (!is.null(pop_map)) {
     resolutions <- lapply(names(gs_list), function(w)
-      try_resolve_population(pop_map[[w]], pops_by_wsp[[w]]))
+      try_resolve_population(pop_map[[gs_source[[w]]]], pops_by_wsp[[w]]))
     names(resolutions) <- names(gs_list)
   } else {
     resolutions <- lapply(pops_by_wsp, function(p)
@@ -1179,7 +1453,8 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   failed <- names(resolutions)[!vapply(resolutions, function(r) r$ok, logical(1))]
   if (length(failed)) {
     detail <- vapply(failed, function(w) sprintf(
-      "  %s (%s)\n    %s", w, specs[[w]]$wsp, resolutions[[w]]$reason),
+      "  %s (%s)\n    %s", w, specs[[gs_source[[w]]]]$wsp,
+      resolutions[[w]]$reason),
       character(1))
     if (!is.null(pop_map)) {
       stop("the population map names a gate that does not exist in its ",
@@ -1243,14 +1518,27 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     }
   }
 
-  # 'furthest' labels each cell by the most specific (smallest) gate it reaches;
-  # the other modes assign by path depth (ties -> "(multiple)").
+  # 'furthest' names each cell by the deepest gate the TREE puts it in — its
+  # leaf. The other modes assign by path depth (ties -> "(multiple)").
   subpop_assignment <- if (subpop_mode == "furthest" && is.null(subpop_select)) {
-    "specificity"
+    "leaf"
   } else {
     "depth"
   }
 
+  # "CD4+,CD8+;CD4+/CD107a+,CD8+/CD107a+" -> list(c("CD4+","CD8+"), c(...)).
+  # ';' between levels and ',' within one, the same separators --population_map
+  # and --marker_aliases already use.
+  level_spec <- NULL
+  if (!is.null(subpop_levels_select) && nzchar(trimws(subpop_levels_select))) {
+    level_spec <- lapply(strsplit(trimws(subpop_levels_select), ";",
+                                  fixed = TRUE)[[1]], function(g) {
+      v <- trimws(strsplit(g, ",", fixed = TRUE)[[1]]); v[nzchar(v)]
+    })
+    level_spec <- Filter(length, level_spec)
+    cat("Subpopulation levels given explicitly: ", length(level_spec), "\n",
+        sep = "")
+  }
   do_subpop <- length(subpop_labels) > 0
   subpop_requested <- !is.null(subpop_select) || subpop_mode != "none"
   if (subpop_requested) {
@@ -1271,6 +1559,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   per_sample_subpop <- list()
   per_sample_wsp    <- character(0)
   no_marker_samples <- character(0)
+  per_sample_levels <- list()
   # Progress is reported against the sample count the GatingSets actually hold,
   # which is the only total that is known before the loop and true after it.
   n_total_samples <- sum(vapply(gs_list, function(g)
@@ -1289,7 +1578,9 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
                                        subpop_depths, subpop_labels,
                                        assignment = subpop_assignment,
                                        dictionary = channel_dict$dictionary,
-                                       aliases = marker_alias_map)
+                                       aliases = marker_alias_map,
+                                       levels = isTRUE(subpop_levels),
+                                       level_spec = level_spec)
       # No usable channel on this sample. Collected rather than fatal — see
       # extract_population_sample() — and reported together below.
       if (is.null(res)) {
@@ -1301,11 +1592,15 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       sp  <- res$subpop
 
       # Optional per-sample downsampling AFTER gating. The SAME row index
-      # subsets the subpopulation labels so they stay aligned to mtx.
+      # subsets the subpopulation labels — overall and per level — so they stay
+      # aligned to mtx. Every aligned vector is subset HERE; carrying the index
+      # out of this block would let a stale one from a previous sample apply.
+      lv <- res$levels
       if (downsample > 0 && nrow(mtx) > downsample) {
         idx <- sort(sample(nrow(mtx), downsample))
         mtx <- mtx[idx, , drop = FALSE]
         sp  <- sp[idx]
+        if (!is.null(lv)) lv <- lapply(lv, function(v) v[idx])
       }
 
       cat(sprintf("  %s: %d cells x %d markers\n", display, nrow(mtx),
@@ -1319,7 +1614,10 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       }
       per_sample_mtx[[display]]    <- mtx
       per_sample_subpop[[display]] <- sp
-      per_sample_wsp[display]      <- w
+      if (!is.null(lv)) per_sample_levels[[display]] <- lv
+      # The SOURCE workspace, not the GatingSet: a workspace split by channel
+      # set is still one workspace to everyone reading a legend.
+      per_sample_wsp[display]      <- gs_source[[w]]
     }
   }
 
@@ -1398,17 +1696,56 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   combined_subpop <- unlist(per_sample_subpop[sample_labels], use.names = FALSE)
   stopifnot(length(combined_subpop) == nrow(combined_matrix))
 
+  # Per-level labels, concatenated in the SAME sample order as the matrix and
+  # turned into factors only now — the level set is the union across samples,
+  # so a gate that was empty in one sample still gets a stable colour. A sample
+  # that produced no vector for a level (its gates were absent) contributes NA
+  # for its rows rather than shifting everything after it.
+  combined_levels <- list()
+  if (length(per_sample_levels)) {
+    level_names <- unique(unlist(lapply(per_sample_levels, names),
+                                 use.names = FALSE))
+    for (ln in level_names) {
+      parts <- lapply(sample_labels, function(s) {
+        v <- per_sample_levels[[s]][[ln]]
+        if (is.null(v)) rep(NA_character_, n_cells_per[[s]]) else v
+      })
+      vec <- unlist(parts, use.names = FALSE)
+      stopifnot(length(vec) == nrow(combined_matrix))
+      lv <- sort(setdiff(unique(vec[!is.na(vec)]), .SUBPOP_MULTI))
+      combined_levels[[ln]] <- factor(vec,
+                                      levels = c(lv, .SUBPOP_MULTI[
+                                        .SUBPOP_MULTI %in% vec]))
+    }
+    cat(sprintf("Subpopulation levels: %d (%s)\n", length(combined_levels),
+                paste(names(combined_levels), collapse = ", ")))
+  }
+
   cat(sprintf("\nConcatenated matrix: %d cells x %d markers (%d samples, %d workspace(s))\n",
               nrow(combined_matrix), ncol(combined_matrix),
               length(per_sample_mtx),
               length(unique(wsp_labels_per_cell))))
 
-  # --- 5b. Optional per-marker normalization. --------------------------------
-  if (normalize != "none") {
+  # --- 5b. Per-marker normalisation, twice and independently. -----------------
+  # colour_matrix is what the marker plots are coloured by; combined_matrix is
+  # what the embedding is computed from. They start identical and are scaled
+  # separately, so --normalize_umap can be changed to recolour a figure without
+  # moving a single point. When the two methods agree (including the usual case
+  # where both are "none") they stay the same object, so nothing is copied.
+  colour_matrix <- combined_matrix
+  if (normalize_data != "none") {
     cat(sprintf(
-      "Normalizing %d markers per-column (method=%s) from the concatenated gated cells...\n",
-      ncol(combined_matrix), normalize))
-    combined_matrix <- normalize_columns(combined_matrix, normalize)
+      "Normalising %d markers for the EMBEDDING (method=%s) from the concatenated gated cells...\n",
+      ncol(combined_matrix), normalize_data))
+    combined_matrix <- normalize_columns(combined_matrix, normalize_data)
+  }
+  if (identical(normalize_umap, normalize_data)) {
+    colour_matrix <- combined_matrix
+  } else if (normalize_umap != "none") {
+    cat(sprintf(
+      "Normalising %d markers for the COLOUR SCALES (method=%s); the embedding is unaffected.\n",
+      ncol(colour_matrix), normalize_umap))
+    colour_matrix <- normalize_columns(colour_matrix, normalize_umap)
   }
 
 
@@ -1417,11 +1754,17 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # homogenize, downsample, dimred — reads the first two and ignores the rest.
   list(
     combined_matrix = combined_matrix,
+    # Same shape and row order as combined_matrix; the marker plots read this
+    # one. Identical object unless normalize_umap differs from normalize_data.
+    colour_matrix   = colour_matrix,
+    normalize_data  = normalize_data,
+    normalize_umap  = normalize_umap,
     sample_labels   = file_labels,          # per CELL, as the pipeline expects
     samples         = sample_labels,        # per SAMPLE, in matrix order
     file_labels     = file_labels,
     workspace_labels = wsp_labels_per_cell,
     subpop_labels_per_cell = combined_subpop,
+    subpop_by_level        = combined_levels,
     subpop_levels   = subpop_labels,
     subpop_mode_tag = subpop_mode_tag,
     n_cells_per     = n_cells_per,
@@ -1431,7 +1774,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     population      = population,
     pop_by_wsp      = pop_by_wsp,
     use_markers     = use_markers,
-    workspaces      = names(gs_list),
+    workspaces      = names(load_records),
     dropped         = resolved$dropped,
     dropped_report  = dropped_report,
     inspected       = FALSE
@@ -1451,7 +1794,10 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              sample_metadata = NULL, sample_pattern = NULL,
                              annotate = NULL, sample_id_column = NULL,
                              markers = NULL, subpop_mode = "furthest",
-                             subpop_select = NULL, normalize = "none",
+                             subpop_select = NULL, normalize = NULL,
+                             normalize_data = "none", normalize_umap = "none",
+                             subpop_levels = TRUE,
+                             subpop_levels_select = NULL,
                              downsample = 0L, n_neighbors = 15L, min_dist = 0.1,
                              metric = "euclidean", seed = 42L,
                              point_size = 0.4, point_alpha = 0.6,
@@ -1497,6 +1843,9 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     annotate = annotate, sample_id_column = sample_id_column,
     markers = markers, subpop_mode = subpop_mode,
     subpop_select = subpop_select, normalize = normalize,
+    normalize_data = normalize_data, normalize_umap = normalize_umap,
+    subpop_levels = subpop_levels,
+    subpop_levels_select = subpop_levels_select,
     downsample = downsample, seed = seed,
     list_populations = list_populations,
     allow_missing_samples = allow_missing_samples,
@@ -1603,7 +1952,10 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     annot_cols = annot_cols, population = population,
     output_dir = output_dir, n_workspaces = length(gs_list),
     subpop_mode_tag = subpop_mode_tag, n_cores = n_cores,
-    normalize = normalize, point_size = point_size,
+    colour_matrix = ext$colour_matrix,
+    subpop_by_level = ext$subpop_by_level %||% list(),
+    normalize = ext$normalize_data, normalize_umap = ext$normalize_umap,
+    point_size = point_size,
     point_alpha = point_alpha, plot_width = plot_width,
     plot_height = plot_height, output_formats = output_formats)
 
@@ -1639,6 +1991,9 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
                                     output_dir, n_workspaces = 1L,
                                     subpop_mode_tag = "",
                                     normalize = "none", n_cores = 1L,
+                                    colour_matrix = NULL,
+                                    normalize_umap = NULL,
+                                    subpop_by_level = list(),
                                     point_size = 0.4, point_alpha = 0.6,
                                     plot_width = 10, plot_height = 8,
                                     output_formats = list(pdf = FALSE,
@@ -1649,6 +2004,12 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
     stop("Package 'viridis' is required for marker colour scales.")
   }
   stopifnot(nrow(umap_df) == nrow(combined_matrix))
+  # Marker colours come from colour_matrix; the embedding came from
+  # combined_matrix. They are the same object unless --normalize_umap differs.
+  if (is.null(colour_matrix)) colour_matrix <- combined_matrix
+  stopifnot(nrow(colour_matrix) == nrow(umap_df),
+            identical(colnames(colour_matrix), colnames(combined_matrix)))
+  if (is.null(normalize_umap)) normalize_umap <- normalize
   n_wsp <- n_workspaces
 
   # umap_df already carries these, one row per cell, and they are the ONLY
@@ -1673,7 +2034,7 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
 
   # Suffix appended to marker colour-scale titles so a reader can tell whether
   # the colour encodes raw or normalized expression.
-  norm_tag <- switch(normalize,
+  norm_tag <- switch(normalize_umap,
                      none   = "",
                      zscore = " (z-score)",
                      minmax = " (min-max)")
@@ -1831,6 +2192,51 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
       p_sp, create_safe_filename(paste0("umap_", pop_tag, "_by_subpopulation")),
       legend_strings = c(sp_lab, "Subpopulation"),
       ncol = sp_ncol)
+
+    # 7b-ii. ONE PLOT PER GATING LEVEL.
+    #
+    # The plot above answers "what is this cell, most specifically", which is
+    # why a CD4+ cell that also fires IL-2 appears as IL-2 and vanishes from the
+    # lineage picture. These answer "how does the population divide HERE": level
+    # 1 is the immediate children, level 2 theirs, and so on.
+    #
+    # Cells of the reference population that are in no gate at a level are NA
+    # and drawn grey, with na.translate = FALSE keeping them out of the legend.
+    # They are the parent doing nothing at this level, not a category — giving
+    # them a swatch is what made the earlier "(none)" class dominate the key.
+    for (ln in names(subpop_by_level)) {
+      lv_vec <- subpop_by_level[[ln]]
+      if (all(is.na(lv_vec))) next
+      keys   <- levels(droplevels(lv_vec))
+      lv_col <- stats::setNames(distinct_palette(length(keys)), keys)
+      lv_ncol <- legend_ncol(length(keys), plot_height)
+      df_lv <- umap_df
+      df_lv$level <- lv_vec
+      # NA first so the grey parent cells sit UNDER the coloured gates rather
+      # than speckling over them.
+      df_lv <- df_lv[order(!is.na(df_lv$level)), , drop = FALSE]
+
+      p_lv <- ggplot(df_lv, aes(x = UMAP1, y = UMAP2, color = level)) +
+        geom_point(size = pt_size, alpha = pt_alpha) +
+        scale_color_manual(values = lv_col, breaks = keys,
+                           na.value = "grey85", na.translate = FALSE,
+                           drop = FALSE) +
+        umap_coord() +
+        base_umap_theme +
+        guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
+                                    ncol = lv_ncol)) +
+        labs(title = paste0("UMAP - ", population, " - ", ln,
+                            " (", sum(!is.na(lv_vec)), " of ", length(lv_vec),
+                            " cells gated)"),
+             color = ln)
+      save_categorical(
+        p_lv,
+        create_safe_filename(paste0("umap_", pop_tag, "_by_",
+                                    gsub(" ", "", ln))),
+        legend_strings = c(keys, ln), ncol = lv_ncol)
+    }
+    cat("Saved: ", length(subpop_by_level), " per-level subpopulation plot(s)\n",
+        sep = "")
     cat(sprintf("Saved: by-subpopulation categorical plot (%d subgate(s) + %d catch-all level(s))\n",
                 length(present_real), length(catchall)))
   }
@@ -1904,12 +2310,12 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
     # plot, so a given colour means the same expression value in every plot of
     # this marker. The limits span the full min-max range of the marker across
     # ALL pooled cells. Per-file subsets only ever cover part of that range.
-    marker_limits <- color_limits(combined_matrix[, marker])
+    marker_limits <- color_limits(colour_matrix[, marker])
 
     # CONJOINT (all cells) — colour vector is combined_matrix[, marker], which is
     # index-aligned to umap_df rows.
     df_all <- umap_df
-    df_all$expr <- combined_matrix[, marker]
+    df_all$expr <- colour_matrix[, marker]
 
     p_all <- ggplot(df_all, aes(x = UMAP1, y = UMAP2, color = expr)) +
       geom_point(size = pt_size, alpha = pt_alpha) +
@@ -1942,7 +2348,7 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
       rows <- which(file_labels == f)               # index-aligned subset
       if (length(rows) == 0) return(invisible(NULL)) # nothing for this file
       df_f <- umap_df[rows, , drop = FALSE]
-      df_f$expr <- combined_matrix[rows, marker]    # aligned colour vector
+      df_f$expr <- colour_matrix[rows, marker]      # aligned colour vector
 
       p_f <- ggplot(df_f, aes(x = UMAP1, y = UMAP2, color = expr)) +
         geom_point(size = pt_size, alpha = pt_alpha) +

@@ -90,6 +90,14 @@ class Runner:
             self._started_at = time.time()
             self._finished_at = None
             self._cancelling = False
+            # This run's output comes down a pipe. Any detached run we were
+            # following is no longer what the UI is showing, and leaving the
+            # pointer set made snapshot() re-read THAT run's log on every poll —
+            # overwriting this one's lines and re-deciding this one's status from
+            # a finished process's pid. That is what surfaced as an inspect
+            # reporting "failed (exit code None)" while printing a complete log.
+            self._detached_dir = None
+            self._detached_pid = 0
 
             try:
                 # start_new_session puts the child in its own process group so
@@ -253,6 +261,7 @@ class Runner:
             self._meta = dict(status.get("meta") or {})
             self._started_at = status.get("started_at")
             self._detached_pid = int(status.get("pid") or 0)
+            self._returncode = status.get("exit_code")
             self._status = RUNNING if status.get("running") else DONE
             self._finished_at = None if status.get("running") else time.time()
             self._progress = {}
@@ -272,8 +281,15 @@ class Runner:
         directory = self._detached_dir
         if not directory:
             return
-        text = detached.read_log(directory)
+        # Aliveness FIRST, then the log. The other order loses a race that
+        # happens on every fast run: read a log that is still being written,
+        # then observe a process that has since exited, and conclude from an
+        # incomplete log that it stopped early. Asking about the process first
+        # means a log read after "not alive" is a log nobody can still append
+        # to.
         alive = detached.is_alive(self._detached_pid)
+        text = detached.read_log(directory)
+        code = None if alive else detached.read_exit_code(directory)
         lines = text.splitlines()
 
         keep: list[str] = []
@@ -299,18 +315,32 @@ class Runner:
                 # better than an ETA computed from a start time we invented.
                 self._phase_started_at = time.time()
             self._progress = progress
-            if not alive and self._status == RUNNING:
-                self._status = DONE if self._looks_finished(keep) else FAILED
+            if alive:
+                return
+            finished = code == 0 if code is not None else self._looks_finished(keep)
+            verdict = DONE if finished else FAILED
+            if self._status == RUNNING:
+                self._returncode = code
+                self._status = verdict
                 self._finished_at = time.time()
+                self._generation += 1
+            elif self._status == FAILED and verdict == DONE:
+                # A verdict taken from a log that turned out to be incomplete.
+                # Correcting it matters more than never changing our mind: the
+                # alternative is an app that says a finished run failed and has
+                # no way to stop saying it.
+                self._returncode = code
+                self._status = DONE
                 self._generation += 1
 
     @staticmethod
     def _looks_finished(lines: list[str]) -> bool:
         """Did the run reach its end, or did it stop?
 
-        A detached process's exit status is not ours to collect — nobody
-        wait()s for it — so completion is judged from what it printed. The R
-        side prints this line last and only on success.
+        Only for runs started before the launcher recorded an exit code — see
+        detached.read_exit_code(), which is the real answer when it exists.
+        Completion is judged from what the run printed; the R side prints one
+        of these last and only on success.
         """
         tail = "\n".join(lines[-40:])
         return "Done. Plots written to:" in tail or "Load report:" in tail

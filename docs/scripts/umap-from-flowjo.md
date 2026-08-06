@@ -291,6 +291,53 @@ Populations not shared by all workspaces (2):
     /Lymphocytes/Single Cells/Viable cells/NK     [missing in: runA]
 ```
 
+### Workspaces whose samples have different channels
+
+FlowJo holds every sample as its own object and resolves each gate's dimension
+against that sample's own parameter list, so one workspace can happily contain
+acquisitions from two instruments. CytoML cannot: it materialises a sample group
+as a single cytoset with **one** column schema, and refuses a group whose FCS
+files do not all carry exactly the same `$PnN` set:
+
+```
+Found channel inconsistency across samples.
+'Comp-Aqua LiveDead-A' is missing from MTB017_1_V4W279_neg.fcs_15850
+```
+
+That is not corruption. A cohort acquired over two years typically has:
+
+* the same viability dye on a detector named `Aqua LiveDead-A` on one cytometer
+  and `BV480-A` on another (identical `$PnS`, different configuration name);
+* the scatter-width parameters `FSC-W`/`SSC-W` recorded under some acquisition
+  templates and not others (`$PAR` 14 vs 12);
+* the odd extra detector (`SP SSC-A`) from a third template.
+
+Such a workspace used to be lost entirely — `refused, 0/0`. It is now split into
+channel-homogeneous **parts**, one GatingSet each, and reported:
+
+```
+MTB017_1: its 20 sample(s) were acquired with 2 different channel sets, so CytoML
+refused the workspace whole. Loading it as 2 parts, each with its own
+channels; they rejoin in the UMAP on marker names.
+    part 1 — 10 sample(s), e.g. MTB017_1_V4W279_neg.fcs
+    part 2 — 10 sample(s), e.g. MTB017_1_V4W228_neg.fcs
+        lacks: Aqua LiveDead-A, FSC-W, SSC-W
+        adds:  BV480-A
+```
+
+Nothing is renamed and no parameter is dropped: each sample keeps the channel
+names its gates were drawn against, which is the only way the gates stay the
+gates FlowJo applied. The parts rejoin downstream because cells are pooled on
+**marker**, not on channel — `--recover_markers` already maps
+`Comp-Aqua LiveDead-A` and `Comp-BV480-A` onto the same marker. Counts, the
+population map, plot legends and the load report all remain **per workspace**;
+the parts show up only as a `2 channel sets` badge in the app's data-health
+panel and in the log above.
+
+A sample whose FCS file was never resolved by name has no channels to read and
+joins the largest part. If a part still refuses after the split, only that
+part's samples are lost — the rest of the workspace still loads.
+
 ### Sample names
 
 A sample keeps its own name whenever it is unique across the whole run. Only
@@ -352,6 +399,54 @@ Rscript scripts/umap_from_flowjo.R --subpop_select \
 > effective than one many-colour plot.
 
 ---
+
+## Quoting on the command line
+
+Every option is passed through your shell first, so the rule is a shell rule,
+not a rule of this script: **quote a value if it contains a space, a `;`, a
+`*`, a `(`, a `$`, or a `+`.** Nothing is harmed by quoting a value that did not
+need it, so when in doubt, quote.
+
+In practice that means:
+
+```bash
+# Spaces — the usual case. Gate paths and group names almost always have them.
+--population "Lymphocytes/Single Cells/Viable cells"
+--group "All Samples"
+
+# Semicolons — these separate entries, and an unquoted ';' ENDS THE COMMAND.
+# Without the quotes the shell runs everything after the first ';' as a
+# separate command, and the script silently receives only the first pair.
+--marker_aliases "TNF=TNFa;IFN=INFy"
+--population_map "MTB016=/Lymphocytes/Live cells;MTB023=/Lymphocytes/Viable"
+
+# Parentheses and '+' — real FlowJo workspaces contain both.
+--workspaces "MTB061_ (2),MTB074"
+--subpop_select "CD4+/IFN,CD8+/IFN"
+
+# No spaces or shell characters — quotes optional, and usually omitted.
+--n_neighbors 15
+--match_mode content
+--output_formats png,svg
+```
+
+Two things that are NOT about quoting and catch people anyway:
+
+* **Commas separate list items; do not put spaces after them.** `--markers
+  "CD4, CD8"` asks for a marker literally called `" CD8"`. Write
+  `--markers CD4,CD8`.
+* **A gate name containing a comma** cannot go in a comma-separated list. That
+  is why `--population_map` and `--marker_aliases` use `;` between entries — a
+  FlowJo gate may contain a comma but, in practice, never a semicolon.
+
+Inside a params YAML (`config/pipeline_F_params.yaml`) there is no shell, so
+these rules do not apply — quote only what YAML itself requires:
+
+```yaml
+population: Lymphocytes/Single Cells/Viable cells   # no quotes needed
+marker_aliases: "TNF=TNFa;IFN=INFy"                 # quoted: starts a YAML flow
+group: "1"                                          # quoted: keep it a string
+```
 
 ## Options
 

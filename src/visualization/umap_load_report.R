@@ -75,7 +75,8 @@ build_load_report <- function(inputs,
                               common_markers = character(0),
                               panel_cmp = NULL, suggestions = NULL,
                               channel_dict = NULL, samples = NULL,
-                              annotations = NULL, unnamed_samples = 0L) {
+                              annotations = NULL, unnamed_samples = 0L,
+                              panel_parts = list()) {
 
   # A gate is reported as {path, label, depth}: the path is what --population
   # needs, the label is what a human can read (see gate_display_label — a gate
@@ -142,7 +143,13 @@ build_load_report <- function(inputs,
       # Precomputed because it is what decides whether a joint run is possible,
       # and every consumer would otherwise compute it the same way.
       gates_not_shared   = setdiff(pops_by_wsp[[label]], shared_pops),
-      markers_not_shared = setdiff(markers_by_wsp[[label]], common_markers)
+      markers_not_shared = setdiff(markers_by_wsp[[label]], common_markers),
+      # >1 when the workspace's samples did not share a channel set and had to
+      # be loaded as several GatingSets. A front-end that shows this can say
+      # "loaded, in 2 acquisition panels" instead of leaving a real property of
+      # the data visible only in the console log.
+      n_panel_parts = if (is.null(panel_parts[[label]])) 1L
+                      else as.integer(panel_parts[[label]])
     )
   })
   names(ws_rows) <- NULL
