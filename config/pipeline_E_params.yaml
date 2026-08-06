@@ -2,6 +2,42 @@ pipeline: E
 input_dir: /path/to/preprocessed_fcs_files
 output_dir: ./results/pipeline_E
 markers_of_interest: "CD3,CD4,CD8,CD19,CD56,HLA-DR"
-clustering_method: leiden
-dimred_method: umap
+
+# --- Methods ---
+clustering_method: leiden          # leiden, flowsom, phenograph, dbscan
+dimred_method: umap                # umap, tsne, diffusion_map
+# batch_method: none               # harmony, cytonorm, combat, none
+
+# --- Downsampling ---
 downsample_n: 10000
+# downsample_method: Consistent
+
+# --- Clustering ---
+# n_neighbors: 15
+# resolution: 0.5
+# n_clusters: 20
+# grid_xdim: 10
+# grid_ydim: 10
+# dbscan_eps: null
+# dbscan_min_pts: 5
+
+# --- Batch correction ---
+# batch_names: null
+# batch_do_pca: false
+# combat_method: parametric
+# cytonorm_n_clusters: 10
+# cytonorm_goal: mean
+
+# --- Dimensionality reduction ---
+# umap_min_dist: 0.1
+# tsne_perplexity: 30
+# tsne_max_iter: 1000
+
+# --- Output ---
+# output_formats: png
+# plot_width: 10
+# plot_height: 8
+# save_intermediates: false
+
+# --- Reproducibility ---
+# seed: 42

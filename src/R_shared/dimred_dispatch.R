@@ -40,11 +40,13 @@ run_dimred <- function(expr_matrix, method = "umap",
   cat("Dispatching dimensionality reduction: method =", method, "\n")
 
   # Resolve visualization directory
-  if (exists("shared_dir")) {
-    viz_dir <- file.path(dirname(shared_dir), "visualization")
-  } else {
-    viz_dir <- file.path(dirname(getwd()), "src", "visualization")
-  }
+  # cyto_src_root() resolves from paths.R's own on-disk location, so the
+  # fallback no longer depends on where R happens to have been started — which
+  # is the whole point of the bootstrap, and this else-branch was the one place
+  # in this file still guessing.
+  viz_dir <- if (exists("shared_dir")) file.path(dirname(shared_dir), "visualization")
+             else if (exists("cyto_src_root", mode = "function")) file.path(cyto_src_root(), "visualization")
+             else file.path(dirname(getwd()), "src", "visualization")
 
   # Common output format params
   output_formats <- params$output_formats %||% list(pdf = FALSE, png = TRUE, svg = FALSE)

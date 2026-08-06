@@ -111,3 +111,15 @@ compare_scripts.py
 !pipelines/**/*.R
 !config/**/*.R
 .claude/settings.local.json
+
+# ======================== NEXTFLOW / RUN ARTEFACTS ==========================
+# Nextflow's scratch tree and its logs: one directory per task, regenerated on
+# every run and meaningless outside the machine that produced them. 294 of these
+# were committed once by a `git add -A` before this section existed.
+work/
+.nextflow/
+.nextflow.log*
+# Pipeline and app output. Runs write here by default; results belong with the
+# analysis that produced them, not in the repository.
+results/
+scratch_params/

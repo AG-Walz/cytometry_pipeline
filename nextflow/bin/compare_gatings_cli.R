@@ -13,28 +13,43 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+# --- Input validation ---
+if (!is.null(opt$pop_strings_rds) && !file.exists(opt$pop_strings_rds)) {
+  stop("Input file not found: ", opt$pop_strings_rds)
+}
+if (!is.null(opt$target_fcs) && !file.exists(opt$target_fcs)) {
+  stop("Target FCS file not found: ", opt$target_fcs)
+}
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "cluster_utils.R"))
 source(file.path(src_dir, "metadata_qc", "compare_gatings.R"))
 
-pop_strings_list <- readRDS(opt$pop_strings_rds)
-label_dict <- as.list(fromJSON(opt$label_dict))
-custom_name <- if (!is.null(opt$custom_name)) {
-  strsplit(opt$custom_name, ",")[[1]]
-} else {
-  NULL
-}
+tryCatch({
+  pop_strings_list <- readRDS(opt$pop_strings_rds)
+  label_dict <- as.list(fromJSON(opt$label_dict))
+  custom_name <- if (!is.null(opt$custom_name)) {
+    strsplit(opt$custom_name, ",")[[1]]
+  } else {
+    NULL
+  }
 
-label_lists <- compare_gatings(
-  pop_strings_list = pop_strings_list,
-  target_fcs       = opt$target_fcs,
-  label_dict       = label_dict,
-  custom_name      = custom_name,
-  output_dir       = opt$output_dir,
-  scale_size       = TRUE
-)
+  label_lists <- compare_gatings(
+    pop_strings_list = pop_strings_list,
+    target_fcs       = opt$target_fcs,
+    label_dict       = label_dict,
+    custom_name      = custom_name,
+    output_dir       = opt$output_dir,
+    scale_size       = TRUE
+  )
 
-saveRDS(label_lists, file.path(opt$output_dir, "label_lists.rds"))
-cat("Gating comparison ->", opt$output_dir, "\n")
+  saveRDS(label_lists, file.path(opt$output_dir, "label_lists.rds"))
+  cat("Gating comparison ->", opt$output_dir, "\n")
+}, error = function(e) {
+  cat(sprintf("\n[ERROR] Gating comparison failed: %s\n", conditionMessage(e)), file = stderr())
+  cat("Stack trace:\n", file = stderr())
+  traceback(e)
+  quit(status = 1)
+})

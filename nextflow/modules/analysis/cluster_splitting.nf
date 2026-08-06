@@ -12,7 +12,7 @@ process SPLIT_CLUSTERS {
     path "split_clusters/split_result.rds", emit: split_result, optional: true
 
     script:
-    def markers_arg = params.markers_of_interest ? "--markers_of_interest ${params.markers_of_interest}" : ""
+    def markers_arg = params.markers_of_interest ? "--markers_of_interest '${params.markers_of_interest}'" : ""
     """
     split_clusters_cli.R \
         --input_dir ${csv_dir} \

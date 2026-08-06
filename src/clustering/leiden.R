@@ -5,7 +5,35 @@
 # Merged from: R_scripts/04_gating/Leiden.R + Clustering.R
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      # Rscript src/foo/bar.R carries no source frame; recover from --file=.
+      if (is.null(of)) {
+        a <- commandArgs(FALSE); m <- grep("^--file=", a)
+        if (length(m)) of <- sub("^--file=", "", a[m[[1]]])
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of, mustWork = FALSE)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+# Guarded, NOT unconditional: nextflow/bin/*_cli.R and scripts/*.R set shared_dir
+# themselves (the --src_dir convention), and clobbering it here would send every
+# source() below to whichever tree this file happens to live in rather than the
+# one the caller chose.
+if (!exists("shared_dir")) shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "stats_utils.R"))
 
@@ -54,7 +82,7 @@ run_leiden <- function(expr_matrix, n_neighbors = 30,
 #' Run Leiden clustering and save results with UMAP coordinates
 #'
 #' Input from: build_combined_expr_matrix() (R_shared/flowframe_utils.R)
-#' Output to:  clusters_to_gating_csv() (this file)
+#' Output to:  clusters_to_gating_csv() (R_shared/cluster_utils.R)
 #'
 #' @param expr_matrix Numeric matrix
 #' @param sample_labels Character vector of sample labels per cell
@@ -99,51 +127,4 @@ run_leiden_with_umap <- function(expr_matrix, sample_labels = NULL,
   result
 }
 
-#' Convert cluster assignments to per-sample gating-style CSVs
-#'
-#' Takes a combined expression matrix and cluster assignments, then writes
-#' one CSV per sample with expression columns plus binary indicator columns
-#' for each cluster (named "Cluster_X (Clustering annotated)").
-#'
-#' Input from: run_leiden_with_umap() (this file),
-#'             build_combined_expr_matrix() (R_shared/flowframe_utils.R)
-#' Output to:  split_by_cluster() (analysis/cluster_splitting.R),
-#'             run_differential_abundance() (analysis/differential_abundance.R),
-#'             run_cluster_enrichment() (analysis/cluster_enrichment.R)
-#'
-#' @param combined_matrix Numeric matrix (cells x markers)
-#' @param sample_labels Character vector of sample labels (one per row)
-#' @param cluster_ids Integer or character vector of cluster assignments (one per row)
-#' @param output_dir Directory for per-sample CSV output files
-#' @param sep CSV separator (default ";")
-#' @return Character vector of written file paths (invisibly)
-clusters_to_gating_csv <- function(combined_matrix, sample_labels, cluster_ids,
-                                    output_dir, sep = ";") {
-  require(data.table)
-  make_outdir(output_dir)
-
-  clustered_df <- as.data.frame(combined_matrix)
-  clustered_df$sample <- sample_labels
-  clustered_df$cluster <- cluster_ids
-
-  unique_clusters <- unique(cluster_ids)
-  unique_samples <- unique(sample_labels)
-  output_files <- character(length(unique_samples))
-
-  for (i in seq_along(unique_samples)) {
-    sname <- unique_samples[i]
-    sdata <- clustered_df[clustered_df$sample == sname, ]
-    for (cl in unique_clusters) {
-      col_name <- paste0("Cluster_", cl, " (Clustering annotated)")
-      sdata[[col_name]] <- as.integer(sdata$cluster == cl)
-    }
-    sdata$cluster <- NULL
-    sdata$sample <- NULL
-    out_path <- file.path(output_dir, paste0(sname, ".csv"))
-    data.table::fwrite(sdata, out_path, sep = sep)
-    output_files[i] <- out_path
-  }
-
-  cat("Wrote", length(output_files), "cluster CSV files to:", output_dir, "\n")
-  invisible(output_files)
-}
+# clusters_to_gating_csv() lives in src/R_shared/cluster_utils.R

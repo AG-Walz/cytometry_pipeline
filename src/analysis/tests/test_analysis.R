@@ -450,8 +450,8 @@ test_that("run_correlation_analysis returns cor_matrix and significant_pairs", {
   # A and B should be highly correlated
   expect_true(result$cor_matrix["A", "B"] > 0.9)
 
-  # Diagonal should be 1
-  expect_equal(diag(result$cor_matrix), c(1, 1, 1), tolerance = 1e-10)
+  # Diagonal should be 1 (unname strips marker names from the diag vector)
+  expect_equal(unname(diag(result$cor_matrix)), c(1, 1, 1), tolerance = 1e-10)
 
   # Significant pairs should include A-B
   sig <- result$significant_pairs
@@ -622,7 +622,7 @@ test_that("combine_expression_matrices returns NULL when no markers match", {
   expect_null(result)
 })
 
-test_that("combine_expression_matrices handles partial marker overlap", {
+test_that("combine_expression_matrices skips samples missing markers", {
   skip_if_not_installed("data.table")
 
   source(file.path(shared_dir, "cluster_utils.R"))
@@ -634,14 +634,17 @@ test_that("combine_expression_matrices handles partial marker overlap", {
 
   expr_list <- list(s1 = dt1, s2 = dt2)
 
-  # Request A and B; s2 only has A
-  mat <- combine_expression_matrices(expr_list, markers = c("A", "B"))
+  # Request A and B; s2 is missing B and should be skipped with a warning.
+  expect_warning(
+    mat <- combine_expression_matrices(expr_list, markers = c("A", "B")),
+    "Sample 's2' is missing markers"
+  )
 
   expect_true(is.matrix(mat))
-  # s1 contributes both A and B (5 rows), s2 contributes only A (5 rows, 1 col)
-  # Since s2 has only 1 of 2 markers, it returns a 1-col matrix
-  # Both should be included but with different column counts per piece
-  expect_true(nrow(mat) >= 5)
+  # Only s1 contributes, so 5 rows x 2 cols
+  expect_equal(nrow(mat), 5)
+  expect_equal(ncol(mat), 2)
+  expect_equal(colnames(mat), c("A", "B"))
 })
 
 # ======================== run_pca() from stats_utils ========================

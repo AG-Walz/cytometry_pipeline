@@ -6,7 +6,35 @@
 # combining gate results with boolean logic (AND/OR/NOT expressions).
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      # Rscript src/foo/bar.R carries no source frame; recover from --file=.
+      if (is.null(of)) {
+        a <- commandArgs(FALSE); m <- grep("^--file=", a)
+        if (length(m)) of <- sub("^--file=", "", a[m[[1]]])
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of, mustWork = FALSE)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+# Guarded, NOT unconditional: nextflow/bin/*_cli.R and scripts/*.R set shared_dir
+# themselves (the --src_dir convention), and clobbering it here would send every
+# source() below to whichever tree this file happens to live in rather than the
+# one the caller chose.
+if (!exists("shared_dir")) shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 
 #' Apply a sequence of gates to a flowFrame
@@ -124,21 +152,27 @@ boolean_gate <- function(flowframe, gate_results, expression) {
   cat("Boolean gating: '", expression, "' on ", n_cells, " events\n", sep = "")
 
   # --- Parse and evaluate expression -----------------------------------------
-  # Sort gate names by length (longest first) to avoid partial replacement
+  # Gate names may contain characters that are meaningful in regex (e.g. `+`
+  # in "CD3+"), so use fixed (literal) replacement. Sort by length so that
+  # longer names are replaced before their shorter prefixes (e.g. "CD3+CD4+"
+  # before "CD3+").
   gate_names <- names(gate_results)
   gate_names_sorted <- gate_names[order(nchar(gate_names), decreasing = TRUE)]
 
+  # Use a placeholder per gate to avoid overlap between replaced substrings
+  # and new gate-name tokens introduced by earlier substitutions.
+  placeholders <- paste0("__GATE_", seq_along(gate_names_sorted), "__")
   eval_expr <- expression
-  for (nm in gate_names_sorted) {
-    # Escape special regex characters in gate names (e.g., + in "CD3+")
-    escaped_nm <- gsub("([\\[\\]\\(\\)\\{\\}\\+\\*\\?\\.\\^\\$\\|\\\\])",
-                       "\\\\\\1", nm)
-    eval_expr <- gsub(escaped_nm, paste0("gate_results[['", nm, "']]"),
-                      eval_expr)
+  for (i in seq_along(gate_names_sorted)) {
+    eval_expr <- gsub(gate_names_sorted[i], placeholders[i], eval_expr, fixed = TRUE)
+  }
+  for (i in seq_along(gate_names_sorted)) {
+    eval_expr <- gsub(placeholders[i],
+                      paste0("gate_results[['", gate_names_sorted[i], "']]"),
+                      eval_expr, fixed = TRUE)
   }
 
   # Validate only expected tokens remain (logical operators and gate references)
-  # Replace known safe patterns to check for unexpected tokens
   check_expr <- eval_expr
   check_expr <- gsub("gate_results\\[\\['.+?'\\]\\]", "", check_expr)
   check_expr <- gsub("[&|!() ]", "", check_expr)

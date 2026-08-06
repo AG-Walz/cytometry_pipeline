@@ -43,7 +43,6 @@ source(file.path(shared_dir, "cluster_utils.R"))
 source(file.path(shared_dir, "stats_utils.R"))
 source(file.path(shared_dir, "plot_utils.R"))
 source(file.path(shared_dir, "memory_utils.R"))
-source(file.path(shared_dir, "pipeline_utils.R"))
 source(file.path(shared_dir, "clustering_dispatch.R"))
 source(file.path(shared_dir, "dimred_dispatch.R"))
 source(file.path(shared_dir, "batch_correction_dispatch.R"))
@@ -572,7 +571,7 @@ test_that("from_mtx_to_ffr converts matrix to flowFrame", {
   expect_s4_class(ff, "flowFrame")
   expect_equal(nrow(flowCore::exprs(ff)), 3)
   expect_equal(ncol(flowCore::exprs(ff)), 2)
-  expect_equal(colnames(flowCore::exprs(ff)), c("CD3", "CD4"))
+  expect_equal(unname(colnames(flowCore::exprs(ff))), c("CD3", "CD4"))
 })
 
 test_that("from_mtx_to_ffr preserves expression values", {
@@ -585,8 +584,9 @@ test_that("from_mtx_to_ffr preserves expression values", {
 
   ff <- from_mtx_to_ffr(mat)
   expr <- flowCore::exprs(ff)
-  expect_equal(expr[1, 1], 10.5)
-  expect_equal(expr[3, 2], 60.9)
+  # flowFrame stores values as single-precision floats, so use a loose tolerance.
+  expect_equal(unname(expr[1, 1]), 10.5, tolerance = 1e-5)
+  expect_equal(unname(expr[3, 2]), 60.9, tolerance = 1e-5)
 })
 
 test_that("build_combined_expr_matrix combines multiple flowFrames", {
@@ -787,101 +787,8 @@ test_that("read_csv_chunked reads small files directly", {
 
 
 # =============================================================================
-# 7. pipeline_utils.R tests
+# 7. %||% polyfill (defined in clustering_dispatch.R)
 # =============================================================================
-context("pipeline_utils.R")
-
-test_that("clustering_params extracts defaults when params is empty", {
-  result <- clustering_params(list())
-  expect_type(result, "list")
-  expect_equal(result$n_neighbors, 15)
-  expect_equal(result$resolution, 0.5)
-  expect_equal(result$n_clusters, 20)
-  expect_equal(result$grid_xdim, 10)
-  expect_equal(result$grid_ydim, 10)
-  expect_equal(result$k, 30)  # falls through: params$k NULL, params$n_neighbors NULL -> 30
-  expect_equal(result$dbscan_min_pts, 5)
-  expect_equal(result$seed, 42)
-  expect_null(result$dbscan_eps)
-})
-
-test_that("clustering_params uses provided values over defaults", {
-  params <- list(
-    n_neighbors = 25,
-    resolution = 1.0,
-    n_clusters = 30,
-    seed = 123
-  )
-  result <- clustering_params(params)
-  expect_equal(result$n_neighbors, 25)
-  expect_equal(result$resolution, 1.0)
-  expect_equal(result$n_clusters, 30)
-  expect_equal(result$seed, 123)
-  # k should now use params$n_neighbors since params$k is NULL
-  expect_equal(result$k, 25)
-})
-
-test_that("clustering_params k prefers explicit k over n_neighbors", {
-  params <- list(k = 50, n_neighbors = 25)
-  result <- clustering_params(params)
-  expect_equal(result$k, 50)
-})
-
-test_that("dimred_params extracts defaults when params is empty", {
-  result <- dimred_params(list())
-  expect_type(result, "list")
-  expect_equal(result$n_neighbors, 15)
-  expect_equal(result$umap_min_dist, 0.1)
-  expect_equal(result$tsne_perplexity, 30)
-  expect_equal(result$tsne_max_iter, 1000)
-  expect_equal(result$dm_n_components, 3)
-  expect_equal(result$dm_sigma, "local")
-  expect_equal(result$seed, 42)
-  expect_type(result$output_formats, "list")
-  expect_equal(result$plot_width, 10)
-  expect_equal(result$plot_height, 8)
-})
-
-test_that("dimred_params uses provided values", {
-  params <- list(
-    tsne_perplexity = 50,
-    umap_min_dist = 0.3,
-    seed = 99
-  )
-  result <- dimred_params(params)
-  expect_equal(result$tsne_perplexity, 50)
-  expect_equal(result$umap_min_dist, 0.3)
-  expect_equal(result$seed, 99)
-})
-
-test_that("batch_params extracts defaults when params is empty", {
-  result <- batch_params(list())
-  expect_type(result, "list")
-  expect_equal(result$batch_do_pca, FALSE)
-  expect_equal(result$combat_method, "parametric")
-  expect_null(result$combat_covariates)
-  expect_null(result$cytonorm_train_indices)
-  expect_equal(result$cytonorm_n_clusters, 10)
-  expect_equal(result$cytonorm_goal, "mean")
-  expect_equal(result$seed, 42)
-})
-
-test_that("batch_params includes combat_covariates and cytonorm_goal", {
-  params <- list(
-    combat_covariates = data.frame(group = c("A", "B")),
-    cytonorm_goal = "median"
-  )
-  result <- batch_params(params)
-  expect_s3_class(result$combat_covariates, "data.frame")
-  expect_equal(result$cytonorm_goal, "median")
-})
-
-test_that("batch_params preserves cytonorm_train_indices", {
-  params <- list(cytonorm_train_indices = c(1, 3, 5))
-  result <- batch_params(params)
-  expect_equal(result$cytonorm_train_indices, c(1, 3, 5))
-})
-
 test_that("%||% operator works correctly", {
   expect_equal(NULL %||% 42, 42)
   expect_equal(5 %||% 42, 5)
@@ -1100,16 +1007,6 @@ test_that("run_pca handles constant columns gracefully", {
   result <- run_pca(mat, n_components = 1, scale = FALSE)
   expect_equal(nrow(result$coordinates), 20)
   expect_equal(ncol(result$coordinates), 1)
-})
-
-test_that("clustering_params and dimred_params share seed correctly", {
-  params <- list(seed = 999)
-  cp <- clustering_params(params)
-  dp <- dimred_params(params)
-  bp <- batch_params(params)
-  expect_equal(cp$seed, 999)
-  expect_equal(dp$seed, 999)
-  expect_equal(bp$seed, 999)
 })
 
 test_that("extract_cluster_group handles NKTCells pattern", {

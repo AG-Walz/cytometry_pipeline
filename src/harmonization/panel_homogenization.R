@@ -16,6 +16,7 @@
 if (!exists("explore_data", mode = "function")) {
   .panel_shared <- Find(dir.exists, c(
     if (exists("shared_dir")) shared_dir,
+    if (exists("cyto_shared_dir", mode = "function")) cyto_shared_dir(),
     file.path(getwd(), "src", "R_shared"),
     file.path(dirname(getwd()), "src", "R_shared")))
   if (!is.null(.panel_shared)) {
@@ -334,10 +335,11 @@ replace_markernames <- function(flowframe, replace_map) {
 #' Reorder expression matrix to match target marker order
 #' @param flowframe A flowFrame object
 #' @param marker_name_list Character vector of target marker order
-#' @return Reordered expression matrix
+#' @return Reordered expression matrix (missing markers are filled with 0;
+#'   flowCore's flowFrame constructor does not accept NA/NaN in exprs)
 reorder_exprmtx <- function(flowframe, marker_name_list) {
   data <- explore_data(flowframe)
-  result <- matrix(NA, nrow = nrow(flowCore::exprs(flowframe)),
+  result <- matrix(0, nrow = nrow(flowCore::exprs(flowframe)),
                    ncol = length(marker_name_list))
   colnames(result) <- marker_name_list
   missing_markers <- c()
@@ -350,7 +352,7 @@ reorder_exprmtx <- function(flowframe, marker_name_list) {
     }
   }
   if (length(missing_markers) > 0) {
-    warning("Markers filled with NA (not found in flowFrame): ",
+    warning("Markers filled with 0 (not found in flowFrame): ",
             paste(missing_markers, collapse = ", "))
   }
   result

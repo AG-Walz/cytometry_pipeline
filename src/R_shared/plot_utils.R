@@ -60,9 +60,21 @@ save_plot_formats <- function(plot, filename_base,
                               width = 14, height = 10,
                               formats = list(pdf = TRUE, png = TRUE, svg = TRUE),
                               png_dpi = 200) {
+  # The PDF device is the awkward one. grDevices::pdf knows only a handful of
+  # built-in font families and errors with "invalid font type" on anything else
+  # — so stamping a registered system family below and then writing a PDF with
+  # it was a hard failure, which the visualization and metadata_qc suites catch.
+  # cairo_pdf resolves system fonts the way ragg and svglite do, so it is used
+  # when the build has cairo; without cairo the family is simply not stamped,
+  # which costs nice glyphs rather than the whole plot.
+  use_cairo_pdf <- isTRUE(capabilities("cairo"))
+  pdf_device <- if (use_cairo_pdf) grDevices::cairo_pdf else "pdf"
+
   # Stamp a known-good font family on the plot so text does not render as boxes
-  # (see .plot_font_family). No-op when no usable font could be registered.
+  # (see .plot_font_family). No-op when no usable font could be registered, or
+  # when a PDF is wanted and this build cannot honour the family in one.
   fam <- .plot_font_family()
+  if (isTRUE(formats$pdf) && !use_cairo_pdf) fam <- ""
   if (nzchar(fam) && inherits(plot, "ggplot")) {
     plot <- plot + ggplot2::theme(text = ggplot2::element_text(family = fam))
   }
@@ -86,7 +98,7 @@ save_plot_formats <- function(plot, filename_base,
     svg_device <- svglite::svglite
   }
   format_configs <- list(
-    pdf = list(ext = ".pdf", device = "pdf", extra_args = list()),
+    pdf = list(ext = ".pdf", device = pdf_device, extra_args = list()),
     png = list(ext = ".png", device = png_device,
                extra_args = list(dpi = png_dpi)),
     svg = list(ext = ".svg", device = svg_device, extra_args = list())
@@ -181,7 +193,12 @@ plot_per_sample <- function(df, value_col, out_dir, out_prefix, y_label, title) 
 create_safe_filename <- function(name, max_length = 100) {
   safe <- gsub("[^A-Za-z0-9_.-]", "_", name)
   safe <- gsub("_+", "_", safe)
-  safe <- gsub("^_|_$", "", safe)
+  # Hyphens collapse too, and BOTH separators are stripped from the ends. A
+  # marker called "IL-2" beside a gate called "CD4-" otherwise produced names
+  # with runs of dashes and a trailing one, which differ between filesystems
+  # once a second sanitiser touches them.
+  safe <- gsub("-+", "-", safe)
+  safe <- gsub("^[_-]+|[_-]+$", "", safe)
   if (nchar(safe) > max_length) safe <- substr(safe, 1, max_length)
   safe
 }

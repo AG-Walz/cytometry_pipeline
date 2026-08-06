@@ -12,6 +12,7 @@
 if (!exists("explore_data", mode = "function")) {
   .panel_shared <- Find(dir.exists, c(
     if (exists("shared_dir")) shared_dir,
+    if (exists("cyto_shared_dir", mode = "function")) cyto_shared_dir(),
     file.path(getwd(), "src", "R_shared"),
     file.path(dirname(getwd()), "src", "R_shared")))
   if (!is.null(.panel_shared)) {
