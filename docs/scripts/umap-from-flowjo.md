@@ -291,6 +291,53 @@ Populations not shared by all workspaces (2):
     /Lymphocytes/Single Cells/Viable cells/NK     [missing in: runA]
 ```
 
+### Workspaces whose samples have different channels
+
+FlowJo holds every sample as its own object and resolves each gate's dimension
+against that sample's own parameter list, so one workspace can happily contain
+acquisitions from two instruments. CytoML cannot: it materialises a sample group
+as a single cytoset with **one** column schema, and refuses a group whose FCS
+files do not all carry exactly the same `$PnN` set:
+
+```
+Found channel inconsistency across samples.
+'Comp-Aqua LiveDead-A' is missing from MTB017_1_V4W279_neg.fcs_15850
+```
+
+That is not corruption. A cohort acquired over two years typically has:
+
+* the same viability dye on a detector named `Aqua LiveDead-A` on one cytometer
+  and `BV480-A` on another (identical `$PnS`, different configuration name);
+* the scatter-width parameters `FSC-W`/`SSC-W` recorded under some acquisition
+  templates and not others (`$PAR` 14 vs 12);
+* the odd extra detector (`SP SSC-A`) from a third template.
+
+Such a workspace used to be lost entirely — `refused, 0/0`. It is now split into
+channel-homogeneous **parts**, one GatingSet each, and reported:
+
+```
+MTB017_1: its 20 sample(s) were acquired with 2 different channel sets, so CytoML
+refused the workspace whole. Loading it as 2 parts, each with its own
+channels; they rejoin in the UMAP on marker names.
+    part 1 — 10 sample(s), e.g. MTB017_1_V4W279_neg.fcs
+    part 2 — 10 sample(s), e.g. MTB017_1_V4W228_neg.fcs
+        lacks: Aqua LiveDead-A, FSC-W, SSC-W
+        adds:  BV480-A
+```
+
+Nothing is renamed and no parameter is dropped: each sample keeps the channel
+names its gates were drawn against, which is the only way the gates stay the
+gates FlowJo applied. The parts rejoin downstream because cells are pooled on
+**marker**, not on channel — `--recover_markers` already maps
+`Comp-Aqua LiveDead-A` and `Comp-BV480-A` onto the same marker. Counts, the
+population map, plot legends and the load report all remain **per workspace**;
+the parts show up only as a `2 channel sets` badge in the app's data-health
+panel and in the log above.
+
+A sample whose FCS file was never resolved by name has no channels to read and
+joins the largest part. If a part still refuses after the split, only that
+part's samples are lost — the rest of the workspace still loads.
+
 ### Sample names
 
 A sample keeps its own name whenever it is unique across the whole run. Only

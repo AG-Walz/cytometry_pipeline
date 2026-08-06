@@ -41,6 +41,22 @@ def _alert(children, color="red", title=None):
     return dmc.Alert(children, color=color, title=title, variant="light")
 
 
+def _failure_message(what: str, snap: dict) -> str:
+    """Why a run is being reported as failed, in terms a person can act on.
+
+    The old text printed the raw return code, which for a detached run is None
+    — nobody wait()s for it — so it read "failed (exit code None)" and said
+    nothing at all. What is actually useful is the last thing the run printed,
+    because that is where it stopped.
+    """
+    code = snap.get("returncode")
+    tail = [ln for ln in (snap.get("log") or "").splitlines() if ln.strip()]
+    last = tail[-1].strip() if tail else ""
+    reason = (f"{what} failed (exit code {code})." if code is not None
+              else f"{what} stopped before it finished.")
+    return f"{reason} Last line: {last}" if last else f"{reason} See the Log tab."
+
+
 def _format_remaining(seconds: float | None) -> str:
     """A duration a person would say out loud, not a stopwatch reading.
 
@@ -417,18 +433,21 @@ def register_callbacks() -> None:
             elif status == CANCELLED:
                 feedback = _alert("Workspace load cancelled.", color="orange")
             else:
-                feedback = _alert(
-                    f"Loading the workspace failed (exit code "
-                    f"{snap['returncode']}). See the Log tab.",
-                )
+                feedback = _alert(_failure_message("Loading the workspaces",
+                                                   snap))
 
         elif kind == "run":
             output_dir = snap["meta"].get("output_dir") or ""
             new_results = output_dir
             if status == DONE:
                 tab = "results"
-            elif current_tab == "results":
-                # A failed run leaves the gallery empty; the log explains why.
+            else:
+                # A failed run leaves the gallery empty, and an empty gallery on
+                # its own reads as "nothing happened". Say what stopped it.
+                if status == CANCELLED:
+                    feedback = _alert("Run cancelled.", color="orange")
+                else:
+                    feedback = _alert(_failure_message("The run", snap))
                 tab = "log"
 
         return (*base, generation, new_inspect, new_results, feedback, tab)

@@ -84,6 +84,12 @@ def _workspace_row(ws: dict, excluded: bool):
     if ws.get("markers"):
         pills.append(dmc.Badge(f"{len(ws['markers'])} markers", variant="light",
                                size="xs", color="gray"))
+    # A workspace whose samples were not all acquired with the same channels.
+    # It loaded — but as several gating sets, and that is a property of the data
+    # worth seeing next to the counts rather than only in the log.
+    if (ws.get("n_panel_parts") or 1) > 1:
+        pills.append(dmc.Badge(f"{ws['n_panel_parts']} channel sets",
+                               variant="light", size="xs", color="violet"))
 
     head = dmc.Group(
         [

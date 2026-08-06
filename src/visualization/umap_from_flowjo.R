@@ -1064,7 +1064,15 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # different acquisition. With --allow_missing_samples that costs the run one
   # workspace, not all of them: the flag says "load what is loadable", and a
   # workspace CytoML refuses is a workspace whose data is unusable here.
+  #
+  # A workspace normally yields ONE GatingSet named after itself. It yields
+  # several when its samples were acquired with different channel sets, which
+  # CytoML cannot hold in one cytoset — see build_workspace_gatingsets(). The
+  # parts are separate entries in gs_list because everything downstream works
+  # per GatingSet, and `gs_source` maps each back to the workspace it came from
+  # so counts, specs and the population map stay per WORKSPACE.
   gs_list <- list()
+  gs_source <- character(0)
   build_failed <- list()
   load_records <- list()
   for (label in names(specs)) {
@@ -1072,27 +1080,45 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     cat(sprintf("\nBuilding GatingSet for '%s' — %s, %d listed sample(s)\n",
                 label, describe_group(spec), length(spec$listed)))
     emit_progress("load", which(names(specs) == label) - 1L, length(specs), label)
-    gs <- tryCatch(build_workspace_gatingset(spec),
-                   error = function(e) {
-                     if (!allow_missing_samples) stop(e)
-                     build_failed[[label]] <<- conditionMessage(e)
-                     NULL
-                   })
-    if (!is.null(gs)) {
-      gs_list[[label]] <- gs
+    parts <- tryCatch(build_workspace_gatingsets(spec),
+                      error = function(e) {
+                        if (!allow_missing_samples) stop(e)
+                        build_failed[[label]] <<- conditionMessage(e)
+                        NULL
+                      })
+    if (!is.null(parts)) {
+      for (part in names(parts)) {
+        gs_list[[part]]   <- parts[[part]]
+        gs_source[[part]] <- label
+      }
+      # A part that still refused after the split costs its own samples and
+      # nothing else, but it is a real loss and is reported as one.
+      failed_parts <- attr(parts, "failed_parts")
+      for (part in names(failed_parts)) {
+        build_failed[[part]] <- failed_parts[[part]]
+      }
       # The only place that knows what ARRIVED rather than what was asked for.
-      # Every count from here on is taken from these records.
+      # Every count from here on is taken from these records — over ALL parts,
+      # so a split workspace is still one workspace with one sample tally.
       load_records[[label]] <- workspace_load_record(
-        spec, flowWorkspace::sampleNames(gs))
+        spec, unlist(lapply(parts, flowWorkspace::sampleNames),
+                     use.names = FALSE))
     }
   }
   if (length(build_failed)) {
     cat("\nWARNING: ", length(build_failed),
-        " workspace(s) resolved their files but could NOT be loaded, and are\n",
-        "not in the analysis. Each reason is CytoML's own:\n", sep = "")
+        " workspace(s) or channel-set part(s) resolved their files but could\n",
+        "NOT be loaded, and are not in the analysis. Each reason is CytoML's own:\n",
+        sep = "")
     for (label in names(build_failed)) {
       cat(sprintf("  %s\n    %s\n", label,
                   gsub("\n", "\n    ", build_failed[[label]])))
+      if (is_channel_inconsistency(build_failed[[label]])) {
+        cat("    (its samples do not all carry the same channels and could not be\n",
+            "     split into consistent groups either — the FCS files whose names\n",
+            "     the workspace records were not all found, so their channels are\n",
+            "     unknown. Check --fcs_dir covers every acquisition.)\n", sep = "")
+      }
     }
   }
   if (!length(gs_list)) {
@@ -1106,7 +1132,11 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # 311, with the headline claiming the smaller number.
   n_samples <- sum(vapply(load_records, function(r) r$n_loaded, integer(1)))
   cat(sprintf("\nGOING INTO THE UMAP: %d of %d workspace(s), %d sample(s).\n",
-              length(gs_list), n_wsp, n_samples))
+              length(load_records), n_wsp, n_samples))
+  if (length(gs_list) > length(load_records)) {
+    cat(sprintf("  (%d of them were split by channel set into %d parts; see above.)\n",
+                sum(table(gs_source) > 1L), length(gs_list)))
+  }
   routes_line <- format_match_routes(load_records)
   if (nzchar(routes_line)) cat(routes_line, "\n", sep = "")
   records_report <- format_load_records(load_records)
@@ -1136,8 +1166,11 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # is still not shared. An empty intersection is the most common reason a
   # multi-workspace run cannot proceed, so the divergence is named rather than
   # left to be inferred from "Common markers (0)".
-  panel_by_wsp <- lapply(split(panels, vapply(panels, function(p) p$workspace,
-                                             character(1))),
+  # Keyed by the SOURCE workspace: a workspace split by channel set is one panel
+  # to the person reading this, and its parts differing is exactly the kind of
+  # thing the marker dictionary above exists to reconcile.
+  panel_by_wsp <- lapply(split(panels, vapply(panels, function(p)
+                                 gs_source[[p$workspace]], character(1))),
     function(ps) {
       unique(unlist(lapply(ps, function(p) {
         sel <- select_marker_columns(p$channels, p$markers,
@@ -1177,10 +1210,14 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # contributes no gate and therefore no cells. Applied here, before anything
   # downstream is derived, so sample labels, annotations and the shared-file
   # accounting all describe the run that is actually happening.
-  pop_map <- parse_population_map(population_map, names(gs_list))
+  # Keyed on WORKSPACE labels, not on gs_list names: a workspace split by
+  # channel set must still be selected by its own name, not by "[panel 2]".
+  pop_map <- parse_population_map(population_map, names(load_records))
   if (!is.null(pop_map) && !isTRUE(list_populations)) {
-    dropped_by_map <- setdiff(names(gs_list), names(pop_map))
-    gs_list <- gs_list[names(gs_list) %in% names(pop_map)]
+    dropped_by_map <- setdiff(names(load_records), names(pop_map))
+    gs_list   <- gs_list[gs_source[names(gs_list)] %in% names(pop_map)]
+    gs_source <- gs_source[names(gs_list)]
+    load_records <- load_records[names(load_records) %in% names(pop_map)]
     specs   <- specs[names(specs) %in% names(pop_map)]
     if (!length(gs_list)) {
       stop("the population map excludes every workspace that loaded.",
@@ -1198,7 +1235,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # produces the same legends and the same file names as it always did.
   sample_index <- do.call(rbind, lapply(names(gs_list), function(w) {
     raw <- flowWorkspace::sampleNames(gs_list[[w]])
-    data.frame(workspace = rep(w, length(raw)), raw = raw,
+    data.frame(workspace = rep(gs_source[[w]], length(raw)), raw = raw,
                clean = clean_sample_label(raw), stringsAsFactors = FALSE)
   }))
   sample_index$display <- disambiguate_sample_labels(sample_index$clean,
@@ -1246,6 +1283,19 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   shared_pops <- Reduce(intersect, pops_by_wsp)
   shared_pops <- pops_by_wsp[[1]][pops_by_wsp[[1]] %in% shared_pops]
 
+  # Everything above is keyed per GATINGSET, because that is the unit a gate has
+  # to resolve in. Everything a person reads is keyed per WORKSPACE. When a
+  # workspace was split by channel set the two differ, and the bridge is an
+  # INTERSECTION, never a union: a gate only one part carries is not a gate that
+  # workspace can offer the run, and claiming otherwise would put it in the
+  # health panel as available and then fail at extraction.
+  by_source <- function(x) {
+    if (!length(x)) return(x)
+    grouped <- split(names(x), unname(gs_source[names(x)]))
+    out <- lapply(grouped, function(ks) Reduce(intersect, x[ks]))
+    out[intersect(names(load_records), names(out))]
+  }
+
   # --- 2. list_populations mode: print the tree + markers, then return. ------
   # This is the "inspect" entry point: one workspace load reports everything a
   # caller needs to configure a run (samples above, populations and the common
@@ -1269,6 +1319,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
                         dictionary = channel_dict$dictionary,
                         aliases = marker_alias_map))
     names(markers_by_wsp) <- names(gs_list)
+    markers_by_source <- by_source(markers_by_wsp)
     common_markers <- Reduce(intersect, markers_by_wsp)
     common_markers <- markers_by_wsp[[1]][markers_by_wsp[[1]] %in% common_markers]
     cat("\nCommon markers (", length(common_markers), "):\n", sep = "")
@@ -1282,10 +1333,10 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     # the moment one workspace spells a marker differently, and then the only
     # way to see WHY is to compare the panels side by side. Four-space indent,
     # same contract as the other per-workspace blocks.
-    cat("\nMarkers by workspace (", length(markers_by_wsp), "):\n", sep = "")
-    for (w in names(markers_by_wsp)) {
-      cat(sprintf("    %s | %d marker(s)\n", w, length(markers_by_wsp[[w]])))
-      for (m in markers_by_wsp[[w]]) cat("      ", m, "\n", sep = "")
+    cat("\nMarkers by workspace (", length(markers_by_source), "):\n", sep = "")
+    for (w in names(markers_by_source)) {
+      cat(sprintf("    %s | %d marker(s)\n", w, length(markers_by_source[[w]])))
+      for (m in markers_by_source[[w]]) cat("      ", m, "\n", sep = "")
     }
 
     cat("\nSample annotations (", length(annot_cols), "):\n", sep = "")
@@ -1304,29 +1355,33 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     # almost nothing when the workspaces were gated independently. Six-space
     # indent for the gates so the two- and four-space item patterns in
     # app/services/rscript.py cannot swallow them; part of the same contract.
-    cat("\nPopulations by workspace (", length(pops_by_wsp), "):\n", sep = "")
-    for (w in names(pops_by_wsp)) {
-      cat(sprintf("    %s | %d node(s)\n", w, length(pops_by_wsp[[w]])))
-      for (p in pops_by_wsp[[w]]) cat("      ", p, "\n", sep = "")
+    pops_by_source <- by_source(pops_by_wsp)
+    cat("\nPopulations by workspace (", length(pops_by_source), "):\n", sep = "")
+    for (w in names(pops_by_source)) {
+      cat(sprintf("    %s | %d node(s)\n", w, length(pops_by_source[[w]])))
+      for (p in pops_by_source[[w]]) cat("      ", p, "\n", sep = "")
     }
 
     # Counted from the GatingSets, not from the resolved file list: a sample
     # CytoML paired by content is in the analysis and has to be in the count.
-    cat("\nWorkspaces resolved (", length(gs_list), "):\n", sep = "")
-    for (label in names(gs_list)) {
-      spec <- specs[[label]]
-      cat(sprintf("    %s | %s | %s | %d sample(s)\n",
+    cat("\nWorkspaces resolved (", length(load_records), "):\n", sep = "")
+    for (label in names(load_records)) {
+      spec  <- specs[[label]]
+      parts <- names(gs_source)[gs_source == label]
+      cat(sprintf("    %s | %s | %s | %d sample(s)%s\n",
                   label, spec$wsp, describe_group(spec),
-                  load_records[[label]]$n_loaded))
+                  load_records[[label]]$n_loaded,
+                  if (length(parts) > 1L)
+                    sprintf(" | %d channel-set parts", length(parts)) else ""))
     }
 
-    divergent <- setdiff(unique(unlist(pops_by_wsp, use.names = FALSE)),
+    divergent <- setdiff(unique(unlist(pops_by_source, use.names = FALSE)),
                          shared_pops)
     cat("\nPopulations not shared by all workspaces (", length(divergent),
         "):\n", sep = "")
     for (p in divergent) {
-      absent <- names(pops_by_wsp)[!vapply(pops_by_wsp,
-                                           function(x) p %in% x, logical(1))]
+      absent <- names(pops_by_source)[!vapply(pops_by_source,
+                                              function(x) p %in% x, logical(1))]
       cat(sprintf("    %s   [missing in: %s]\n", p,
                   paste(absent, collapse = ", ")))
     }
@@ -1346,8 +1401,8 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       load_records = load_records, specs = specs,
       problems = resolved$problems, dropped = resolved$dropped,
       deferred = resolved$deferred, build_failed = build_failed,
-      pops_by_wsp = pops_by_wsp, shared_pops = shared_pops,
-      markers_by_wsp = markers_by_wsp, common_markers = common_markers,
+      pops_by_wsp = pops_by_source, shared_pops = shared_pops,
+      markers_by_wsp = markers_by_source, common_markers = common_markers,
       panel_cmp = panel_cmp,
       suggestions = suggest_marker_aliases(panel_by_wsp),
       channel_dict = channel_dict, samples = sample_index,
@@ -1355,7 +1410,8 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
         lapply(annot_cols, function(cl) unique(sample_annotations[[cl]])),
         annot_cols),
       unnamed_samples = sum(vapply(panels, function(p)
-        !any(!is.na(p$markers) & nzchar(p$markers)), logical(1)))
+        !any(!is.na(p$markers) & nzchar(p$markers)), logical(1))),
+      panel_parts = as.list(table(gs_source))
     ), report_json)
 
     cat("\nSelect one with population = (leading '/' optional), e.g.:\n")
@@ -1388,7 +1444,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # instruction that could not be carried out.
   if (!is.null(pop_map)) {
     resolutions <- lapply(names(gs_list), function(w)
-      try_resolve_population(pop_map[[w]], pops_by_wsp[[w]]))
+      try_resolve_population(pop_map[[gs_source[[w]]]], pops_by_wsp[[w]]))
     names(resolutions) <- names(gs_list)
   } else {
     resolutions <- lapply(pops_by_wsp, function(p)
@@ -1397,7 +1453,8 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   failed <- names(resolutions)[!vapply(resolutions, function(r) r$ok, logical(1))]
   if (length(failed)) {
     detail <- vapply(failed, function(w) sprintf(
-      "  %s (%s)\n    %s", w, specs[[w]]$wsp, resolutions[[w]]$reason),
+      "  %s (%s)\n    %s", w, specs[[gs_source[[w]]]]$wsp,
+      resolutions[[w]]$reason),
       character(1))
     if (!is.null(pop_map)) {
       stop("the population map names a gate that does not exist in its ",
@@ -1558,7 +1615,9 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       per_sample_mtx[[display]]    <- mtx
       per_sample_subpop[[display]] <- sp
       if (!is.null(lv)) per_sample_levels[[display]] <- lv
-      per_sample_wsp[display]      <- w
+      # The SOURCE workspace, not the GatingSet: a workspace split by channel
+      # set is still one workspace to everyone reading a legend.
+      per_sample_wsp[display]      <- gs_source[[w]]
     }
   }
 
@@ -1715,7 +1774,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     population      = population,
     pop_by_wsp      = pop_by_wsp,
     use_markers     = use_markers,
-    workspaces      = names(gs_list),
+    workspaces      = names(load_records),
     dropped         = resolved$dropped,
     dropped_report  = dropped_report,
     inspected       = FALSE

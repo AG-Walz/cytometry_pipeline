@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import signal
 import subprocess
 import time
@@ -40,11 +41,16 @@ RUN_SUBDIR = "_run"
 
 LOG_NAME = "run.log"
 STATUS_NAME = "status.json"
+EXIT_NAME = "exit_code"
 
 
 def paths_for(output_dir: str | os.PathLike) -> tuple[Path, Path]:
     d = Path(output_dir) / RUN_SUBDIR
     return d / LOG_NAME, d / STATUS_NAME
+
+
+def exit_path_for(output_dir: str | os.PathLike) -> Path:
+    return Path(output_dir) / RUN_SUBDIR / EXIT_NAME
 
 
 def is_alive(pid: int) -> bool:
@@ -98,6 +104,10 @@ def launch(argv: list[str], cwd: str, output_dir: str, kind: str,
     log_path, status_path = paths_for(output_dir)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # A previous run's exit code must not be mistaken for this one's.
+    exit_path = exit_path_for(output_dir)
+    exit_path.unlink(missing_ok=True)
+
     # Append, not truncate: a re-run into the same output directory should not
     # erase the evidence of the one before it, which is often exactly what the
     # person is trying to compare against.
@@ -105,8 +115,13 @@ def launch(argv: list[str], cwd: str, output_dir: str, kind: str,
                     errors="replace")
     try:
         log_file.write(f"\n── started {time.strftime('%Y-%m-%d %H:%M:%S')} ──\n")
+        # Nobody wait()s for a detached run, so its exit status would otherwise
+        # be unknowable and completion could only be GUESSED at from what it
+        # printed. A one-line shell wrapper writes the real code down instead.
+        # "$@" keeps the argument boundaries exactly as given.
+        wrapper = f'"$@"; printf %s "$?" > {shlex.quote(str(exit_path))}'
         proc = subprocess.Popen(
-            argv,
+            ["/bin/sh", "-c", wrapper, "sh", *argv],
             cwd=cwd,
             stdout=log_file,
             stderr=subprocess.STDOUT,
@@ -144,7 +159,25 @@ def read_status(output_dir: str | os.PathLike) -> dict | None:
     if not isinstance(status, dict) or "pid" not in status:
         return None
     status["running"] = is_alive(int(status.get("pid") or 0))
+    status["exit_code"] = read_exit_code(output_dir)
     return status
+
+
+def read_exit_code(output_dir: str | os.PathLike) -> int | None:
+    """The exit status the wrapper recorded, or None if it never got that far.
+
+    None is the honest answer in three different situations — still running,
+    killed before the wrapper could write, or started by an older version of
+    this app — and the caller distinguishes them by whether the pid is alive.
+    """
+    try:
+        text = exit_path_for(output_dir).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
 
 
 def read_log(output_dir: str | os.PathLike, max_bytes: int = 4_000_000) -> str:

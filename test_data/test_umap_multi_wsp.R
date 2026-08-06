@@ -1039,6 +1039,80 @@ eq("a cell in no gate at all is still '(none)'",
    assign_subpop(matrix(FALSE, 1, 2), c(1L, 2L), lab_h,
                  assignment = "leaf"), .SUBPOP_NONE)
 
+# --- channel-set splitting ---------------------------------------------------
+# What makes a workspace unloadable whole: CytoML holds a sample group as one
+# cytoset with one column schema, so a cohort acquired on two instruments —
+# "Aqua LiveDead-A" on the Canto, "BV480-A" on the Symphony, FSC-W/SSC-W on one
+# template and not the other — is refused entirely. These cover the pure half of
+# the recovery: deciding the groups, and saying what differs.
+
+CANTO14 <- "Aqua LiveDead-A|FSC-A|FSC-H|FSC-W|SSC-A|SSC-H|SSC-W|Time"
+CANTO12 <- "Aqua LiveDead-A|FSC-A|FSC-H|SSC-A|SSC-H|Time"
+SYMPH12 <- "BV480-A|FSC-A|FSC-H|SSC-A|SSC-H|Time"
+
+ok("one channel set is one group",
+   length(channel_signature_groups(
+     c(a = CANTO12, b = CANTO12, c = CANTO12))$groups) == 1L)
+
+split3 <- channel_signature_groups(
+  c(a = SYMPH12, b = CANTO14, c = CANTO14, d = CANTO12, e = CANTO14))
+eq("three channel sets are three groups", length(split3$groups), 3L)
+eq("the largest set comes first", split3$groups[[1]], c("b", "c", "e"))
+eq("and its signature is carried alongside", split3$signature[1], CANTO14)
+eq("every sample lands in exactly one group",
+   sort(unlist(split3$groups, use.names = FALSE)), c("a", "b", "c", "d", "e"))
+
+# Ties are broken on the signature text rather than on encounter order, so
+# "part 1" — the one every other part is described against — does not move
+# between runs of the same data.
+tie <- channel_signature_groups(c(x = SYMPH12, y = CANTO12))
+eq("a tie is broken deterministically", tie$signature[1], CANTO12)
+
+# A sample whose FCS file was never resolved has no signature to read. It has to
+# be handed to CytoML somewhere or content matching loses the very samples it
+# exists to rescue, and the largest group is both likeliest and cheapest to be
+# wrong about.
+unk <- channel_signature_groups(
+  c(a = CANTO14, b = CANTO14, c = SYMPH12, d = NA_character_))
+eq("an unknown signature joins the largest group", sort(unk$groups[[1]]),
+   c("a", "b", "d"))
+eq("...without becoming a group of its own", length(unk$groups), 2L)
+ok("all-unknown signatures stay one group",
+   identical(channel_signature_groups(
+     c(a = NA_character_, b = NA_character_))$groups, list(c("a", "b"))))
+
+txt <- format_panel_split("MTB017_1", split3)
+ok("the report names the workspace and the sample total",
+   grepl("MTB017_1", txt) && grepl("its 5 sample\\(s\\)", txt))
+ok("it describes later parts by what they LACK",
+   grepl("lacks: .*Aqua LiveDead-A", txt))
+ok("...and by what they ADD", grepl("adds: .*BV480-A", txt))
+ok("part 1 is not described against itself",
+   !grepl("part 1\n *(lacks|adds)", txt))
+eq("nothing to split says nothing",
+   format_panel_split("x", channel_signature_groups(c(a = CANTO12))), "")
+
+ok("CytoML's channel check is recognised",
+   is_channel_inconsistency(
+     "Found channel inconsistency across samples. 'Comp-BV480-A' is missing from x.fcs_15850"))
+ok("...and an unrelated failure is not",
+   !is_channel_inconsistency("can not find FCS files for sample x"))
+
+# The subset handed to CytoML is built from the LISTED samples, not from the
+# resolved ones: dropping the unresolved names here would silently undo content
+# matching for every workspace that needed it.
+spec_sig <- list(
+  listed = c("s1.fcs", "s2.fcs", "s3.fcs"),
+  files = data.frame(name = c("s1.fcs", "s2.fcs"),
+                     file = c("/nowhere/s1.fcs", NA_character_),
+                     stringsAsFactors = FALSE))
+sigs <- workspace_channel_signatures(spec_sig)
+eq("every listed sample gets an entry", names(sigs), spec_sig$listed)
+ok("a sample with no resolved file is unknown, not an error",
+   is.na(sigs[["s3.fcs"]]))
+ok("a resolved file that does not exist is also unknown",
+   is.na(sigs[["s1.fcs"]]))
+
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
 
 # --- summary -----------------------------------------------------------------

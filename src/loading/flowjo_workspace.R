@@ -52,8 +52,19 @@ wsp_open <- function(wsp_path) {
 #' @param group Sample group: an integer index, or a group name.
 #' @param path Either a directory holding the FCS files, or a data.frame with
 #'   `sampleID` and `file` columns mapping each sample to its own file.
-wsp_to_gatingset <- function(ws, group = 1L, path, ...) {
-  CytoML::flowjo_to_gatingset(ws, name = group, path = path, ...)
+#' @param subset Which samples to load: a character vector of sample names, an
+#'   integer index, or `list()` (the default) for all of them.
+#'
+#' `subset` is spliced in by value rather than forwarded, because
+#' flowjo_to_gatingset() resolves it with `eval(substitute(subset))` — evaluated
+#' in ITS OWN frame, not the caller's. An expression naming any local variable
+#' therefore fails to resolve there, silently falls through to a keyword-filter
+#' fallback, and dies inside it with "arguments imply differing number of rows".
+#' do.call() puts the evaluated vector into the call, so `substitute()` returns a
+#' literal and the scope of the caller stops mattering.
+wsp_to_gatingset <- function(ws, group = 1L, path, subset = list(), ...) {
+  do.call(CytoML::flowjo_to_gatingset,
+          c(list(ws, name = group, path = path, subset = subset), list(...)))
 }
 
 # -----------------------------------------------------------------------------
@@ -994,6 +1005,191 @@ build_workspace_gatingset <- function(spec) {
   }
   wsp_to_gatingset(ws, group = spec$group_index, path = root,
                    greedy_match = TRUE)
+}
+
+# -----------------------------------------------------------------------------
+# One workspace, one channel set — and what to do when that is not true.
+#
+# CytoML materialises a sample group as a single cytoset: one HDF5-backed
+# collection with ONE column schema. flowjo_to_gatingset() therefore refuses a
+# group whose FCS files do not all carry exactly the same $PnN set, with
+# "Found channel inconsistency across samples", and the whole workspace is lost.
+#
+# FlowJo never needs that. It holds every sample as its own object and resolves
+# each gate's dimension against that sample's own parameter list, so a workspace
+# that opens perfectly in FlowJo can be unloadable here. The divergence is not
+# corruption and not a mistake — a cohort acquired over two years on two
+# instruments really does have:
+#
+#   * the viability detector named "Aqua LiveDead-A" on the FACSCanto II and
+#     "BV480-A" on the FACSymphony A1 — same dye, same $PnS, different name in
+#     the cytometer configuration;
+#   * the scatter-width parameters FSC-W and SSC-W recorded under some
+#     acquisition templates and not others ($PAR 14 vs 12);
+#   * occasional extra detectors ("SP SSC-A") from a third template.
+#
+# So the samples are split into channel-homogeneous groups and one GatingSet is
+# built per group. Nothing is renamed and nothing is dropped: each sample keeps
+# the channel names its gates were drawn against, which is the only way the
+# gates stay the gates FlowJo applied. The parts rejoin downstream, where cells
+# are pooled on MARKER — the channel dictionary already maps both viability
+# channel names onto the same marker — and not on channel.
+# -----------------------------------------------------------------------------
+
+#' Is this CytoML's cross-sample channel check talking?
+is_channel_inconsistency <- function(message) {
+  grepl("channel inconsistency", message, ignore.case = TRUE)
+}
+
+#' The set of channels an FCS file carries, as one comparable string.
+#'
+#' Reads the TEXT segment only — no events — so this costs a stat and a short
+#' read per file even on a 400 MB acquisition. NA when the header cannot be
+#' read or does not describe its own parameters, which the caller treats as
+#' "unknown" rather than as a group of its own.
+fcs_channel_signature <- function(path) {
+  tryCatch({
+    kw <- flowCore::read.FCSheader(path)[[1]]
+    n  <- suppressWarnings(as.integer(kw[["$PAR"]]))
+    if (is.na(n) || n < 1L) return(NA_character_)
+    nms <- vapply(seq_len(n), function(i) {
+      v <- kw[[paste0("$P", i, "N")]]
+      if (is.null(v) || is.na(v)) NA_character_ else as.character(v)
+    }, character(1))
+    if (anyNA(nms)) return(NA_character_)
+    # Sorted: parameter ORDER also differs between templates and is irrelevant
+    # here — flowWorkspace matches channels by name, not by index.
+    paste(sort(nms), collapse = "|")
+  }, error = function(e) NA_character_)
+}
+
+#' Channel signature of every sample a spec lists.
+#'
+#' Keyed on the LISTED sample names, not on the resolved ones: the subset handed
+#' to CytoML has to name every sample the group contains, or content matching
+#' loses exactly the samples it exists to rescue. Samples whose file was never
+#' resolved by name have no signature to read and come back NA.
+workspace_channel_signatures <- function(spec) {
+  listed <- if (is.null(spec$listed)) spec$files$name else spec$listed
+  paths  <- stats::setNames(as.character(spec$files$file), spec$files$name)
+  vapply(listed, function(nm) {
+    # A listed sample the spec never resolved is not IN `paths` at all, so the
+    # lookup has to tolerate a miss rather than index out of bounds.
+    p <- unname(paths[nm])
+    if (is.na(p) || !nzchar(p) || !file.exists(p)) return(NA_character_)
+    fcs_channel_signature(p)
+  }, character(1), USE.NAMES = TRUE)
+}
+
+#' Split sample names into channel-homogeneous groups, largest first.
+#'
+#' Pure over a named character vector, so it is testable without the cytometry
+#' stack. Samples of unknown signature (NA) join the largest known group: they
+#' have to go somewhere, and the largest group is both the likeliest and the one
+#' whose failure costs the least, since a part that still refuses to build only
+#' loses its own samples.
+#'
+#' @return list(groups = <list of character vectors>, signature = <character>).
+channel_signature_groups <- function(signatures) {
+  nms   <- names(signatures)
+  known <- !is.na(signatures)
+  if (!any(known)) {
+    return(list(groups = list(nms), signature = NA_character_))
+  }
+  grouped <- split(nms[known], signatures[known])
+  # Largest first; ties broken on the signature text so the split is stable
+  # across runs and the "part 1" everything is compared against never moves.
+  ord     <- order(-lengths(grouped), names(grouped))
+  grouped <- grouped[ord]
+  sigs    <- names(grouped)
+  if (any(!known)) grouped[[1]] <- c(grouped[[1]], nms[!known])
+  list(groups = unname(grouped), signature = sigs)
+}
+
+#' Say what the split is, in terms of the channels that differ.
+#'
+#' Pure; returns "" when there is nothing to split, so the caller can print it
+#' unconditionally. Every later part is described against part 1 rather than
+#' listing four full panels, because what a person needs is the difference.
+format_panel_split <- function(label, split) {
+  if (length(split$groups) < 2L) return("")
+  ref <- strsplit(split$signature[1], "|", fixed = TRUE)[[1]]
+  n   <- length(unlist(split$groups, use.names = FALSE))
+  out <- c(sprintf(
+    paste0("%s: its %d sample(s) were acquired with %d different channel sets, ",
+           "so CytoML\n  refused the workspace whole. Loading it as %d parts, ",
+           "each with its own\n  channels; they rejoin in the UMAP on marker ",
+           "names."),
+    label, n, length(split$groups), length(split$groups)))
+  for (i in seq_along(split$groups)) {
+    g <- split$groups[[i]]
+    out <- c(out, sprintf("    part %d — %d sample(s), e.g. %s",
+                          i, length(g), g[1]))
+    if (i > 1L && !is.na(split$signature[i])) {
+      cur   <- strsplit(split$signature[i], "|", fixed = TRUE)[[1]]
+      miss  <- setdiff(ref, cur)
+      extra <- setdiff(cur, ref)
+      if (length(miss)) {
+        out <- c(out, paste0("        lacks: ", paste(miss, collapse = ", ")))
+      }
+      if (length(extra)) {
+        out <- c(out, paste0("        adds:  ", paste(extra, collapse = ", ")))
+      }
+    }
+  }
+  paste(out, collapse = "\n")
+}
+
+#' Build the GatingSet(s) a workspace needs — one normally, more when its
+#' samples do not share a channel set.
+#'
+#' Always returns a NAMED list, so the caller has one shape to handle. The
+#' single-part name is the workspace label itself, which keeps every existing
+#' run byte-identical; parts are suffixed "[panel k]" and are the only case
+#' where a workspace appears more than once downstream.
+#'
+#' Failures of individual parts are attached as `attr(, "failed_parts")` rather
+#' than raised: losing one acquisition template is not a reason to lose the
+#' other three.
+build_workspace_gatingsets <- function(spec) {
+  ws   <- wsp_open(spec$wsp)
+  root <- common_parent(spec$dirs)
+  if (length(spec$dirs) > 1L) {
+    cat(sprintf("    %s: FCS files span %d directories; searching under %s\n",
+                spec$label, length(spec$dirs), root))
+  }
+
+  whole <- tryCatch(
+    list(gs = wsp_to_gatingset(ws, group = spec$group_index, path = root,
+                               greedy_match = TRUE)),
+    error = function(e) list(error = e))
+  if (!is.null(whole$gs)) {
+    return(stats::setNames(list(whole$gs), spec$label))
+  }
+  # Any other failure is the caller's to report unchanged — a missing file or a
+  # faulty gate is not fixed by splitting anything.
+  if (!is_channel_inconsistency(conditionMessage(whole$error))) stop(whole$error)
+
+  split <- channel_signature_groups(workspace_channel_signatures(spec))
+  if (length(split$groups) < 2L) stop(whole$error)
+  cat("\n  ", format_panel_split(spec$label, split), "\n", sep = "")
+
+  parts  <- list()
+  failed <- list()
+  for (i in seq_along(split$groups)) {
+    nm <- sprintf("%s [panel %d]", spec$label, i)
+    gs <- tryCatch(
+      wsp_to_gatingset(ws, group = spec$group_index, path = root,
+                       subset = split$groups[[i]], greedy_match = TRUE),
+      error = function(e) {
+        failed[[nm]] <<- conditionMessage(e)
+        NULL
+      })
+    if (!is.null(gs)) parts[[nm]] <- gs
+  }
+  if (!length(parts)) stop(whole$error)
+  attr(parts, "failed_parts") <- failed
+  parts
 }
 
 # -----------------------------------------------------------------------------
