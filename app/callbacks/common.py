@@ -24,6 +24,9 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("output_name", "in-outname", "value"),
     ("group", "in-group", "value"),
     ("allow_missing_samples", "sw-allow-missing", "checked"),
+    ("match_mode", "in-match-mode", "value"),
+    ("marker_aliases", "in-marker-aliases", "value"),
+    ("recover_markers", "sw-recover-markers", "checked"),
     ("sample_metadata", {"comp": "fb-input", "bid": "meta"}, "value"),
     ("sample_pattern", "in-pattern", "value"),
     ("annotate", "in-annotate", "value"),
@@ -32,6 +35,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("subpop_mode", "subpop-mode", "value"),
     ("normalize", "in-normalize", "value"),
     ("downsample", "in-downsample", "value"),
+    ("n_cores", "in-cores", "value"),
     ("n_neighbors", "in-neighbors", "value"),
     ("min_dist", "in-mindist", "value"),
     ("metric", "in-metric", "value"),
@@ -42,6 +46,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("plot_height", "in-height", "value"),
     ("output_formats", "in-formats", "value"),
     ("population_map", "store-popmap", "data"),
+    ("excluded_workspaces", "store-wsp-exclude", "data"),
     ("selected_gates", "gate-tree", "selected"),
     ("checked_gates", "gate-tree", "checked"),
 ]
@@ -116,7 +121,23 @@ def output_dir_of(form: dict) -> str:
     return str(Path(parent) / name)
 
 
-def run_params(form: dict, populations: list[str]) -> dict:
+def workspace_selection(form: dict, inspect: dict | None) -> list[str]:
+    """The ``--workspaces`` INCLUDE list, or [] meaning "all of them".
+
+    The UI stores what is switched OFF; the CLI takes what to switch ON. The
+    conversion needs to know what loaded, which only the report does — so an
+    empty exclusion set returns [] and the flag is omitted entirely rather than
+    spelling out all thirty-three names for a run that excludes nothing.
+    """
+    excluded = set(form.get("excluded_workspaces") or [])
+    if not excluded:
+        return []
+    loaded = list((inspect or {}).get("populations_by_workspace") or {})
+    return [w for w in loaded if w not in excluded]
+
+
+def run_params(form: dict, populations: list[str],
+               inspect: dict | None = None) -> dict:
     """Everything ``rscript.run_argv`` needs, derived from the form.
 
     An explicit whitelist, not a copy of ``form``: gate selections and other
@@ -134,6 +155,10 @@ def run_params(form: dict, populations: list[str]) -> dict:
         "group": form.get("group"),
         "population_map": form.get("population_map") or {},
         "allow_missing_samples": bool(form.get("allow_missing_samples")),
+        "match_mode": form.get("match_mode") or config.DEFAULTS["match_mode"],
+        "workspaces": workspace_selection(form, inspect),
+        "marker_aliases": form.get("marker_aliases") or "",
+        "recover_markers": bool(form.get("recover_markers", True)),
         "sample_metadata": (form.get("sample_metadata") or "").strip(),
         "sample_pattern": (form.get("sample_pattern") or "").strip(),
         "annotate": form.get("annotate") or [],
@@ -142,6 +167,7 @@ def run_params(form: dict, populations: list[str]) -> dict:
         "subpop_select": subpop_selection(form, populations),
         "normalize": form.get("normalize"),
         "downsample": form.get("downsample"),
+        "n_cores": form.get("n_cores"),
         "n_neighbors": form.get("n_neighbors"),
         "min_dist": form.get("min_dist"),
         "metric": form.get("metric"),

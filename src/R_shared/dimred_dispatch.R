@@ -40,11 +40,13 @@ run_dimred <- function(expr_matrix, method = "umap",
   cat("Dispatching dimensionality reduction: method =", method, "\n")
 
   # Resolve visualization directory
-  if (exists("shared_dir")) {
-    viz_dir <- file.path(dirname(shared_dir), "visualization")
-  } else {
-    viz_dir <- file.path(dirname(getwd()), "src", "visualization")
-  }
+  # cyto_src_root() resolves from paths.R's own on-disk location, so the
+  # fallback no longer depends on where R happens to have been started — which
+  # is the whole point of the bootstrap, and this else-branch was the one place
+  # in this file still guessing.
+  viz_dir <- if (exists("shared_dir")) file.path(dirname(shared_dir), "visualization")
+             else if (exists("cyto_src_root", mode = "function")) file.path(cyto_src_root(), "visualization")
+             else file.path(dirname(getwd()), "src", "visualization")
 
   # Common output format params
   output_formats <- params$output_formats %||% list(pdf = FALSE, png = TRUE, svg = FALSE)
@@ -66,11 +68,21 @@ run_dimred <- function(expr_matrix, method = "umap",
         output_dir      = output_dir,
         n_neighbors     = params$n_neighbors %||% params$umap_n_neighbors %||% 15,
         min_dist        = params$umap_min_dist %||% params$min_dist %||% 0.1,
+        # uwot's distance metric. Threaded through so a caller is not forced to
+        # call run_umap() directly — and keep its own copy of every other UMAP
+        # option — just to choose cosine over euclidean.
+        metric          = params$metric %||% "euclidean",
+        n_threads       = params$n_threads %||% 1L,
+        progress        = params$progress %||% FALSE,
+        verbose         = params$verbose %||% FALSE,
+        init            = params$umap_init %||% "auto",
+        subsample       = params$umap_subsample %||% 0L,
         umap_coords     = params$umap_coords %||% NULL,
         output_formats  = output_formats,
         plot_width      = plot_width,
         plot_height     = plot_height,
-        seed            = seed
+        seed            = seed,
+        draw_plots      = params$draw_plots %||% TRUE
       )
       list(
         coords = umap_result$umap_coords,

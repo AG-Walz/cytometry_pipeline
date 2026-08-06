@@ -24,7 +24,7 @@ RUN R -e "BiocManager::install(c( \
     'flowAI', 'PeacoQC', 'FlowSOM', 'flowVS', \
     'preprocessCore', 'flowTrans', 'Biobase', 'BiocGenerics', \
     'BiocParallel', 'cytolib', 'limma', 'diffcyt', \
-    'flowDensity' \
+    'flowDensity', 'sva', 'harmony' \
 ), update=FALSE, ask=FALSE)"
 
 # CRAN packages
@@ -32,7 +32,7 @@ RUN R -e "install.packages(c( \
     'data.table', 'ggplot2', 'patchwork', 'viridis', 'ggrepel', \
     'pheatmap', 'uwot', 'Rtsne', 'leiden', 'igraph', 'Matrix', \
     'lme4', 'lmerTest', 'emmeans', 'MASS', 'dbscan', 'mclust', \
-    'survival', 'survminer', 'sva', 'harmony', \
+    'survival', 'survminer', \
     'tidyverse', 'future', 'future.apply', 'progress', \
     'ggridges', 'ggpubr', 'scales', 'openxlsx', 'jsonlite', \
     'optparse', 'reshape2', 'diptest', 'ggcorrplot', \
@@ -40,11 +40,11 @@ RUN R -e "install.packages(c( \
     'nnls', 'devtools' \
 ), repos='https://cloud.r-project.org')"
 
-# CytoNorm (Bioconductor)
-RUN R -e "BiocManager::install('CytoNorm', update=FALSE, ask=FALSE)" || true
+# CytoNorm (Bioconductor) — required for batch correction
+RUN R -e "BiocManager::install('CytoNorm', update=FALSE, ask=FALSE)"
 
-# Rphenograph from GitHub
-RUN R -e "devtools::install_github('JinmiaoChenLab/Rphenograph', upgrade='never')" || true
+# Rphenograph from GitHub — required for PhenoGraph clustering
+RUN R -e "devtools::install_github('JinmiaoChenLab/Rphenograph', upgrade='never')"
 
 # Copy source code into container
 COPY src/ /opt/cytometry/src/

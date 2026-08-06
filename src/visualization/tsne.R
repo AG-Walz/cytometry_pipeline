@@ -5,7 +5,43 @@
 # t-SNE visualization with dual input modes (flowFrame and matrix)
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# Respect a shared_dir the caller already set — the CLI convention used by
+# nextflow/bin/*_cli.R and scripts/*.R — and only guess from the working
+# directory when there is none. The unconditional assignment this replaces
+# clobbered the caller's value, so sourcing this file from anywhere but the
+# subproject directory sent every source() below to a path that does not exist.
+# That is not hypothetical: run_dimred() source()s this file, and the FlowJo
+# UMAP run died on "/tmp/src/R_shared/io_utils.R: No such file or directory".
+# Same guard as loading/load_flowjo_wsp.R.
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      # Rscript src/foo/bar.R carries no source frame; recover from --file=.
+      if (is.null(of)) {
+        a <- commandArgs(FALSE); m <- grep("^--file=", a)
+        if (length(m)) of <- sub("^--file=", "", a[m[[1]]])
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of, mustWork = FALSE)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+# Guarded, NOT unconditional: nextflow/bin/*_cli.R and scripts/*.R set shared_dir
+# themselves (the --src_dir convention), and clobbering it here would send every
+# source() below to whichever tree this file happens to live in rather than the
+# one the caller chose.
+if (!exists("shared_dir")) shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "gui_utils.R"))
 source(file.path(shared_dir, "plot_utils.R"))

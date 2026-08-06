@@ -31,6 +31,14 @@ source(file.path(base_dir, "src", "loading", "sample_annotations.R"))
 # function), so this is safe without the cytometry stack.
 source(file.path(base_dir, "src", "visualization", "umap_from_flowjo.R"))
 
+# Marker-panel reconciliation. Pure over character vectors — the flowFrame
+# helpers in these files need R_shared, and their source guards leave them
+# unusable rather than failing when it is not found, which is what lets this
+# run on base R alone.
+shared_dir <- file.path(base_dir, "src", "R_shared")
+source(file.path(base_dir, "src", "harmonization", "panel_homogenization.R"))
+source(file.path(base_dir, "src", "harmonization", "panel_comparison.R"))
+
 # --- tiny test harness -------------------------------------------------------
 .pass <- 0L
 .fail <- 0L
@@ -317,6 +325,83 @@ ok("an AMBIGUOUS name stays fatal even when missing is allowed",
 
 ok("a trimmed spec is marked partial", isTRUE(am$specs$runC$partial))
 ok("an untouched spec is not", isFALSE(am$specs$runA$partial))
+
+# --- resolve_workspace_specs(match_mode = "content") -------------------------
+# Names become advisory: nothing is dropped and nothing is fatal, because
+# CytoML pairs the leftovers by $FIL + event count. runD (ambiguous) and runE
+# (everything absent) both have to produce a spec here — in strict mode runD is
+# a hard error and runE vanishes entirely.
+cat("\nresolve_workspace_specs(match_mode = 'content')\n")
+
+paths_ct  <- paste0("/w/", c("runA", "runC", "runD", "runE"), ".wsp")
+labels_ct <- workspace_labels(paths_ct)
+ct <- resolve_workspace_specs(paths_ct, labels_ct, idx, "All Samples",
+                              open_ws = fake_open, read_samples = fake_read,
+                              match_mode = "content", fcs_root = fcs_root)
+
+eq("every workspace becomes a spec", names(ct$specs),
+   c("runA", "runC", "runD", "runE"))
+ok("nothing is reported as a problem", length(ct$problems) == 0)
+ok("nothing is reported as dropped", length(ct$dropped) == 0)
+eq("an unresolved name is deferred, not lost", ct$deferred$runC$samples,
+   "Nope.fcs")
+eq("an AMBIGUOUS name is deferred too — content is what decides",
+   ct$deferred$runD$samples, "Shared.fcs")
+eq("a workspace where nothing resolved still gets a spec",
+   nrow(ct$specs$runE$files), 2L)
+ok("...whose file column is all NA", all(is.na(ct$specs$runE$files$file)))
+ok("...and whose search path is the FCS root", fcs_root %in% ct$specs$runE$dirs)
+eq("the full group listing is kept for the load record",
+   ct$specs$runC$listed, c("Pool_001.fcs", "Nope.fcs"))
+eq("a resolved sample records how it matched", ct$specs$runA$files$via,
+   c("name", "name"))
+ok("content mode without an fcs_root is refused",
+   inherits(try(resolve_workspace_specs(paths_ct[1], "runA", idx, "All Samples",
+                                        open_ws = fake_open,
+                                        read_samples = fake_read,
+                                        match_mode = "content"),
+                silent = TRUE), "try-error"))
+ok("strict mode is still the default",
+   identical(names(resolve_workspace_specs(paths_ct[1], "runA", idx,
+                                           "All Samples", open_ws = fake_open,
+                                           read_samples = fake_read)$specs),
+             "runA"))
+
+# --- workspace_load_record ---------------------------------------------------
+# The only thing that knows what ARRIVED. Counting the RESOLVED files instead is
+# what made a real 311-sample run report 26.
+cat("\nworkspace_load_record()\n")
+
+rec <- workspace_load_record(ct$specs$runC,
+                             c("Pool_001.fcs_500", "Nope.fcs_900"))
+eq("counts what loaded, not what resolved", rec$n_loaded, 2L)
+eq("...against the FULL group listing", rec$n_listed, 2L)
+eq("a sample no name matched but CytoML found is 'rescued'", rec$rescued,
+   "Nope.fcs")
+ok("nothing is rejected here", length(rec$rejected) == 0)
+eq("the route counts credit content for the rescue",
+   unname(rec$routes[c("name", "content")]), c(1L, 1L))
+
+rej <- workspace_load_record(ct$specs$runA, "Pool_001.fcs_500")
+eq("a listed sample that did not arrive is rejected", rej$rejected,
+   "Pool_002.fcs")
+
+unl <- workspace_load_record(ct$specs$runA,
+                             c("Pool_001.fcs_1", "Pool_002.fcs_2", "Ghost.fcs_3"))
+eq("a sample the group listing never mentioned is 'unlisted'", unl$unlisted,
+   "Ghost.fcs")
+
+ok("a clean load produces no report", format_load_records(list(
+     workspace_load_record(ct$specs$runA,
+                           c("Pool_001.fcs_1", "Pool_002.fcs_2")))) == "")
+ok("a rescue is reported", grepl("paired by", format_load_records(list(rec))))
+ok("...and strict mode is told it was wrong",
+   grepl("Strict matching reported these as lost",
+         format_load_records(list(utils::modifyList(rec,
+                                                    list(match_mode = "strict"))))))
+eq("no records means no route line", format_match_routes(list()), "")
+ok("the route line names the content matches",
+   grepl("by content", format_match_routes(list(rec))))
 
 # --- build_workspace_gatingset() dispatch ------------------------------------
 # What CytoML is ASKED for. On CytoML 2.14 `path` must be a character scalar —
@@ -760,6 +845,85 @@ badfile <- file.path(root, "popmap_bad.tsv")
 writeLines(c("runA"), badfile)
 throws("a file line without two fields is rejected",
        parse_population_map(badfile), "without")
+
+# --- marker panel reconciliation ---------------------------------------------
+# Two independent problems, both of which make a joint UMAP impossible and both
+# of which look identical from the outside ("Common markers (0)"): a file that
+# carries no $PnS at all, and two workspaces spelling the same marker
+# differently.
+cat("\nmarker aliases and channel recovery\n")
+
+eq("case and punctuation are ignored", marker_alias_key(c("IL-2", "il2")),
+   c("il2", "il2"))
+eq("a trailing Latin Greek letter is stripped",
+   marker_alias_key(c("TNFa", "TNF", "IFNg")), c("tnf", "tnf", "ifn"))
+ok("a trailing DIGIT is never stripped — CD4 is not CD40",
+   marker_alias_key("CD4") != marker_alias_key("CD40"))
+eq("the anagram key catches a transposition",
+   marker_anagram_key(c("INFy", "IFN")), c("fin", "fin"))
+
+panels <- list(
+  wsA = c("CD107a", "CD4", "CD8", "IL-2", "INFy", "TNFa"),
+  wsB = c("ALD", "CD107a", "CD4", "CD8", "IFN", "IL-2", "TNF"),
+  wsC = c("CD4", "CD40", "CD8"))
+sugg <- suggest_marker_aliases(panels)
+eq("TNFa/TNF is suggested at spelling confidence",
+   sugg$confidence[sugg$suggested == "TNFa"], "spelling")
+eq("INFy/IFN is suggested, but only as a transposition",
+   sugg$confidence[sugg$suggested == "INFy"], "transposition")
+ok("CD4/CD40 is never suggested",
+   !any(grepl("CD40", sugg$names)))
+eq("an agreed panel needs no suggestion",
+   nrow(suggest_marker_aliases(list(a = c("CD4"), b = c("CD4")))), 0L)
+
+eq("an unmapped name is left alone, not turned into 'Unknown'",
+   apply_marker_aliases(c("CD4", "IFN"), c(IFN = "INFy")), c("CD4", "INFy"))
+eq("no alias map is a no-op", apply_marker_aliases("CD4", NULL), "CD4")
+eq("inline aliases parse", parse_marker_aliases("INFy=IFN;TNFa=TNF"),
+   c(INFy = "IFN", TNFa = "TNF"))
+ok("an empty alias spec is NULL", is.null(parse_marker_aliases("")))
+throws("a pair without '=' is rejected", parse_marker_aliases("INFy"), "written=used")
+throws("naming a spelling twice is rejected",
+       parse_marker_aliases("A=B;A=C"), "twice")
+
+# compare_marker_sets: the pure core panel_comparison.R and the workspace path
+# now share, so a panel comparison cannot mean two different things.
+cmp <- compare_marker_sets(panels)
+eq("the intersection is what every panel has", cmp$common, c("CD4", "CD8"))
+ok("the presence matrix says who has what",
+   cmp$presence["ALD", "wsB"] && !cmp$presence["ALD", "wsA"])
+eq("aliasing rescues the intersection",
+   compare_marker_sets(lapply(panels[c("wsA", "wsB")], apply_marker_aliases,
+                              aliases = c(IFN = "INFy", TNF = "TNFa")))$common,
+   c("CD107a", "CD4", "CD8", "IL-2", "INFy", "TNFa"))
+
+cat("\nchannel_marker_dictionary()\n")
+
+chan_panels <- list(
+  list(channels = c("FSC-A", "PE-A", "APC-A"), markers = c("", "INFy", "IL-2")),
+  list(channels = c("FSC-A", "PE-A", "APC-A"), markers = c("", "INFy", "IL-2")),
+  list(channels = c("FSC-A", "PE-A", "APC-A"), markers = c("", "IFN", "IL-2")),
+  list(channels = c("FSC-A", "PE-A", "APC-A"), markers = c("", "", "")))
+d <- channel_marker_dictionary(chan_panels)
+eq("a detector's marker is learned from the files that name it",
+   unname(d$dictionary[c("PE-A", "APC-A")]), c("INFy", "IL-2"))
+eq("a channel named inconsistently is reported", d$conflicts$channel, "PE-A")
+eq("...and the most common spelling wins", d$conflicts$chosen, "INFy")
+ok("an alias removes the conflict",
+   nrow(channel_marker_dictionary(chan_panels,
+                                  aliases = c(IFN = "INFy"))$conflicts) == 0)
+
+rec2 <- recover_marker_names(c("FSC-A", "PE-A", "APC-A"), c("", "", ""),
+                             d$dictionary)
+eq("a file with no $PnS gets its markers back",
+   rec2$markers, c("", "INFy", "IL-2"))
+eq("...and says which channels it filled", rec2$recovered, c("PE-A", "APC-A"))
+eq("a marker the file DOES carry is never overwritten",
+   recover_marker_names("PE-A", "MyOwnName", d$dictionary)$markers, "MyOwnName")
+eq("an unknown channel stays empty",
+   recover_marker_names("Nope-A", "", d$dictionary)$markers, "")
+eq("no dictionary is a no-op",
+   recover_marker_names("PE-A", "", character(0))$markers, "")
 
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
 

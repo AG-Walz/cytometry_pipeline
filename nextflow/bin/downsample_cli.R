@@ -11,25 +11,37 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+# --- Input validation ---
+if (!is.null(opt$input_rds) && !file.exists(opt$input_rds)) {
+  stop("Input file not found: ", opt$input_rds)
+}
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "flowframe_utils.R"))
 source(file.path(src_dir, "preprocessing", "downsampling.R"))
 
-ff <- readRDS(opt$input_rds)
-flow_frames <- list(ff)
-names(flow_frames) <- opt$sample_name
+tryCatch({
+  ff <- readRDS(opt$input_rds)
+  flow_frames <- list(ff)
+  names(flow_frames) <- opt$sample_name
 
-set.seed(opt$seed)
-downsampled <- downsample_flowframes(
-  flow_frames  = flow_frames,
-  sample_names = opt$sample_name,
-  target_cells = opt$target_cells,
-  method       = opt$method,
-  seed         = opt$seed
-)
+  set.seed(opt$seed)
+  downsampled <- downsample_flowframes(
+    flow_frames  = flow_frames,
+    sample_names = opt$sample_name,
+    target_cells = opt$target_cells,
+    method       = opt$method,
+    seed         = opt$seed
+  )
 
-saveRDS(downsampled[[1]], opt$output_rds)
-cat("Downsampled:", opt$sample_name, "from", nrow(ff), "to",
-    nrow(downsampled[[1]]), "cells\n")
+  saveRDS(downsampled[[1]], opt$output_rds)
+  cat("Downsampled:", opt$sample_name, "from", nrow(ff), "to",
+      nrow(downsampled[[1]]), "cells\n")
+}, error = function(e) {
+  cat(sprintf("\n[ERROR] Downsampling failed: %s\n", conditionMessage(e)), file = stderr())
+  cat("Stack trace:\n", file = stderr())
+  traceback(e)
+  quit(status = 1)
+})

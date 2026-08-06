@@ -15,6 +15,6 @@ process HEATMAP {
     heatmap_cli.R \
         --expr_rds ${expr_rds} \
         --output_path heatmap.png \
-        --max_cells ${params.max_cells_per_file ?: 500}
+        --max_cells ${params.max_cells_heatmap ?: 5000}
     """
 }

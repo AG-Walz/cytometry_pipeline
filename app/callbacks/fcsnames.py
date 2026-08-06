@@ -62,6 +62,24 @@ def _folder_problem(folder: str) -> str:
 
 
 def register_callbacks() -> None:
+
+    @callback(
+        Output("fcs-also-badge", "children"),
+        Input("fcs-also", "value"),
+    )
+    def also_badge(also):
+        """Announce extra keywords from the closed panel.
+
+        Same rule as advanced_badge in callbacks/steps.py: a setting that widens
+        what gets WRITTEN may not hide behind a collapsed header. $FIL alone is
+        the expected act; three more keywords is not.
+        """
+        keys = [k.strip() for k in (also or "").split(",") if k.strip()]
+        if not keys:
+            return None
+        return dmc.Badge(f"+{len(keys)}: {', '.join(keys)}", color="orange",
+                         variant="light", size="sm", tt="none")
+
     # -- the command preview, and what the button says ---------------------
     #
     # One callback for all three, because they are three views of the same

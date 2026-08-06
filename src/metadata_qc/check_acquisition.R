@@ -5,7 +5,35 @@
 # Refactored from: R_scripts/00_utilities/Check_AqDate.R
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      # Rscript src/foo/bar.R carries no source frame; recover from --file=.
+      if (is.null(of)) {
+        a <- commandArgs(FALSE); m <- grep("^--file=", a)
+        if (length(m)) of <- sub("^--file=", "", a[m[[1]]])
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of, mustWork = FALSE)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+# Guarded, NOT unconditional: nextflow/bin/*_cli.R and scripts/*.R set shared_dir
+# themselves (the --src_dir convention), and clobbering it here would send every
+# source() below to whichever tree this file happens to live in rather than the
+# one the caller chose.
+if (!exists("shared_dir")) shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 
 #' Extract FCS keyword from a single file
@@ -18,8 +46,16 @@ get_fcs_keyword <- function(fcs_path, keyword_name) {
   tryCatch({
     ff <- flowCore::read.FCS(fcs_path, transformation = FALSE,
                              which.lines = 1, truncate_max_range = FALSE)
+    # flowCore::keyword(ff, name) returns a named list; unwrap to a scalar
+    # character so downstream code can treat the result like a single value.
     val <- flowCore::keyword(ff, keyword_name)
-    if (is.null(val) || is.na(val) || val == "") "Unknown" else val
+    if (is.list(val)) val <- if (length(val) >= 1) val[[1]] else NULL
+    if (is.null(val) || length(val) == 0 ||
+        (length(val) == 1 && (is.na(val) || val == ""))) {
+      "Unknown"
+    } else {
+      as.character(val)
+    }
   }, error = function(e) {
     message("Error reading ", fcs_path, ": ", e$message)
     "Error"
@@ -61,11 +97,16 @@ get_fcs_metadata <- function(fcs_path) {
   tryCatch({
     ff <- flowCore::read.FCS(fcs_path, transformation = FALSE,
                              which.lines = 1, truncate_max_range = FALSE)
+    # keyword() returns a named list, so extract the scalar value.
     acq_date <- flowCore::keyword(ff, "$DATE")
-    if (is.null(acq_date) || is.na(acq_date) || acq_date == "") acq_date <- "Unknown"
+    if (is.list(acq_date)) acq_date <- if (length(acq_date) >= 1) acq_date[[1]] else NULL
+    if (is.null(acq_date) || length(acq_date) == 0 ||
+        (length(acq_date) == 1 && (is.na(acq_date) || acq_date == ""))) {
+      acq_date <- "Unknown"
+    }
     file_sz <- file.size(fcs_path)
     if (is.na(file_sz)) file_sz <- "Unknown" else file_sz <- as.character(file_sz)
-    c(acquisition_date = acq_date, file_size = file_sz)
+    c(acquisition_date = as.character(acq_date), file_size = file_sz)
   }, error = function(e) {
     message("Error reading ", fcs_path, ": ", e$message)
     c(acquisition_date = "Error", file_size = "Error")

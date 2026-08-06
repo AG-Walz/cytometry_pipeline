@@ -9,8 +9,14 @@ include { OVERLAP_STATS }    from '../modules/metadata_qc/overlap_statistics'
 
 workflow PIPELINE_D {
 
-    // Step 1: Load FlowJo workspaces
-    ch_pop_strings = LOAD_FLOWJO_WSP(params.wsp_paths, params.wsp_names)
+    // Step 1: Load FlowJo workspaces — stage WSP files into work dir
+    ch_wsp_files = Channel
+        .of(params.wsp_paths.split(','))
+        .map { it.trim() }
+        .map { file(it) }
+        .collect()
+
+    ch_pop_strings = LOAD_FLOWJO_WSP(ch_wsp_files, params.wsp_names)
 
     // Step 2: Compare gating strategies
     ch_comparison = COMPARE_GATINGS(ch_pop_strings.pop_strings)

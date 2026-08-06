@@ -2,6 +2,9 @@ process PREPROCESS_SAMPLE {
     tag "${sample_name}"
     label 'process_medium'
 
+    publishDir "${params.output_dir}/preprocessing", mode: 'copy',
+               enabled: params.save_intermediates ?: false
+
     input:
     tuple val(sample_name), path(input_rds)
 
@@ -9,7 +12,7 @@ process PREPROCESS_SAMPLE {
     tuple val(sample_name), path("${sample_name}_pp.rds"), emit: flowframe
 
     script:
-    def markers_arg = params.markers_of_interest ? "--markers_of_interest ${params.markers_of_interest}" : ""
+    def markers_arg = params.markers_of_interest ? "--markers_of_interest '${params.markers_of_interest}'" : ""
     """
     preprocess_sample_cli.R \
         --input_rds ${input_rds} \

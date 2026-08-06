@@ -7,7 +7,35 @@
 # identifies significant marker pairs.
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      # Rscript src/foo/bar.R carries no source frame; recover from --file=.
+      if (is.null(of)) {
+        a <- commandArgs(FALSE); m <- grep("^--file=", a)
+        if (length(m)) of <- sub("^--file=", "", a[m[[1]]])
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of, mustWork = FALSE)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+# Guarded, NOT unconditional: nextflow/bin/*_cli.R and scripts/*.R set shared_dir
+# themselves (the --src_dir convention), and clobbering it here would send every
+# source() below to whichever tree this file happens to live in rather than the
+# one the caller chose.
+if (!exists("shared_dir")) shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "plot_utils.R"))
 
@@ -257,21 +285,4 @@ run_correlation_analysis <- function(expr_matrix,
   save_plot_formats(p, file.path(output_dir, paste0(prefix, "_correlation_heatmap")),
                     width = max(10, ncol(cor_matrix) * 0.5),
                     height = max(10, ncol(cor_matrix) * 0.5))
-}
-
-# --- CLI execution ---
-if (sys.nframe() == 0) {
-  args <- commandArgs(trailingOnly = TRUE)
-  if (length(args) < 2) {
-    cat("Usage: Rscript correlation_analysis.R <expression_csv> <output_dir> [method]\n")
-    quit(status = 1)
-  }
-
-  require(data.table)
-  expr_data <- as.matrix(fread(args[1], select = function(x) is.numeric(x)))
-  run_correlation_analysis(
-    expr_matrix = expr_data,
-    output_dir = args[2],
-    method = if (length(args) >= 3) args[3] else "spearman"
-  )
 }

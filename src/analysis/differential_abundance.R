@@ -7,7 +7,35 @@
 # Removed: duplicated I/O, memory mgmt, GUI, visualization (-> R_shared)
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      # Rscript src/foo/bar.R carries no source frame; recover from --file=.
+      if (is.null(of)) {
+        a <- commandArgs(FALSE); m <- grep("^--file=", a)
+        if (length(m)) of <- sub("^--file=", "", a[m[[1]]])
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of, mustWork = FALSE)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+# Guarded, NOT unconditional: nextflow/bin/*_cli.R and scripts/*.R set shared_dir
+# themselves (the --src_dir convention), and clobbering it here would send every
+# source() below to whichever tree this file happens to live in rather than the
+# one the caller chose.
+if (!exists("shared_dir")) shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "gui_utils.R"))
 source(file.path(shared_dir, "cluster_utils.R"))
@@ -21,7 +49,7 @@ source(file.path(shared_dir, "plot_utils.R"))
 #' cluster per sample, and returns a data.frame ready for statistical testing
 #' or abundance plotting.
 #'
-#' Input from: clusters_to_gating_csv() (clustering/leiden.R),
+#' Input from: clusters_to_gating_csv() (R_shared/cluster_utils.R),
 #'             load_csv_gating() (loading/load_csv_gating.R)
 #' Output to:  run_differential_abundance() (this file),
 #'             run_cluster_enrichment() (analysis/cluster_enrichment.R),
@@ -171,7 +199,7 @@ plot_volcano <- function(results_df, output_dir,
 #' Orchestrates the full GLMM-based differential abundance workflow:
 #' build_abundance_matrix() -> fit per-cluster GLMMs -> plot_volcano().
 #'
-#' Input from: clusters_to_gating_csv() (clustering/leiden.R),
+#' Input from: clusters_to_gating_csv() (R_shared/cluster_utils.R),
 #'             load_csv_gating() (loading/load_csv_gating.R)
 #' Output to:  plot_volcano() (this file),
 #'             plot_abundance() (analysis/abundance_plotting.R)
@@ -191,7 +219,7 @@ run_differential_abundance <- function(data_dir,
                                         conditions_csv,
                                         output_dir,
                                         cluster_regex = "Clustering annotated",
-                                        condition_levels = c("pCR", "npCR"),
+                                        condition_levels = c("Control", "Treatment"),
                                         markers_of_interest = NULL,
                                         min_cluster_size = 10,
                                         p_adjust_method = "BH",

@@ -3,3 +3,15 @@ output_dir: ./results/pipeline_D
 wsp_paths: "/path/to/workspace1.wsp,/path/to/workspace2.wsp"
 wsp_names: "Analyst1,Analyst2"
 target_fcs: /path/to/target.fcs
+
+# --- Labels ---
+# label_dict: null                 # JSON string: '{"gate/path":"Display Name"}'
+# fcs_dir: null                    # Directory containing FCS files for overlay
+
+# --- Output ---
+# output_formats: png
+# plot_width: 10
+# plot_height: 8
+
+# --- Reproducibility ---
+# seed: 42
