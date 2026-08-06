@@ -309,6 +309,53 @@ assign_subpop <- function(mem, subpop_depths, subpop_labels,
   if (n == 0L) return(character(0))
   if (ncol(mem) == 0L) return(rep(none_label, n))
 
+  # LEAF: the rule of thumb — a cell is named by the deepest thing the gating
+  # tree actually says about it. A cell inside CD4+/IFN+ is inside CD4+ too, and
+  # the useful label is the former; the tree already encodes which is which, so
+  # nothing has to be inferred from cell counts.
+  #
+  # This replaced size-based "specificity", which used the SMALLEST gate as a
+  # proxy for the most specific one. That proxy breaks on exactly the gates
+  # people care about: the all-negative boolean leaf (CD107a-IFNg-IL2-TNF-) is
+  # usually the biggest population in the sample, so smallest-wins labelled
+  # those cells by their parent CD4+ and the leaf never appeared. Size is not
+  # specificity; position in the tree is.
+  #
+  # A leaf is a candidate with no other candidate beneath it. A cell is labelled
+  # by the leaf it is in; a cell that reaches only interior gates (its branch
+  # was not gated further) keeps the deepest of those, because "CD4+" is the
+  # true answer for a CD4+ cell nobody sub-gated.
+  if (assignment == "leaf") {
+    is_leaf <- !vapply(subpop_labels, function(lab)
+      any(startsWith(subpop_labels, paste0(lab, "/"))), logical(1))
+
+    # A cell is in SEVERAL leaves at once, and that is normal rather than an
+    # error: the fixture gates CD4+ into CD107a-, IFNg-, IL2-, TNF- AND the
+    # four-way combination CD107a-IFNg-IL2-TNF-, all leaves at the same depth.
+    # Calling that "(multiple)" throws away the answer — the four-way gate is
+    # plainly the most informative of them.
+    #
+    # So: leaves beat interior gates (the rule), then depth, then the SMALLEST
+    # gate. Size is a poor definition of specificity on its own — that is what
+    # this replaced — but it is a good tie-break BETWEEN LEAVES, where the
+    # smaller gate is the more restrictive statement about the same cell.
+    sizes <- colSums(mem)
+    pick <- function(cols) {
+      if (!length(cols)) return(NA_integer_)
+      cols <- cols[subpop_depths[cols] == max(subpop_depths[cols])]
+      cols[which.min(sizes[cols])]
+    }
+    out <- rep(none_label, n)
+    for (i in seq_len(n)) {
+      inside <- which(mem[i, ])
+      if (!length(inside)) next
+      leaves <- inside[is_leaf[inside]]
+      chosen <- if (length(leaves)) pick(leaves) else pick(inside)
+      out[i] <- subpop_labels[chosen]
+    }
+    return(out)
+  }
+
   if (assignment == "specificity") {
     sizes <- colSums(mem)                         # per-sample gate sizes
     pri   <- sizes - 1e-6 * subpop_depths         # smaller gate wins; deeper breaks ties
@@ -1414,10 +1461,10 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     }
   }
 
-  # 'furthest' labels each cell by the most specific (smallest) gate it reaches;
-  # the other modes assign by path depth (ties -> "(multiple)").
+  # 'furthest' names each cell by the deepest gate the TREE puts it in — its
+  # leaf. The other modes assign by path depth (ties -> "(multiple)").
   subpop_assignment <- if (subpop_mode == "furthest" && is.null(subpop_select)) {
-    "specificity"
+    "leaf"
   } else {
     "depth"
   }

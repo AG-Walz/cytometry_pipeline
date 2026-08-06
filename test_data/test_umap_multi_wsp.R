@@ -973,6 +973,72 @@ eq("no candidates means no levels",
    length(assign_subpop_levels(matrix(nrow = 3, ncol = 0), integer(0),
                                character(0))), 0L)
 
+# --- assign_subpop(assignment = "leaf") --------------------------------------
+# The rule of thumb: a cell is named by the deepest thing the TREE says about
+# it. A cell inside CD4+/IFN+ is inside CD4+ too, and the useful label is the
+# former. This must hold structurally, not because the child happens to be the
+# smaller gate — which is what the size-based rule it replaced depended on.
+cat("\nassign_subpop(assignment = \"leaf\")\n")
+
+lab_h <- c("CD4+", "CD4+/IFN+")
+dep_h <- c(1L, 2L)
+mem_h <- cbind(c(TRUE, TRUE), c(TRUE, FALSE))
+colnames(mem_h) <- lab_h
+eq("a cell in a gate AND its child is named by the child",
+   assign_subpop(mem_h, dep_h, lab_h, assignment = "leaf")[1], "CD4+/IFN+")
+eq("a cell in the parent only keeps the parent",
+   assign_subpop(mem_h, dep_h, lab_h, assignment = "leaf")[2], "CD4+")
+
+# THE GUARANTEE. A parent always CONTAINS its child, so no size-based rule can
+# pick the ancestor over the descendant — that much the old rule got right too.
+# What it could not do is prefer a leaf over an interior gate on a DIFFERENT
+# branch: a bare functional gate hanging off the reference node is often
+# smaller than the lineage-qualified leaf, and won on size alone. The leaf rule
+# decides by position in the tree, so the qualified leaf wins whatever the
+# counts are.
+lab_b <- c("CD4+", "CD4+/AllNegative", "CD4+/Rare")
+dep_b <- c(1L, 2L, 2L)
+#              CD4+          CD4+/AllNeg    CD4+/Rare
+mem_b <- cbind(rep(TRUE, 6), c(rep(TRUE, 5), FALSE), c(rep(FALSE, 5), TRUE))
+colnames(mem_b) <- lab_b
+lf <- assign_subpop(mem_b, dep_b, lab_b, assignment = "leaf")
+eq("a BIG leaf still beats its small parent",
+   lf[1], "CD4+/AllNegative")
+eq("...and the rare leaf is unaffected", lf[6], "CD4+/Rare")
+eq("both rules agree here: an ancestor can never be smaller than its child",
+   assign_subpop(mem_b, dep_b, lab_b, assignment = "specificity")[1],
+   "CD4+/AllNegative")
+
+# Where the two rules genuinely differ: a flat gate on another branch that is
+# SMALLER than the lineage-qualified leaf. Size picks the bare gate and loses
+# the CD4+ qualifier; the leaf rule keeps the deeper, more informative one.
+lab_s <- c("CD4+", "CD4+/IFN-", "IFN-")
+dep_s <- c(1L, 2L, 1L)
+#              CD4+           CD4+/IFN-       IFN- (flat, and smaller)
+mem_s <- cbind(c(TRUE, TRUE, FALSE), c(TRUE, TRUE, FALSE), c(TRUE, FALSE, FALSE))
+colnames(mem_s) <- lab_s
+eq("the leaf rule keeps the lineage-qualified gate",
+   assign_subpop(mem_s, dep_s, lab_s, assignment = "leaf")[1], "CD4+/IFN-")
+eq("...where size alone picked the bare one and dropped CD4+",
+   assign_subpop(mem_s, dep_s, lab_s, assignment = "specificity")[1], "IFN-")
+
+# Several leaves at once is normal in a real tree (CD4+/CD107a- and
+# CD4+/CD107a-IFNg-IL2-TNF- both apply); the more restrictive one wins rather
+# than the pair collapsing to "(multiple)".
+lab_m <- c("CD4+", "CD4+/CD107a-", "CD4+/CD107a-IFNg-IL2-TNF-")
+dep_m <- c(1L, 2L, 2L)
+mem_m <- cbind(rep(TRUE, 4), rep(TRUE, 4), c(TRUE, TRUE, FALSE, FALSE))
+colnames(mem_m) <- lab_m
+eq("among leaves at equal depth the smaller (more restrictive) one wins",
+   assign_subpop(mem_m, dep_m, lab_m, assignment = "leaf")[1],
+   "CD4+/CD107a-IFNg-IL2-TNF-")
+eq("a cell in only the broader leaf gets that one",
+   assign_subpop(mem_m, dep_m, lab_m, assignment = "leaf")[3], "CD4+/CD107a-")
+
+eq("a cell in no gate at all is still '(none)'",
+   assign_subpop(matrix(FALSE, 1, 2), c(1L, 2L), lab_h,
+                 assignment = "leaf"), .SUBPOP_NONE)
+
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
 
 # --- summary -----------------------------------------------------------------
