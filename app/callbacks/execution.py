@@ -76,6 +76,59 @@ def _format_remaining(seconds: float | None) -> str:
         f"about {hours} h left"
 
 
+def _phase_bar(progress: dict):
+    """One bar per phase, side by side, each as wide as that phase costs.
+
+    A single bar over a six-phase run answers the wrong question. It says how
+    far through the CURRENT phase you are, so the 20-minute neighbour search and
+    the 20-second initialisation look the same size, and the bar resets to empty
+    five times before the run ends — which reads as five restarts. Laying the
+    phases out at their real relative cost makes one glance answer both
+    questions people actually have: what is happening, and how much is left.
+
+    Every number comes from Runner._phase_view(); this only arranges them.
+    """
+    segments = progress.get("phases") or []
+    if not segments:
+        return dmc.Progress(value=progress.get("percent", 0), size="sm",
+                            animated=True, striped=True)
+
+    # A done phase is solid, the running one is striped and animated, a pending
+    # one is an empty track. The distinction has to survive a screenshot, so it
+    # is carried by fill and colour rather than by motion alone.
+    bars = []
+    for seg in segments:
+        state = seg["state"]
+        if state == "done":
+            inner = dmc.Progress(value=100, size="sm", color="blue")
+        elif state == "running":
+            inner = dmc.Progress(value=round(seg["fill"] * 100), size="sm",
+                                 color="blue", animated=True, striped=True)
+        elif state == "skipped":
+            inner = dmc.Progress(value=0, size="sm", color="gray")
+        else:
+            inner = dmc.Progress(value=0, size="sm", color="gray")
+        bars.append(
+            dmc.Tooltip(
+                dmc.Box(inner, style={"flex": f"{seg['weight']} 0 0",
+                                      "minWidth": "6px"}),
+                label=f"{seg['label']} — {round(seg['fill'] * 100)}%",
+                position="top", withArrow=True, openDelay=200,
+            )
+        )
+    return dmc.Stack(
+        [
+            dmc.Group(bars, gap=3, wrap="nowrap", align="stretch"),
+            # The whole-run figure, said once. Without it the segments show the
+            # shape of the run but never its total, and "how far along am I"
+            # goes back to being a guess.
+            dmc.Text(f"{progress.get('overall_percent', 0)}% of the run",
+                     size="xs", c="dimmed"),
+        ],
+        gap=4,
+    )
+
+
 def _progress_bar(progress: dict, running: bool):
     """The live progress bar, or nothing.
 
@@ -101,8 +154,7 @@ def _progress_bar(progress: dict, running: bool):
                 ],
                 justify="space-between", gap="xs",
             ),
-            dmc.Progress(value=progress["percent"], size="sm",
-                         animated=True, striped=True),
+            _phase_bar(progress),
             # The item in flight, so a run that has stopped moving is obvious
             # from WHICH item it stopped on.
             dmc.Text(progress.get("label") or "", size="xs", c="dimmed",

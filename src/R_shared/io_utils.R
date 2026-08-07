@@ -215,16 +215,33 @@ make_outdir <- function(path) {
 # One line, prefixed so it can be told apart from anything a human is meant to
 # read, and so a front-end can hide it from the visible log:
 #
-#   ::progress:: phase=extract done=57 total=311 label=MTB023_204275
+#   ::progress:: phase=extract done=57 total=311 elapsed=812 label=MTB023_204275
 #
 # Emitted to stdout in the same stream as everything else, because the runner
 # already line-buffers and streams that, and a side-channel file would need its
 # own polling and its own staleness problem.
 #
+# `elapsed` is seconds since this process started. It is here because the GUI
+# re-reads the WHOLE log on every poll to recover the state of a detached run —
+# it keeps nothing in memory that survives a browser reload — so how long a
+# phase took has to be readable from the log itself. Without it, closing the tab
+# during a two-hour run loses every timing behind it and with them any estimate
+# of what is left. It goes BEFORE `label=` because a label may contain anything
+# at all, including "elapsed=", so `label` has to stay the last field.
+#
 # Silent when `total` is unknown or zero: a progress bar that cannot say what
 # fraction is done is worse than none.
 # -----------------------------------------------------------------------------
 PROGRESS_PREFIX <- "::progress::"
+
+#' Seconds since the R process started, for the `elapsed` field.
+#'
+#' proc.time()["elapsed"] is measured from the start of THIS process, so it
+#' needs no shared epoch with the reader and cannot be skewed by the clock
+#' changing under a long run.
+progress_elapsed <- function() {
+  as.numeric(proc.time()[["elapsed"]])
+}
 
 emit_progress <- function(phase, done, total, label = "") {
   total <- suppressWarnings(as.integer(total))
@@ -233,8 +250,8 @@ emit_progress <- function(phase, done, total, label = "") {
   # A label can be any sample name, and those contain spaces, '=' and worse.
   # Newlines are the only character that could break the one-line contract.
   label <- gsub("[\r\n]", " ", as.character(label))
-  cat(sprintf("%s phase=%s done=%d total=%d label=%s\n",
-              PROGRESS_PREFIX, phase, done, total, label))
+  cat(sprintf("%s phase=%s done=%d total=%d elapsed=%.1f label=%s\n",
+              PROGRESS_PREFIX, phase, done, total, progress_elapsed(), label))
   flush(stdout())
   invisible(NULL)
 }

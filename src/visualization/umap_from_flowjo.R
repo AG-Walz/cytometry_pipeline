@@ -1938,15 +1938,14 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
         "to a serial-optimiser run. The neighbour search's threads do not ",
         "affect the coordinates.\n", sep = "")
   }
-  # Said BEFORE the call: the neighbour search runs before the first epoch and
-  # reports nothing, so without this the bar would sit empty through a phase
-  # that can take minutes on a few million cells.
-  # uwot's own stage messages go to the log. Without them the pre-epoch phases —
-  # neighbour search, smooth-kNN calibration, and the spectral initialisation,
-  # which is a single-threaded eigendecomposition and on millions of cells is
-  # the longest of the three — are indistinguishable from a hang. There is no
-  # epoch to count yet, so the only honest signal is what uwot says it is doing.
-  emit_progress("embed", 0L, 100L, "neighbour graph + initialisation")
+  # Said BEFORE the call, so the bar names the phase the moment it is entered
+  # rather than when uwot first speaks. From here on the sub-phases report
+  # themselves: emit_uwot_stage() (R_shared/stats_utils.R) translates uwot's own
+  # stage announcements into embed_nn / embed_init, and the epoch callback
+  # carries the optimisation. This used to be a single "0 / 100" that never
+  # moved until the first epoch, which on millions of cells meant an empty bar
+  # for most of the run.
+  emit_progress("embed_nn", 0L, 3L, "starting the neighbour search")
   dimred <- run_dimred(
     expr_matrix = combined_matrix,
     method      = method,

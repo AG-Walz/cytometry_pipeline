@@ -203,6 +203,54 @@ run_pca <- function(expr_matrix, n_components = 2, scale = TRUE) {
 #' @param metric Distance metric
 #' @param seed Random seed
 #' @return Matrix of UMAP coordinates
+# -----------------------------------------------------------------------------
+# uwot's stage announcements, turned into progress a GUI can draw.
+#
+# Between "Read N rows" and the first optimisation epoch uwot does the work that
+# dominates a large run — the Annoy index, the kNN query, the smooth-kNN
+# calibration, the initialisation — and none of it is countable. A watcher
+# therefore saw an empty bar for the longest part of the run, which is
+# indistinguishable from a hang.
+#
+# uwot does ANNOUNCE each stage: tsmessage() is message() with a timestamp, so
+# the announcements are conditions and a calling handler can translate them. The
+# handler deliberately does NOT muffle them, so the log still reads as it did.
+#
+# Matching on another package's wording is a parser for a format nobody agreed
+# to, and it will drift. It is confined to this one function for exactly that
+# reason, it matches only on stems that have been stable across uwot releases,
+# and an unrecognised message costs nothing — the phase simply does not advance,
+# which is the behaviour we had before.
+# -----------------------------------------------------------------------------
+emit_uwot_stage <- function(text) {
+  if (!exists("emit_progress", mode = "function")) return(invisible(NULL))
+  # 3 = index, query, calibration. The graph is what these three produce.
+  if (grepl("Building Annoy index", text, fixed = TRUE)) {
+    emit_progress("embed_nn", 0L, 3L, "building the neighbour index")
+  } else if (grepl("Searching Annoy index", text, fixed = TRUE)) {
+    emit_progress("embed_nn", 1L, 3L, "searching the neighbour index")
+  } else if (grepl("Commencing smooth kNN", text, fixed = TRUE)) {
+    emit_progress("embed_nn", 2L, 3L, "calibrating distances")
+  } else if (grepl("Initializing from", text, fixed = TRUE)) {
+    # The first word of the initialisation is also the last word of the
+    # neighbour graph — uwot does not say "finished", so its successor says it.
+    emit_progress("embed_nn", 3L, 3L, "neighbour graph complete")
+    emit_progress("embed_init", 0L, 1L,
+                  trimws(sub(".*Initializing from ", "", text)))
+  } else if (grepl("Commencing optimization", text, fixed = TRUE)) {
+    emit_progress("embed_init", 1L, 1L, "layout initialised")
+  }
+  invisible(NULL)
+}
+
+#' Run `expr`, translating uwot's stage messages into progress lines.
+with_uwot_progress <- function(expr) {
+  withCallingHandlers(expr, message = function(m) {
+    emit_uwot_stage(conditionMessage(m))
+    # No invokeRestart("muffleMessage"): the message is still uwot's to print.
+  })
+}
+
 run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
                      n_components = 2, metric = "euclidean", seed = 42,
                      n_threads = 1L, progress = FALSE, verbose = FALSE,
@@ -309,7 +357,8 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
 
   # --- the whole matrix, when it is small enough to be worth it ---------------
   if (subsample <= 0L || subsample >= n_obs) {
-    return(do.call(uwot::umap, c(list(X = expr_matrix), base_args)))
+    return(with_uwot_progress(
+      do.call(uwot::umap, c(list(X = expr_matrix), base_args))))
   }
 
   # --- fit on a subsample, project the rest ----------------------------------
@@ -325,8 +374,9 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
   message("uwot: fitting on a ", subsample, "-cell subsample of ", n_obs,
           ", then projecting the remaining ", n_obs - subsample, ".")
   idx <- sort(sample.int(n_obs, subsample))
-  model <- do.call(uwot::umap, c(list(X = expr_matrix[idx, , drop = FALSE],
-                                      ret_model = TRUE), base_args))
+  model <- with_uwot_progress(
+    do.call(uwot::umap, c(list(X = expr_matrix[idx, , drop = FALSE],
+                               ret_model = TRUE), base_args)))
 
   coords <- matrix(NA_real_, nrow = n_obs, ncol = n_components)
   coords[idx, ] <- model$embedding
