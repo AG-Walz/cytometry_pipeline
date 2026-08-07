@@ -756,7 +756,17 @@ def _left_column(state: dict) -> dmc.Paper:
             dmc.Stepper(
                 id="stepper",
                 active=0,
-                allowNextStepsSelect=False,
+                # Every step is reachable by clicking its icon, forwards as well
+                # as back. Mantine already allows the completed ones; this opens
+                # the ones ahead too, which is what makes the stepper a set of
+                # TABS rather than a queue.
+                #
+                # Nothing is protected by keeping them shut. The Run step lists
+                # what is missing and refuses to start (validate_run), so
+                # arriving there early reads as a checklist rather than a dead
+                # end — and someone who only wants to change the seed should not
+                # have to walk back through the gating tree to reach it.
+                allowNextStepsSelect=True,
                 size="sm",
                 iconSize=32,
                 # Labels only: with descriptions the four steps wrap onto two
