@@ -49,9 +49,16 @@ def inspect_argv(wsp: str, fcs_dir: str, group: str,
                  match_mode: str = "content",
                  marker_aliases: str = "",
                  recover_markers: bool = True,
-                 workspaces: list[str] | None = None,
                  report_json: str = "") -> list[str]:
     """Argv that loads the workspace(s) and writes the load report.
+
+    Deliberately has NO ``--workspaces``: a load reads every workspace it finds.
+    The health panel's on/off switches decide what goes into the RUN, and they
+    can only decide it for workspaces the report actually contains — filtering
+    the load too would delete a switched-off workspace's row from the panel it
+    is switched off in, leaving nothing to switch back on. See run_argv, which
+    is where the selection belongs and where it is converted from the exclusion
+    set the UI stores to the inclusion list the R flag takes.
 
     ``group`` is passed through as text: the R side takes either an index or a
     sample-group *name*, which is what lets one value cover a folder of
@@ -81,8 +88,6 @@ def inspect_argv(wsp: str, fcs_dir: str, group: str,
         argv.extend(["--marker_aliases", marker_aliases.strip()])
     if not recover_markers:
         argv.append("--no_recover_markers")
-    if workspaces:
-        argv.extend(["--workspaces", ",".join(workspaces)])
     if report_json:
         argv.extend(["--report_json", report_json])
     return argv

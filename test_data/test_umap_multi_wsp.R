@@ -152,6 +152,29 @@ eq("a still-colliding label falls back to the full path",
 eq("extension matching is case-insensitive",
    workspace_labels("/w/runA.WSP"), "runA")
 
+# --- select_workspaces -------------------------------------------------------
+# The POLARITY is the whole content of these: --workspaces names what to KEEP.
+# The app stores the opposite (which workspaces are switched OFF) and has to
+# convert, and it once did not — which made a load read only the workspaces the
+# user had switched off. Pinned by a test so the direction cannot drift again.
+cat("\nselect_workspaces()\n")
+
+three <- c("runA", "runB", "runC")
+eq("a named workspace is the one KEPT, not the one dropped",
+   select_workspaces(three, "runA"), c(TRUE, FALSE, FALSE))
+eq("several are taken as a comma-separated list",
+   select_workspaces(three, "runA,runC"), c(TRUE, FALSE, TRUE))
+eq("spaces around the commas do not matter",
+   select_workspaces(three, "runA , runC"), c(TRUE, FALSE, TRUE))
+eq("a character vector works as well as one string",
+   select_workspaces(three, c("runB", "runC")), c(FALSE, TRUE, TRUE))
+eq("no selection keeps everything",
+   select_workspaces(three, NULL), c(TRUE, TRUE, TRUE))
+eq("an empty selection keeps everything rather than nothing",
+   select_workspaces(three, ""), c(TRUE, TRUE, TRUE))
+throws("a name that is not a workspace is an error, not a silent drop",
+       select_workspaces(three, "runD"))
+
 # --- index_fcs_dir -----------------------------------------------------------
 cat("\nindex_fcs_dir()\n")
 
@@ -598,6 +621,46 @@ eq("an empty run is handled",
    disambiguate_sample_labels(character(0), character(0)), character(0))
 throws("mismatched lengths are caught",
        disambiguate_sample_labels(c("A", "B"), "runA"))
+
+# --- sample_display_label ----------------------------------------------------
+# The regression that matters here is the SPLIT workspace: extraction loops over
+# GatingSets ("wsB [panel 2]") but the sample index is keyed per workspace
+# ("wsB"), and looking one up with the other used to return character(0) and
+# blow up as "attempt to select less than one element" on the assignment after.
+cat("\nsample_display_label()\n")
+
+# One unsplit workspace and one split into two channel-set parts, exactly as
+# gs_source records it.
+split_source <- c("wsA" = "wsA",
+                  "wsB [panel 1]" = "wsB", "wsB [panel 2]" = "wsB")
+split_index <- data.frame(
+  workspace = c("wsA", "wsA", "wsB", "wsB", "wsB"),
+  raw       = c("a1.fcs", "a2.fcs", "b1.fcs", "b2.fcs", "b3.fcs"),
+  display   = c("a1", "a2", "b1", "b2", "b3"),
+  stringsAsFactors = FALSE)
+
+eq("an unsplit workspace resolves its own sample",
+   sample_display_label(split_index, split_source, "wsA", "a2.fcs"), "a2")
+eq("part 1 of a split workspace resolves through the source workspace",
+   sample_display_label(split_index, split_source, "wsB [panel 1]", "b1.fcs"),
+   "b1")
+eq("part 2 resolves too — the part name is not the index key",
+   sample_display_label(split_index, split_source, "wsB [panel 2]", "b3.fcs"),
+   "b3")
+throws("a sample missing from the index is named, not silently empty",
+       sample_display_label(split_index, split_source, "wsB [panel 2]",
+                            "nowhere.fcs"))
+# Two workspaces may hold the same raw file name; the workspace column is what
+# keeps the lookup single-valued.
+dup_source <- c("wsA" = "wsA", "wsB" = "wsB")
+dup_index <- data.frame(
+  workspace = c("wsA", "wsB"),
+  raw       = c("shared.fcs", "shared.fcs"),
+  display   = c("wsA: shared", "wsB: shared"),
+  stringsAsFactors = FALSE)
+eq("a name shared by two workspaces stays unambiguous",
+   sample_display_label(dup_index, dup_source, "wsB", "shared.fcs"),
+   "wsB: shared")
 
 # --- population resolution ---------------------------------------------------
 cat("\ntry_resolve_population()\n")

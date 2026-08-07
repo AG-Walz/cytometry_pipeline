@@ -136,6 +136,27 @@ def workspace_selection(form: dict, inspect: dict | None) -> list[str]:
     return [w for w in loaded if w not in excluded]
 
 
+def population_map_of(form: dict) -> dict:
+    """The ``--population_map``, minus workspaces this run does not load.
+
+    Two filters, both of which R would otherwise turn into a hard stop:
+
+    An entry with no gate is dropped because "workspace X, no gate" and "no
+    entry for workspace X" mean the same thing — X contributes no cells — and
+    only the second is a thing the flag can express.
+
+    An entry naming an EXCLUDED workspace is dropped because ``--workspaces``
+    is applied at discovery, before any workspace is read, so a workspace
+    switched off in the health panel is never loaded at all — and the map
+    naming one is exactly the "population_map names workspace(s) that were not
+    loaded" error, raised at the end of a load that took minutes. Dropping it
+    costs nothing: excluded and unmapped already mean the same thing.
+    """
+    excluded = set(form.get("excluded_workspaces") or [])
+    return {w: p for w, p in (form.get("population_map") or {}).items()
+            if p and w not in excluded}
+
+
 def run_params(form: dict, populations: list[str],
                inspect: dict | None = None) -> dict:
     """Everything ``rscript.run_argv`` needs, derived from the form.
@@ -153,7 +174,7 @@ def run_params(form: dict, populations: list[str],
         "population": population_of(form),
         "output_dir": output_dir_of(form),
         "group": form.get("group"),
-        "population_map": form.get("population_map") or {},
+        "population_map": population_map_of(form),
         "allow_missing_samples": bool(form.get("allow_missing_samples")),
         "match_mode": form.get("match_mode") or config.DEFAULTS["match_mode"],
         "workspaces": workspace_selection(form, inspect),
@@ -194,19 +215,30 @@ def validate_run(form: dict, inspect: dict) -> list[str]:
     elif not Path(fcs_dir).is_dir():
         problems.append(f"FCS directory does not exist: {fcs_dir}")
 
-    pop_map = {w: p for w, p in (form.get("population_map") or {}).items() if p}
+    picked = {w: p for w, p in (form.get("population_map") or {}).items() if p}
+    pop_map = population_map_of(form)
     loaded = inspect.get("populations_by_workspace") or {}
     if not inspect.get("populations") and not loaded:
         problems.append("Workspaces not loaded yet — run 'Load workspaces' in step 1.")
+    elif picked and not pop_map:
+        # Every workspace with a gate is switched off, so the run has no cells
+        # at all. R says so too, but only after a load that takes minutes.
+        problems.append(
+            "Every workspace with a per-workspace population is switched off "
+            "in step 1, so nothing would go into the UMAP. Switch one back on, "
+            "or pick a gate for a workspace that is on (step 2)."
+        )
     elif pop_map:
-        # A gate chosen for a workspace that is no longer loaded would be a
-        # hard error on the R side; catch it while it is still fixable.
+        # A gate chosen for a workspace that is no longer loaded is a hard
+        # error on the R side. The mapping is pruned on every load, so this
+        # should be unreachable from the UI — it survives as a backstop for a
+        # hand-edited session file, and for a load that reported no workspaces.
         stale = [w for w in pop_map if loaded and w not in loaded]
         if stale:
             problems.append(
                 "The per-workspace populations name workspace(s) that are not "
                 "loaded: " + ", ".join(sorted(stale)) +
-                ". Re-pick them in step 2."
+                ". Load the workspaces again in step 1 — that drops them."
             )
     elif not population_of(form):
         problems.append("No population selected (step 2).")

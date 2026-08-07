@@ -215,9 +215,11 @@ def register_callbacks() -> None:
         Input({"comp": "wsp-all"}, "n_clicks"),
         State({"comp": "wsp-toggle", "bid": ALL}, "id"),
         State("store-wsp-exclude", "data"),
+        State("store-inspect", "data"),
         prevent_initial_call=True,
     )
-    def collect_workspace_selection(checked, _all_clicks, ids, current):
+    def collect_workspace_selection(checked, _all_clicks, ids, current,
+                                    inspect):
         """Which workspaces are switched off.
 
         Stored as the EXCLUDED set: the default — use everything that loaded —
@@ -230,7 +232,14 @@ def register_callbacks() -> None:
         if isinstance(ctx.triggered_id, dict) and \
                 ctx.triggered_id.get("comp") == "wsp-all":
             return []
-        excluded = [i["bid"] for i, on in zip(ids or [], checked or []) if not on]
+        # Only workspaces that LOADED. One that failed draws its switch off and
+        # disabled (health._workspace_row) because it cannot be included — so
+        # reading that switch as "the user switched this off" records a choice
+        # nobody made, and puts a workspace in the excluded set that the user
+        # cannot see a reason for and cannot take back out.
+        loaded = (inspect or {}).get("populations_by_workspace") or {}
+        excluded = [i["bid"] for i, on in zip(ids or [], checked or [])
+                    if not on and (not loaded or i["bid"] in loaded)]
         # Re-rendering the panel re-fires this with the values it just drew, so
         # returning an equal-but-new list would loop between the two callbacks.
         if sorted(excluded) == sorted(current or []):
@@ -528,17 +537,39 @@ def register_callbacks() -> None:
         Input("gate-tree", "selected"),
         Input({"comp": "popmap-clear", "wsp": ALL}, "n_clicks"),
         Input("sw-per-wsp", "checked"),
+        Input("store-inspect", "data"),
         State("sel-wsp", "value"),
         State("store-popmap", "data"),
-        State("store-inspect", "data"),
         prevent_initial_call=True,
     )
-    def record_population_choice(selected, _clears, per_wsp, wsp, pop_map,
-                                 inspect):
+    def record_population_choice(selected, _clears, per_wsp, inspect, wsp,
+                                 pop_map):
         """Sole writer of the per-workspace mapping."""
         pop_map = dict(pop_map or {})
         by_wsp = (inspect or {}).get("populations_by_workspace") or {}
         trigger = ctx.triggered_id
+
+        # A LOAD is the only moment the real workspace names are known, so it is
+        # where entries naming a workspace that is no longer loaded are dropped.
+        # Without this the mapping could only ever GROW — the mapping persists
+        # with the rest of the form, so pointing the app at a different folder
+        # carried the previous study's names into the new one forever.
+        #
+        # It was unfixable from the UI, which is what made it worse than
+        # untidy: the picker draws one row per LOADED workspace, so a stale
+        # entry had no row and no "clear" button, and the run step's advice to
+        # re-pick in step 2 could not be acted on — picking added a correct
+        # entry BESIDE the stale one rather than replacing it.
+        #
+        # Only ever against a load that produced something. An empty inspect
+        # means "nothing loaded yet" — the app has just started and the mapping
+        # was restored from the session file — and pruning against nothing
+        # would throw away exactly the choices that were remembered.
+        if trigger == "store-inspect":
+            if not by_wsp:
+                return no_update
+            kept = {w: g for w, g in pop_map.items() if w in by_wsp}
+            return kept if len(kept) != len(pop_map) else no_update
 
         # Turning the mode OFF clears the mapping rather than leaving it to
         # apply invisibly: with it set, the R side ignores --population
