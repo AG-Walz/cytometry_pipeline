@@ -152,6 +152,29 @@ eq("a still-colliding label falls back to the full path",
 eq("extension matching is case-insensitive",
    workspace_labels("/w/runA.WSP"), "runA")
 
+# --- select_workspaces -------------------------------------------------------
+# The POLARITY is the whole content of these: --workspaces names what to KEEP.
+# The app stores the opposite (which workspaces are switched OFF) and has to
+# convert, and it once did not — which made a load read only the workspaces the
+# user had switched off. Pinned by a test so the direction cannot drift again.
+cat("\nselect_workspaces()\n")
+
+three <- c("runA", "runB", "runC")
+eq("a named workspace is the one KEPT, not the one dropped",
+   select_workspaces(three, "runA"), c(TRUE, FALSE, FALSE))
+eq("several are taken as a comma-separated list",
+   select_workspaces(three, "runA,runC"), c(TRUE, FALSE, TRUE))
+eq("spaces around the commas do not matter",
+   select_workspaces(three, "runA , runC"), c(TRUE, FALSE, TRUE))
+eq("a character vector works as well as one string",
+   select_workspaces(three, c("runB", "runC")), c(FALSE, TRUE, TRUE))
+eq("no selection keeps everything",
+   select_workspaces(three, NULL), c(TRUE, TRUE, TRUE))
+eq("an empty selection keeps everything rather than nothing",
+   select_workspaces(three, ""), c(TRUE, TRUE, TRUE))
+throws("a name that is not a workspace is an error, not a silent drop",
+       select_workspaces(three, "runD"))
+
 # --- index_fcs_dir -----------------------------------------------------------
 cat("\nindex_fcs_dir()\n")
 
