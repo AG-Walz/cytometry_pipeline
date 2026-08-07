@@ -779,6 +779,30 @@ normalize_columns <- function(m, method) {
   m
 }
 
+# The run-wide display label for one sample of one GATINGSET.
+#
+# The whole point is the key translation. `w` names a GatingSet, and a workspace
+# split by channel set has SEVERAL of those ("MTB016_1_2 [panel 2]"), while
+# sample_index is keyed per WORKSPACE — everything a person reads is. `gs_source`
+# is the bridge between the two, and crossing it in one named place is what stops
+# a caller from matching a part name against the workspace column, getting
+# character(0) back, and failing several lines later with an error about an index
+# rather than about the split.
+#
+# A miss here is a bug in this file — sample_index is built from these same
+# GatingSets — not anything the data can cause, so it is named as one.
+sample_display_label <- function(sample_index, gs_source, w, s) {
+  source_wsp <- gs_source[[w]]
+  hit <- sample_index$display[sample_index$workspace == source_wsp &
+                                sample_index$raw == s]
+  if (length(hit) != 1L) {
+    stop(sprintf(paste0("internal: sample '%s' of GatingSet '%s' matched %d ",
+                        "row(s) of the sample index (workspace '%s')"),
+                 s, w, length(hit), source_wsp), call. = FALSE)
+  }
+  hit
+}
+
 # Strip the FCS extension and GatingSet/cytoset suffix so legends/filenames show
 # a readable sample name (e.g. "...AML Pool_001.fcs_0" -> "...AML Pool_001").
 clean_sample_label <- function(x) {
@@ -1571,8 +1595,9 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     for (s in flowWorkspace::sampleNames(gs)) {
       # The display label is the key everywhere downstream (legends, file
       # names, per-file subsetting), so switch to it here and never look back.
-      display <- sample_index$display[sample_index$workspace == w &
-                                        sample_index$raw == s]
+      # `w` is a GatingSet name and sample_index is keyed per workspace — see
+      # sample_display_label(), which owns that translation.
+      display <- sample_display_label(sample_index, gs_source, w, s)
       res <- extract_population_sample(gs[[s]], pop_by_wsp[[w]],
                                        subpop_paths_by_wsp[[w]],
                                        subpop_depths, subpop_labels,

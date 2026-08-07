@@ -599,6 +599,46 @@ eq("an empty run is handled",
 throws("mismatched lengths are caught",
        disambiguate_sample_labels(c("A", "B"), "runA"))
 
+# --- sample_display_label ----------------------------------------------------
+# The regression that matters here is the SPLIT workspace: extraction loops over
+# GatingSets ("wsB [panel 2]") but the sample index is keyed per workspace
+# ("wsB"), and looking one up with the other used to return character(0) and
+# blow up as "attempt to select less than one element" on the assignment after.
+cat("\nsample_display_label()\n")
+
+# One unsplit workspace and one split into two channel-set parts, exactly as
+# gs_source records it.
+split_source <- c("wsA" = "wsA",
+                  "wsB [panel 1]" = "wsB", "wsB [panel 2]" = "wsB")
+split_index <- data.frame(
+  workspace = c("wsA", "wsA", "wsB", "wsB", "wsB"),
+  raw       = c("a1.fcs", "a2.fcs", "b1.fcs", "b2.fcs", "b3.fcs"),
+  display   = c("a1", "a2", "b1", "b2", "b3"),
+  stringsAsFactors = FALSE)
+
+eq("an unsplit workspace resolves its own sample",
+   sample_display_label(split_index, split_source, "wsA", "a2.fcs"), "a2")
+eq("part 1 of a split workspace resolves through the source workspace",
+   sample_display_label(split_index, split_source, "wsB [panel 1]", "b1.fcs"),
+   "b1")
+eq("part 2 resolves too — the part name is not the index key",
+   sample_display_label(split_index, split_source, "wsB [panel 2]", "b3.fcs"),
+   "b3")
+throws("a sample missing from the index is named, not silently empty",
+       sample_display_label(split_index, split_source, "wsB [panel 2]",
+                            "nowhere.fcs"))
+# Two workspaces may hold the same raw file name; the workspace column is what
+# keeps the lookup single-valued.
+dup_source <- c("wsA" = "wsA", "wsB" = "wsB")
+dup_index <- data.frame(
+  workspace = c("wsA", "wsB"),
+  raw       = c("shared.fcs", "shared.fcs"),
+  display   = c("wsA: shared", "wsB: shared"),
+  stringsAsFactors = FALSE)
+eq("a name shared by two workspaces stays unambiguous",
+   sample_display_label(dup_index, dup_source, "wsB", "shared.fcs"),
+   "wsB: shared")
+
 # --- population resolution ---------------------------------------------------
 cat("\ntry_resolve_population()\n")
 
