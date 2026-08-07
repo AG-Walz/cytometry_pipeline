@@ -77,6 +77,8 @@ run_dimred <- function(expr_matrix, method = "umap",
         # threading the search is free, threading the optimiser changes the
         # embedding. See run_umap() in R_shared/stats_utils.R.
         sgd_threads     = params$sgd_threads %||% 1L,
+        # NULL keeps uwot's own choice, which is exact for small inputs.
+        nn_method       = params$nn_method %||% NULL,
         progress        = params$progress %||% FALSE,
         verbose         = params$verbose %||% FALSE,
         init            = params$umap_init %||% "auto",

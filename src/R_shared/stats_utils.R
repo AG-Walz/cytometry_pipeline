@@ -255,7 +255,7 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
                      n_components = 2, metric = "euclidean", seed = 42,
                      n_threads = 1L, progress = FALSE, verbose = FALSE,
                      init = "auto", subsample = 0L, chunk = 250000L,
-                     sgd_threads = 1L) {
+                     sgd_threads = 1L, nn_method = NULL) {
   set.seed(seed)
   n_threads   <- max(1L, as.integer(n_threads))
   sgd_threads <- max(1L, as.integer(sgd_threads))
@@ -349,6 +349,29 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
   if (sgd_threads > 1L) {
     base_args$n_sgd_threads <- sgd_threads
     base_args$batch <- TRUE
+  }
+
+  # THE ONE PART OF THE NEIGHBOUR SEARCH THREADS CANNOT REACH.
+  #
+  # uwot's Annoy path is annoy_build() then annoy_search(), and only the SECOND
+  # takes n_threads — building the index is single-threaded however many cores
+  # are free. On 9.8M cells that was 22 minutes of a 97-minute neighbour phase,
+  # and no thread count will move it.
+  #
+  # hnsw_build() DOES take n_threads, so nn_method = "hnsw" is the only way to
+  # parallelise the whole search. It is a different approximate index, so it
+  # gives a different neighbour graph and therefore different coordinates —
+  # which is why it is opt-in and never inferred.
+  #
+  # NULL (the default) is left alone rather than replaced with "annoy": uwot
+  # picks an EXACT search for small inputs, and forcing the approximate one
+  # would quietly change the answer for every small run.
+  if (!is.null(nn_method) && nzchar(nn_method)) {
+    if (identical(nn_method, "hnsw") &&
+        !requireNamespace("RcppHNSW", quietly = TRUE)) {
+      stop("nn_method = \"hnsw\" needs the RcppHNSW package.", call. = FALSE)
+    }
+    base_args$nn_method <- nn_method
   }
   if (!is.null(cb)) base_args$epoch_callback <- cb
 

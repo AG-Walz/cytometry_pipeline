@@ -1841,7 +1841,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              embed_cores = 0L,
                              embed_sgd_cores = 1L,
                              umap_init = "auto",
-                             umap_subsample = 0L) {
+                             umap_subsample = 0L,
+                             nn_method = NULL) {
   require(ggplot2)
   if (!requireNamespace("viridis", quietly = TRUE)) {
     stop("Package 'viridis' is required for marker colour scales.")
@@ -1953,6 +1954,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     params = list(n_neighbors = n_neighbors, umap_min_dist = min_dist,
                   metric = metric, seed = seed, draw_plots = FALSE,
                   n_threads = embed_cores, sgd_threads = embed_sgd_cores,
+                  nn_method = nn_method,
                   progress = TRUE, verbose = TRUE,
                   umap_init = umap_init, umap_subsample = umap_subsample,
                   output_formats = output_formats,

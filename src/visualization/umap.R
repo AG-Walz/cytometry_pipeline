@@ -184,6 +184,7 @@ plot_umap_from_matrix <- function(expr_matrix, sample_labels = NULL,
                                    n_threads = 1L, progress = FALSE,
                                    verbose = FALSE, init = "auto",
                                    subsample = 0L, sgd_threads = 1L,
+                                   nn_method = NULL,
                                    umap_coords = NULL,
                                    output_formats = list(pdf = FALSE, png = TRUE, svg = TRUE),
                                    plot_width = 10, plot_height = 8,
@@ -221,7 +222,8 @@ plot_umap_from_matrix <- function(expr_matrix, sample_labels = NULL,
                              min_dist = min_dist, metric = metric, seed = seed,
                              n_threads = n_threads, progress = progress,
                              verbose = verbose, init = init,
-                             subsample = subsample, sgd_threads = sgd_threads)
+                             subsample = subsample, sgd_threads = sgd_threads,
+                             nn_method = nn_method)
   } else {
     cat("Using pre-computed UMAP coordinates for", nrow(umap_coords), "cells\n")
   }
