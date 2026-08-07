@@ -15,10 +15,10 @@ still the right answer.
 
 WHAT THE KEY COVERS
     Every option that changes what the load produces — the folders, the sample
-    group, the match mode, the marker aliases, the marker recovery switch, the
-    workspace selection — and the identity of the workspace FILES themselves
-    (path, size, mtime). Edit a gate in FlowJo and the key changes, so the
-    cache cannot serve a tree that no longer exists.
+    group, the match mode, the marker aliases, the marker recovery switch — and
+    the identity of the workspace FILES themselves (path, size, mtime). Edit a
+    gate in FlowJo and the key changes, so the cache cannot serve a tree that no
+    longer exists.
 
 WHAT IT DELIBERATELY DOES NOT COVER
     The FCS files. There can be hundreds of thousands of them and stat-ing the
@@ -50,9 +50,12 @@ MAX_AGE_SECONDS = 7 * 24 * 3600
 #: Fields of the inspect request that change the report. A field NOT listed
 #: here is one the cache will ignore — so anything added to the load must be
 #: added here too, or the app will serve the previous answer for it.
+#: The workspace SELECTION is deliberately not among them: a load reads every
+#: workspace it finds (see rscript.inspect_argv), so flicking a switch in the
+#: health panel cannot change the report and must not throw the cache away.
 KEYED_FIELDS = (
     "wsp", "fcs_dir", "group", "match_mode", "marker_aliases",
-    "recover_markers", "allow_missing_samples", "workspaces",
+    "recover_markers", "allow_missing_samples",
 )
 
 

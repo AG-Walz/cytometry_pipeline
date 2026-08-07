@@ -193,17 +193,27 @@ def register_callbacks() -> None:
         State("in-match-mode", "value"),
         State("in-marker-aliases", "value"),
         State("sw-recover-markers", "checked"),
-        State("store-wsp-exclude", "data"),
         prevent_initial_call=True,
     )
     def start_inspect(_clicks, _reload_clicks, wsp, fcs_dir, group,
                       allow_missing, match_mode, marker_aliases,
-                      recover_markers, excluded):
+                      recover_markers):
         """Load the workspaces — from the remembered result where possible.
 
         "Reload" is the same load with the cache bypassed, handled here rather
         than in a second callback so there is one place that decides what a
         load is.
+
+        A load reads EVERY workspace under the folder; the health panel's on/off
+        switches are not consulted here. They used to be, and backwards: the
+        stored set is what is switched OFF while R's --workspaces is what to
+        switch ON, so one workspace switched off made the next load read that
+        workspace and nothing else. Everything downstream is keyed on the
+        workspaces the report contains, so the whole form — the shared gating
+        tree, the panel, the per-workspace populations — collapsed onto the
+        rejects, and it was self-sustaining: the panel could then only redraw
+        the handful it had loaded. The selection belongs to the run, which
+        converts it properly (see common.workspace_selection).
         """
         force = ctx.triggered_id == "btn-reload"
         form = {"wsp": wsp, "fcs_dir": fcs_dir, "group": group}
@@ -226,7 +236,6 @@ def register_callbacks() -> None:
             "marker_aliases": marker_aliases or "",
             "recover_markers": bool(recover_markers),
             "allow_missing_samples": bool(allow_missing),
-            "workspaces": sorted(excluded or []),
         }
         cache_key = report_cache.key_for(request)
 
@@ -257,7 +266,6 @@ def register_callbacks() -> None:
             match_mode=match_mode or config.DEFAULTS["match_mode"],
             marker_aliases=marker_aliases or "",
             recover_markers=bool(recover_markers),
-            workspaces=sorted(excluded or []),
             report_json=report_json,
         )
         ok, message = RUNNER.start(
