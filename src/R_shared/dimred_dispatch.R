@@ -73,6 +73,10 @@ run_dimred <- function(expr_matrix, method = "umap",
         # option — just to choose cosine over euclidean.
         metric          = params$metric %||% "euclidean",
         n_threads       = params$n_threads %||% 1L,
+        # The OPTIMISER's threads, kept apart from the neighbour search's:
+        # threading the search is free, threading the optimiser changes the
+        # embedding. See run_umap() in R_shared/stats_utils.R.
+        sgd_threads     = params$sgd_threads %||% 1L,
         progress        = params$progress %||% FALSE,
         verbose         = params$verbose %||% FALSE,
         init            = params$umap_init %||% "auto",

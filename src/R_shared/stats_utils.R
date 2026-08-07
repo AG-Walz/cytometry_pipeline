@@ -206,9 +206,11 @@ run_pca <- function(expr_matrix, n_components = 2, scale = TRUE) {
 run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
                      n_components = 2, metric = "euclidean", seed = 42,
                      n_threads = 1L, progress = FALSE, verbose = FALSE,
-                     init = "auto", subsample = 0L, chunk = 250000L) {
+                     init = "auto", subsample = 0L, chunk = 250000L,
+                     sgd_threads = 1L) {
   set.seed(seed)
-  n_threads <- max(1L, as.integer(n_threads))
+  n_threads   <- max(1L, as.integer(n_threads))
+  sgd_threads <- max(1L, as.integer(sgd_threads))
   n_obs <- nrow(expr_matrix)
 
   # ---------------------------------------------------------------------------
@@ -268,20 +270,36 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
     }
   }
 
-  # THREADS AND REPRODUCIBILITY. n_sgd_threads defaults to asynchronous Hogwild
-  # SGD, where the interleaving of updates decides the result — so the same seed
-  # gives a different embedding. batch = TRUE updates at the end of each epoch
-  # instead, which makes multi-threaded SGD reproducible again. Serial stays the
-  # default so an existing analysis does not change under someone's feet.
+  # THREADS AND REPRODUCIBILITY — TWO POOLS, AND ONLY ONE OF THEM IS A RISK.
+  #
+  # uwot takes `n_threads` for the neighbour search (Annoy index build, kNN
+  # query, smooth-kNN calibration) and `n_sgd_threads` for the optimiser, and
+  # `n_sgd_threads` defaults to 0 — serial — INDEPENDENTLY of n_threads. Only
+  # the optimiser is order-sensitive: asynchronous Hogwild SGD lets the
+  # interleaving of updates decide the result, so the same seed gives a
+  # different embedding, and batch = TRUE (update at the end of each epoch)
+  # is what makes threaded SGD reproducible again — at a different answer.
+  #
+  # The neighbour search is deterministic at ANY thread count. This function
+  # used to tie the two together, so the only way to ask for a threaded search
+  # was to also switch optimisers; the default therefore pinned BOTH to one
+  # core, and a 9.8M-cell run spent 22 minutes building an Annoy index on a
+  # single thread of a 28-core machine to protect coordinates the search could
+  # not have changed. Verified on 20,000 x 6: n_threads 1 vs 8 with the
+  # optimiser serial gives max|difference| = 0, while batch = TRUE gives 7.09.
+  #
+  # So: thread the search freely, and keep the optimiser serial unless someone
+  # asks for it by name.
   base_args <- list(n_neighbors = n_neighbors,
                     min_dist = min_dist,
                     n_components = n_components,
                     metric = metric,
                     init = init,
                     n_threads = n_threads,
+                    n_sgd_threads = 0L,
                     verbose = isTRUE(verbose))
-  if (n_threads > 1L) {
-    base_args$n_sgd_threads <- n_threads
+  if (sgd_threads > 1L) {
+    base_args$n_sgd_threads <- sgd_threads
     base_args$batch <- TRUE
   }
   if (!is.null(cb)) base_args$epoch_callback <- cb
