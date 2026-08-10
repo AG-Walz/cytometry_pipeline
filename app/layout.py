@@ -22,22 +22,19 @@ def _number(id_: str, label: str, value, **kwargs) -> dmc.NumberInput:
 
 
 def _step_data(state: dict) -> list:
+    """Step 1 — where the data is, and what came back.
+
+    Two fields and a button. Everything that can be left alone is inside
+    Advanced, and everything explaining WHY sits in a tooltip on the control it
+    explains, rather than as a paragraph above it. The one exception is the
+    Advanced badge: a setting that changes which samples load must never be
+    able to hide behind a closed panel (see advanced_badge in callbacks/steps).
+    """
     return [
-        dmc.Text(
-            "Point at the folder holding your FlowJo workspaces and the folder "
-            "holding the FCS files, then load them. Both are searched "
-            "recursively, and each workspace is paired with its own FCS files "
-            "by file name. The gating tree and marker panel only exist once "
-            "the workspaces have been read, so steps 2–4 stay locked until "
-            "this succeeds.",
-            size="sm",
-            c="dimmed",
-        ),
-        dmc.Space(h=14),
         browser_field(
             "wsp",
             "FlowJo workspace folder",
-            "Searched recursively for .wsp — a single .wsp file also works",
+            "Recursive; a single .wsp also works",
             mode="dir",
             extensions=config.WSP_EXTENSIONS,
             placeholder="/path/to/workspaces",
@@ -49,16 +46,18 @@ def _step_data(state: dict) -> list:
         browser_field(
             "fcs",
             "FCS folder",
-            "Searched recursively; subfolders need no particular layout",
+            "Recursive; any subfolder layout",
             mode="dir",
             placeholder="/path/to/fcs",
             value=state["fcs_dir"],
         ),
         dmc.Space(h=12),
-        # Advanced, but deliberately still in step 1 and not in Parameters: the
-        # sample group decides which samples are loaded at all, so it has to be
-        # set before the load that builds the gating tree. A closed Mantine
-        # accordion keeps its panel mounted, so `in-group` stays addressable by
+        # Advanced stays ONE panel, deliberately: splitting it into four named
+        # collapsibles replaces one closed header with four, which is more to
+        # read and worry about, not less. It also stays in step 1 rather than
+        # moving to Parameters, because the sample group decides which samples
+        # load at all and must be set before the load. A closed Mantine
+        # accordion keeps its panel mounted, so these ids stay addressable by
         # the form callbacks whether or not it is open.
         dmc.Accordion(
             id="acc-advanced",
@@ -81,59 +80,83 @@ def _step_data(state: dict) -> list:
                         ),
                         dmc.AccordionPanel(
                             [
-                                dmc.Text(
-                                    "A FlowJo workspace can hold several "
-                                    "groups of samples — “All Samples” plus "
-                                    "any the analyst created, such as "
-                                    "“Killing” or “Controls”. Only one group "
-                                    "is loaded, and it decides which samples "
-                                    "are analysed at all. Group 1 is “All "
-                                    "Samples” in almost every workspace, so "
-                                    "you can normally ignore this.",
-                                    size="xs",
-                                    c="dimmed",
-                                ),
-                                dmc.Space(h=10),
                                 dmc.TextInput(
                                     id="in-group",
                                     label="Sample group",
                                     value=str(state["group"]),
                                     description=(
-                                        "An index (1, 2, …) or the group's "
-                                        "name. Use the name when loading "
-                                        "several workspaces: the same group "
-                                        "can sit at a different index in each."
+                                        "Index or name. 1 is “All Samples” in "
+                                        "most workspaces; prefer the name "
+                                        "across several, since the index can "
+                                        "differ. The Log lists each "
+                                        "workspace's groups."
                                     ),
                                     placeholder="1",
                                 ),
-                                dmc.Space(h=8),
-                                dmc.Text(
-                                    "Loading lists every workspace's groups in "
-                                    "the Log tab, so a name that does not "
-                                    "match tells you the valid ones.",
-                                    size="xs",
-                                    c="dimmed",
-                                ),
-                                dmc.Space(h=14),
-                                dmc.Divider(
-                                    label="Missing FCS files",
-                                    labelPosition="center",
-                                ),
-                                dmc.Space(h=10),
+                                dmc.Space(h=12),
                                 dmc.Switch(
                                     id="sw-allow-missing",
                                     label="Load anyway when FCS files are missing",
                                     description=(
-                                        "By default one .fcs file a workspace "
-                                        "names but that is not under the FCS "
-                                        "folder stops the whole run. Turn this "
-                                        "on to drop those samples and load the "
-                                        "rest; the Log lists every one dropped. "
-                                        "A workspace left with no files is "
-                                        "skipped, and its cells are simply not "
-                                        "in the UMAP."
+                                        "Drops the samples whose .fcs file is "
+                                        "missing instead of failing the run. "
+                                        "The Log names every one."
                                     ),
                                     checked=state["allow_missing_samples"],
+                                ),
+                                dmc.Space(h=12),
+                                dmc.RadioGroup(
+                                    id="in-match-mode",
+                                    value=state["match_mode"],
+                                    label="Match samples to files",
+                                    description=(
+                                        "Renamed files no longer match by "
+                                        "name; “by content” falls back to the "
+                                        "$FIL keyword inside each file plus "
+                                        "its event count, which a rename "
+                                        "cannot change."
+                                    ),
+                                    children=dmc.Stack(
+                                        [
+                                            dmc.Radio(
+                                                label="By content, then by name",
+                                                value="content",
+                                            ),
+                                            dmc.Radio(
+                                                label="By file name only",
+                                                value="strict",
+                                            ),
+                                        ],
+                                        gap=4,
+                                    ),
+                                    size="sm",
+                                ),
+                                dmc.Space(h=12),
+                                # An input, so it lives with the inputs — not in
+                                # the Data health panel that suggests values for
+                                # it, which is rendered only after a load and
+                                # would leave this unmounted on a fresh page.
+                                dmc.TextInput(
+                                    id="in-marker-aliases",
+                                    label="Marker aliases",
+                                    value=state["marker_aliases"],
+                                    description=(
+                                        "written=used, separated by “;”. "
+                                        "Reconciles one marker spelled two "
+                                        "ways. Data health suggests these."
+                                    ),
+                                    placeholder="INFy=IFN;TNFa=TNF",
+                                ),
+                                dmc.Space(h=12),
+                                dmc.Switch(
+                                    id="sw-recover-markers",
+                                    label="Recover marker names from the channel",
+                                    description=(
+                                        "On: files with no $PnS names borrow "
+                                        "them from files that have them, "
+                                        "matched on detector."
+                                    ),
+                                    checked=state["recover_markers"],
                                 ),
                             ]
                         ),
@@ -142,14 +165,59 @@ def _step_data(state: dict) -> list:
             ],
         ),
         dmc.Space(h=16),
-        dmc.Button(
-            "Load workspaces",
-            id="btn-inspect",
-            leftSection=dmc.Text("▸", size="sm"),
-            fullWidth=True,
+        dmc.Group(
+            [
+                dmc.Button(
+                    "Load workspaces",
+                    id="btn-inspect",
+                    leftSection=dmc.Text("▸", size="sm"),
+                    style={"flex": 1},
+                ),
+                # The cache is keyed on the workspace files themselves, so it
+                # cannot serve a tree that changed. It does NOT watch the FCS
+                # folder — stat-ing hundreds of thousands of files would cost
+                # more than it saves — so this is the way out when a file was
+                # added there. Visible, not buried in Advanced, because it is
+                # the answer to "why did nothing change?".
+                dmc.Tooltip(
+                    dmc.Button("Re-read", id="btn-reload", variant="subtle",
+                               color="gray"),
+                    label="Ignore the remembered result and read every "
+                          "workspace again",
+                    multiline=True, w=240, withArrow=True,
+                ),
+            ],
+            gap="xs",
+            grow=False,
         ),
         dmc.Space(h=12),
         html.Div(id="inspect-feedback"),
+        dmc.Space(h=12),
+        # Collapsed by default; the badge in the header carries the verdict, and
+        # the callback in steps.py opens it only when something needs attention.
+        dmc.Accordion(
+            id="acc-health",
+            value=None,
+            variant="contained",
+            chevronPosition="left",
+            children=[
+                dmc.AccordionItem(
+                    value="health",
+                    children=[
+                        dmc.AccordionControl(
+                            dmc.Group(
+                                [
+                                    dmc.Text("Data health", size="sm", fw=500),
+                                    html.Div(id="health-badge"),
+                                ],
+                                gap="xs",
+                            )
+                        ),
+                        dmc.AccordionPanel(html.Div(id="health-panel")),
+                    ],
+                )
+            ],
+        ),
     ]
 
 
@@ -329,18 +397,20 @@ def _step_gates(state: dict) -> list:
 
 
 def _step_params(state: dict) -> list:
+    """Step 3 — the four knobs that change the result, and the rest behind one door.
+
+    normalisation, downsample, n_neighbors and min_dist are real decisions:
+    the first two change the embedding and the runtime, the other two are the
+    UMAP parameters anyone has ever been told to tune. metric, seed and the four
+    plot dimensions are defaults nobody changes — five of them only affect how
+    the image looks and can be re-plotted, and seed only matters when you want
+    to reproduce, at which point the command preview in step 4 is what you copy.
+    """
     return [
-        dmc.Text(
-            "These map one-to-one onto the CLI options; anything left at its "
-            "default is omitted from the command.",
-            size="sm",
-            c="dimmed",
-        ),
-        dmc.Space(h=14),
         dmc.Select(
             id="in-normalize",
             label="Per-marker normalisation",
-            description="Computed from the pooled gated cells, before UMAP",
+            description="From the pooled gated cells, before UMAP",
             data=[{"value": n, "label": n} for n in config.NORMALIZE_METHODS],
             value=state["normalize"],
             allowDeselect=False,
@@ -353,7 +423,20 @@ def _step_params(state: dict) -> list:
             min=0,
             step=1000,
             allowDecimal=False,
-            description="0 = keep every cell; applied after gating",
+            description="0 = every cell",
+        ),
+        dmc.Space(h=12),
+        _number(
+            "in-cores",
+            "CPU cores",
+            state["n_cores"],
+            min=0,
+            step=1,
+            allowDecimal=False,
+            description=(
+                "0 = all but one. Spreads the per-file plots, which are most "
+                "of a run."
+            ),
         ),
         dmc.Space(h=12),
         dmc.Group(
@@ -367,57 +450,11 @@ def _step_params(state: dict) -> list:
             grow=True,
             align="flex-start",
         ),
-        dmc.Space(h=12),
-        dmc.Group(
-            [
-                dmc.Select(
-                    id="in-metric",
-                    label="metric",
-                    data=[{"value": m, "label": m} for m in config.UMAP_METRICS],
-                    value=state["metric"],
-                    allowDeselect=False,
-                    style={"flex": 1},
-                ),
-                _number("in-seed", "seed", state["seed"], min=0, step=1,
-                        allowDecimal=False, style={"flex": 1}),
-            ],
-            grow=True,
-            align="flex-start",
-        ),
-        dmc.Space(h=16),
-        dmc.Divider(label="Plot appearance", labelPosition="center"),
-        dmc.Space(h=10),
-        dmc.Group(
-            [
-                _number("in-pointsize", "point_size", state["point_size"],
-                        min=0.05, step=0.05, decimalScale=2, style={"flex": 1}),
-                _number("in-pointalpha", "point_alpha", state["point_alpha"],
-                        min=0.05, max=1, step=0.05, decimalScale=2,
-                        style={"flex": 1}),
-            ],
-            grow=True,
-            align="flex-start",
-        ),
-        dmc.Space(h=12),
-        dmc.Group(
-            [
-                _number("in-width", "plot_width (in)", state["plot_width"],
-                        min=1, step=1, decimalScale=1, style={"flex": 1}),
-                _number("in-height", "plot_height (in)", state["plot_height"],
-                        min=1, step=1, decimalScale=1, style={"flex": 1}),
-            ],
-            grow=True,
-            align="flex-start",
-        ),
         dmc.Space(h=16),
         dmc.CheckboxGroup(
             id="in-formats",
             label="Output formats",
-            description=(
-                "Exactly what is passed to --output_formats. PNG or SVG is "
-                "needed for the in-app gallery; PDF-only runs show download "
-                "links instead."
-            ),
+            description="PNG or SVG for the in-app gallery.",
             value=state["output_formats"],
             children=dmc.Group(
                 [dmc.Checkbox(label=f, value=f) for f in config.OUTPUT_FORMATS],
@@ -425,16 +462,103 @@ def _step_params(state: dict) -> list:
             ),
         ),
         dmc.Space(h=8),
+        # Stays visible: it reports that the run would produce no files.
         html.Div(id="format-warning"),
+        dmc.Space(h=14),
+        # A closed Mantine panel stays mounted, so every id below is still
+        # addressable by the form callbacks. The badge is not decoration — it is
+        # the rule from advanced_badge: a non-default setting may not hide.
+        dmc.Accordion(
+            id="acc-params",
+            value=None,
+            variant="contained",
+            chevronPosition="left",
+            children=[
+                dmc.AccordionItem(
+                    value="appearance",
+                    children=[
+                        dmc.AccordionControl(
+                            dmc.Group(
+                                [
+                                    dmc.Text("Appearance & advanced", size="sm",
+                                             fw=500),
+                                    html.Div(id="params-badge"),
+                                ],
+                                gap="xs",
+                            )
+                        ),
+                        dmc.AccordionPanel(
+                            [
+                                dmc.Group(
+                                    [
+                                        dmc.Select(
+                                            id="in-metric",
+                                            label="metric",
+                                            data=[{"value": m, "label": m}
+                                                  for m in config.UMAP_METRICS],
+                                            value=state["metric"],
+                                            allowDeselect=False,
+                                            style={"flex": 1},
+                                        ),
+                                        _number("in-seed", "seed", state["seed"],
+                                                min=0, step=1,
+                                                allowDecimal=False,
+                                                style={"flex": 1}),
+                                    ],
+                                    grow=True, align="flex-start",
+                                ),
+                                dmc.Space(h=12),
+                                dmc.Group(
+                                    [
+                                        _number("in-pointsize", "point_size",
+                                                state["point_size"], min=0.05,
+                                                step=0.05, decimalScale=2,
+                                                style={"flex": 1}),
+                                        _number("in-pointalpha", "point_alpha",
+                                                state["point_alpha"], min=0.05,
+                                                max=1, step=0.05,
+                                                decimalScale=2,
+                                                style={"flex": 1}),
+                                    ],
+                                    grow=True, align="flex-start",
+                                ),
+                                dmc.Space(h=12),
+                                dmc.Group(
+                                    [
+                                        _number("in-width", "plot_width (in)",
+                                                state["plot_width"], min=1,
+                                                step=1, decimalScale=1,
+                                                style={"flex": 1}),
+                                        _number("in-height", "plot_height (in)",
+                                                state["plot_height"], min=1,
+                                                step=1, decimalScale=1,
+                                                style={"flex": 1}),
+                                    ],
+                                    grow=True, align="flex-start",
+                                ),
+                            ]
+                        ),
+                    ],
+                )
+            ],
+        ),
     ]
 
 
 def _step_run(state: dict) -> list:
+    """Step 4 — where it goes, and the button.
+
+    The command preview moves behind a disclosure. It is the reproducibility
+    escape hatch, not something anyone reads before every run — and it is long
+    enough to push the Run button below the fold. What stays visible is the
+    output echo (which warns that a directory already exists and files will be
+    overwritten) and the validation list.
+    """
     return [
         browser_field(
             "outparent",
             "Output parent directory",
-            "The run writes into a new subfolder of this directory",
+            "A new subfolder is created here",
             mode="dir",
             placeholder="/path/to/results",
             value=state["output_parent"],
@@ -443,24 +567,33 @@ def _step_run(state: dict) -> list:
         dmc.TextInput(
             id="in-outname",
             label="Output folder name",
-            description="Pre-filled from the population and the current time",
             value=state["output_name"],
             placeholder="umap_viable_cells_20260728_1432",
         ),
         dmc.Space(h=8),
+        # Stays visible: this is where "the directory exists and files will be
+        # overwritten" is said, and it is the only destructive warning here.
         html.Div(id="output-echo"),
-        dmc.Space(h=16),
-        dmc.Divider(label="Command", labelPosition="center"),
-        dmc.Space(h=10),
-        dmc.Text(
-            "This is exactly what will be executed — copy it to reproduce the "
-            "run from a shell.",
-            size="xs",
-            c="dimmed",
+        dmc.Space(h=14),
+        dmc.Accordion(
+            id="acc-command",
+            value=None,
+            variant="contained",
+            chevronPosition="left",
+            children=[
+                dmc.AccordionItem(
+                    value="command",
+                    children=[
+                        dmc.AccordionControl(
+                            dmc.Text("Command", size="sm", fw=500)),
+                        dmc.AccordionPanel(
+                            dmc.Code(id="cmd-preview", block=True, children="",
+                                     style={"whiteSpace": "pre-wrap",
+                                            "wordBreak": "break-all"})),
+                    ],
+                )
+            ],
         ),
-        dmc.Space(h=6),
-        dmc.Code(id="cmd-preview", block=True, children="",
-                 style={"whiteSpace": "pre-wrap", "wordBreak": "break-all"}),
         dmc.Space(h=14),
         html.Div(id="run-validation"),
         dmc.Space(h=10),
@@ -473,6 +606,11 @@ def _fcs_names_panel(state: dict) -> list:
 
     Controls only. The report streams into the shared Log pane on the right,
     which is why this tab bar wraps the left column and not the whole grid.
+
+    The mode picker is UNCHANGED — same five modes, same read-only-first order,
+    same default. That ordering is the safety design of this tab (app/README.md)
+    and nothing about it is hidden, shortened or reordered here; only the prose
+    around it is.
     """
     return [
         dmc.Badge("sync_fcs_names.R", variant="dot", color="gray", size="sm"),
@@ -504,6 +642,9 @@ def _fcs_names_panel(state: dict) -> list:
             id="fcs-mode",
             value="dry",
             label="What to do",
+            # The escalation, attached to the control that orders it rather
+            # than left in a paragraph above.
+            description="Census → dry run → apply.",
             children=dmc.Stack(
                 [
                     dmc.Radio(value=k, label=v["label"])
@@ -524,6 +665,8 @@ def _fcs_names_panel(state: dict) -> list:
             placeholder="",
         ),
         dmc.Space(h=16),
+        # Visible, always: this is the pre-write disclosure, and the documented
+        # way to reach the flags that have no UI on purpose.
         dmc.Divider(label="Command", labelPosition="center"),
         dmc.Space(h=8),
         dmc.Code(id="fcs-cmd", block=True, children="",
@@ -545,8 +688,13 @@ def _fcs_names_panel(state: dict) -> list:
         dmc.Space(h=8),
         dmc.Group(
             [
-                dmc.Button("Show metadata", id="btn-fcs-kw",
-                           variant="default", size="compact-sm"),
+                dmc.Tooltip(
+                    dmc.Button("Show metadata", id="btn-fcs-kw",
+                               variant="default", size="compact-sm"),
+                    label="Decodes every keyword of every file in the folder "
+                          "so the cohort can be compared. Read-only.",
+                    multiline=True, w=250, withArrow=True,
+                ),
                 dmc.Switch(id="sw-fcs-allkw", label="Every keyword",
                            checked=False, size="xs"),
             ],
@@ -556,8 +704,6 @@ def _fcs_names_panel(state: dict) -> list:
         dcc.Store(id="store-fcs-kw", data=None),
         html.Div(id="fcs-kw-table"),
     ]
-
-
 def _left_column(state: dict) -> dmc.Paper:
     return dmc.Paper(
         [
@@ -653,6 +799,12 @@ def _right_column() -> dmc.Paper:
                                 ],
                                 justify="space-between",
                             ),
+                            # Progress. Empty until R reports a phase, and
+                            # hidden again when nothing is running — a bar
+                            # frozen at 40% after a finished run reads as a
+                            # stalled job.
+                            html.Div(id="reattach-note"),
+                            html.Div(id="progress-wrap"),
                             dmc.Space(h=10),
                             dmc.ScrollArea(
                                 html.Pre(
@@ -781,6 +933,12 @@ def build_layout(state: dict):
                 # widget that owns it; it is read back through FORM_FIELDS like
                 # any other field, and persists with the rest of the form.
                 dcc.Store(id="store-popmap", data=state.get("population_map") or {}),
+                # Workspace labels the user has switched OFF. An exclusion list
+                # rather than an inclusion one so the default — everything that
+                # loaded — needs no state at all, and so a workspace appearing
+                # in the folder later is included rather than silently dropped.
+                dcc.Store(id="store-wsp-exclude",
+                          data=state.get("excluded_workspaces") or []),
                 dcc.Store(id="store-results-dir", data=""),
                 dcc.Store(id="store-run-generation", data=-1),
                 dcc.Interval(id="poll", interval=POLL_MS, disabled=False),

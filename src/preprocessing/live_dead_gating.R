@@ -86,10 +86,19 @@ gate_live_cells <- function(flowframe, viability_channel,
             "%). Check viability channel and threshold.")
   }
 
-  # Filter to live cells
+  # Filter to live cells. flowCore's flowFrame() constructor round-trips
+  # through an FCS-style check that chokes on 0-row matrices, so synthesize
+  # a single dummy row and drop it if no live cells remain.
   live_expr <- expr[!is_dead, , drop = FALSE]
   params <- flowCore::parameters(flowframe)
-  live_ff <- flowCore::flowFrame(exprs = live_expr, parameters = params)
+  if (nrow(live_expr) == 0) {
+    dummy <- matrix(0, nrow = 1, ncol = ncol(expr),
+                    dimnames = list(NULL, colnames(expr)))
+    live_ff <- flowCore::flowFrame(exprs = dummy, parameters = params)
+    live_ff <- live_ff[-1, ]
+  } else {
+    live_ff <- flowCore::flowFrame(exprs = live_expr, parameters = params)
+  }
 
   list(
     live_ff = live_ff,

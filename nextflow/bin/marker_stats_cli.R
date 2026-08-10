@@ -10,22 +10,34 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+# --- Input validation ---
+if (!is.null(opt$input_folder) && !dir.exists(opt$input_folder)) {
+  stop("Input directory not found: ", opt$input_folder)
+}
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "stats_utils.R"))
 source(file.path(src_dir, "analysis", "marker_statistics.R"))
 
-markers <- if (!is.null(opt$markers)) {
-  strsplit(opt$markers, ",")[[1]]
-} else {
-  NULL
-}
+tryCatch({
+  markers <- if (!is.null(opt$markers)) {
+    strsplit(opt$markers, ",")[[1]]
+  } else {
+    NULL
+  }
 
-run_marker_statistics(
-  input_folder  = opt$input_folder,
-  output_folder = opt$output_folder,
-  markers       = markers,
-  test_type     = opt$test_type
-)
-cat("Marker statistics ->", opt$output_folder, "\n")
+  run_marker_statistics(
+    input_folder  = opt$input_folder,
+    output_folder = opt$output_folder,
+    markers       = markers,
+    test_type     = opt$test_type
+  )
+  cat("Marker statistics ->", opt$output_folder, "\n")
+}, error = function(e) {
+  cat(sprintf("\n[ERROR] Marker statistics failed: %s\n", conditionMessage(e)), file = stderr())
+  cat("Stack trace:\n", file = stderr())
+  traceback(e)
+  quit(status = 1)
+})

@@ -15,6 +15,14 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+# --- Input validation ---
+if (!is.null(opt$data_dir) && !dir.exists(opt$data_dir)) {
+  stop("Input directory not found: ", opt$data_dir)
+}
+if (!is.null(opt$conditions_csv) && !file.exists(opt$conditions_csv)) {
+  stop("Conditions file not found: ", opt$conditions_csv)
+}
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
@@ -22,16 +30,23 @@ source(file.path(shared_dir, "stats_utils.R"))
 source(file.path(shared_dir, "cluster_utils.R"))
 source(file.path(src_dir, "analysis", "differential_abundance.R"))
 
-cond_levels <- strsplit(opt$condition_levels, ",")[[1]]
+tryCatch({
+  cond_levels <- strsplit(opt$condition_levels, ",")[[1]]
 
-run_differential_abundance(
-  data_dir         = opt$data_dir,
-  conditions_csv   = opt$conditions_csv,
-  output_dir       = opt$output_dir,
-  cluster_regex    = opt$cluster_regex,
-  condition_levels = cond_levels,
-  min_cluster_size = opt$min_cluster_size,
-  p_adjust_method  = opt$p_adjust_method,
-  seed             = opt$seed
-)
-cat("Differential abundance results ->", opt$output_dir, "\n")
+  run_differential_abundance(
+    data_dir         = opt$data_dir,
+    conditions_csv   = opt$conditions_csv,
+    output_dir       = opt$output_dir,
+    cluster_regex    = opt$cluster_regex,
+    condition_levels = cond_levels,
+    min_cluster_size = opt$min_cluster_size,
+    p_adjust_method  = opt$p_adjust_method,
+    seed             = opt$seed
+  )
+  cat("Differential abundance results ->", opt$output_dir, "\n")
+}, error = function(e) {
+  cat(sprintf("\n[ERROR] Differential abundance analysis failed: %s\n", conditionMessage(e)), file = stderr())
+  cat("Stack trace:\n", file = stderr())
+  traceback(e)
+  quit(status = 1)
+})

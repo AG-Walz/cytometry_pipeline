@@ -13,34 +13,46 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+# --- Input validation ---
+if (!is.null(opt$input_rds_dir) && !dir.exists(opt$input_rds_dir)) {
+  stop("Input directory not found: ", opt$input_rds_dir)
+}
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "flowframe_utils.R"))
 source(file.path(src_dir, "harmonization", "panel_homogenization.R"))
 
-markers <- strsplit(opt$markers_of_interest, ",")[[1]]
-replacing <- as.list(fromJSON(opt$markername_replacing))
+tryCatch({
+  markers <- strsplit(opt$markers_of_interest, ",")[[1]]
+  replacing <- as.list(fromJSON(opt$markername_replacing))
 
-# Load all flowFrames
-rds_files <- sort(list.files(opt$input_rds_dir, pattern = "\\.rds$",
-                             full.names = TRUE))
-flow_frames <- lapply(rds_files, readRDS)
-sample_names <- tools::file_path_sans_ext(basename(rds_files))
-names(flow_frames) <- sample_names
+  # Load all flowFrames
+  rds_files <- sort(list.files(opt$input_rds_dir, pattern = "\\.rds$",
+                               full.names = TRUE))
+  flow_frames <- lapply(rds_files, readRDS)
+  sample_names <- tools::file_path_sans_ext(basename(rds_files))
+  names(flow_frames) <- sample_names
 
-# Homogenize
-homogenized <- homogenize_flowframes(
-  flow_frames         = flow_frames,
-  sample_names        = sample_names,
-  markers_of_interest = markers,
-  markername_replacing = replacing,
-  output_dir          = NULL
-)
+  # Homogenize
+  homogenized <- homogenize_flowframes(
+    flow_frames         = flow_frames,
+    sample_names        = sample_names,
+    markers_of_interest = markers,
+    markername_replacing = replacing,
+    output_dir          = NULL
+  )
 
-# Write one RDS per sample for re-scatter
-dir.create(opt$output_dir, recursive = TRUE, showWarnings = FALSE)
-for (nm in names(homogenized)) {
-  saveRDS(homogenized[[nm]], file.path(opt$output_dir, paste0(nm, ".rds")))
-}
-cat("Homogenized", length(homogenized), "samples ->", opt$output_dir, "\n")
+  # Write one RDS per sample for re-scatter
+  dir.create(opt$output_dir, recursive = TRUE, showWarnings = FALSE)
+  for (nm in names(homogenized)) {
+    saveRDS(homogenized[[nm]], file.path(opt$output_dir, paste0(nm, ".rds")))
+  }
+  cat("Homogenized", length(homogenized), "samples ->", opt$output_dir, "\n")
+}, error = function(e) {
+  cat(sprintf("\n[ERROR] Panel homogenization failed: %s\n", conditionMessage(e)), file = stderr())
+  cat("Stack trace:\n", file = stderr())
+  traceback(e)
+  quit(status = 1)
+})

@@ -2,4 +2,20 @@ pipeline: B
 input_dir: /path/to/csv_expression_files
 output_dir: ./results/pipeline_B
 markers_of_interest: "CD3,CD4,CD8,CD19,CD56,HLA-DR"
-test_type: lmer
+
+# --- Analysis ---
+# test_type: lmer                  # lmer, wilcox, kruskal
+# conditions_csv: null             # Optional conditions file
+# condition_levels: "Control,Treatment"
+# min_cluster_size: 5
+# p_adjust_method: BH
+# alpha_level: 0.05
+
+# --- Output ---
+# output_formats: png
+# plot_width: 10
+# plot_height: 8
+# max_cells_heatmap: 5000          # Max cells for heatmap rendering
+
+# --- Reproducibility ---
+# seed: 42

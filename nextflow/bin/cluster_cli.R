@@ -16,29 +16,41 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+# --- Input validation ---
+if (!is.null(opt$input_rds) && !file.exists(opt$input_rds)) {
+  stop("Input file not found: ", opt$input_rds)
+}
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "clustering_dispatch.R"))
 
-expr_data <- readRDS(opt$input_rds)
+tryCatch({
+  expr_data <- readRDS(opt$input_rds)
 
-cluster_ids <- run_clustering(
-  expr_matrix = expr_data$combined_matrix,
-  method      = opt$method,
-  params      = list(
-    n_neighbors    = opt$n_neighbors,
-    resolution     = opt$resolution,
-    n_clusters     = opt$n_clusters,
-    grid_xdim      = opt$grid_xdim,
-    grid_ydim      = opt$grid_ydim,
-    k              = opt$n_neighbors,
-    dbscan_eps     = opt$dbscan_eps,
-    dbscan_min_pts = opt$dbscan_min_pts,
-    seed           = opt$seed
+  cluster_ids <- run_clustering(
+    expr_matrix = expr_data$combined_matrix,
+    method      = opt$method,
+    params      = list(
+      n_neighbors    = opt$n_neighbors,
+      resolution     = opt$resolution,
+      n_clusters     = opt$n_clusters,
+      grid_xdim      = opt$grid_xdim,
+      grid_ydim      = opt$grid_ydim,
+      k              = opt$n_neighbors,
+      dbscan_eps     = opt$dbscan_eps,
+      dbscan_min_pts = opt$dbscan_min_pts,
+      seed           = opt$seed
+    )
   )
-)
 
-saveRDS(cluster_ids, opt$output_rds)
-cat("Clustered:", length(unique(cluster_ids)), "clusters from",
-    length(cluster_ids), "cells\n")
+  saveRDS(cluster_ids, opt$output_rds)
+  cat("Clustered:", length(unique(cluster_ids)), "clusters from",
+      length(cluster_ids), "cells\n")
+}, error = function(e) {
+  cat(sprintf("\n[ERROR] Clustering failed: %s\n", conditionMessage(e)), file = stderr())
+  cat("Stack trace:\n", file = stderr())
+  traceback(e)
+  quit(status = 1)
+})

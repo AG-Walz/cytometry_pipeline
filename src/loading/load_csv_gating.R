@@ -6,7 +6,35 @@
 # Core merge/pivot logic retained; GUI, I/O, cluster utils moved to R_shared
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      # Rscript src/foo/bar.R carries no source frame; recover from --file=.
+      if (is.null(of)) {
+        a <- commandArgs(FALSE); m <- grep("^--file=", a)
+        if (length(m)) of <- sub("^--file=", "", a[m[[1]]])
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of, mustWork = FALSE)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+# Guarded, NOT unconditional: nextflow/bin/*_cli.R and scripts/*.R set shared_dir
+# themselves (the --src_dir convention), and clobbering it here would send every
+# source() below to whichever tree this file happens to live in rather than the
+# one the caller chose.
+if (!exists("shared_dir")) shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "gui_utils.R"))
 source(file.path(shared_dir, "fcs_utils.R"))
@@ -223,17 +251,4 @@ process_single_csv_gating <- function(csv_file, gating_pattern, expr_cols = NULL
 # Wrapper for creating safe filenames (uses R_shared)
 create_safe_filename <- function(name) {
   gsub("[^A-Za-z0-9_.-]", "_", gsub("_+", "_", name))
-}
-
-# --- CLI execution ---
-if (sys.nframe() == 0) {
-  args <- commandArgs(trailingOnly = TRUE)
-  if (length(args) < 1) {
-    cat("Usage: Rscript load_csv_gating.R <input_fcs_path> [output_path]\n")
-    quit(status = 1)
-  }
-  load_csv_gating(
-    input_fcs_path = args[1],
-    output_path = if (length(args) >= 2) args[2] else NULL
-  )
 }
