@@ -183,15 +183,6 @@ fcs_read_header <- function(path) {
        file_size = size, raw = hdr)
 }
 
-#' The offsets vector `readFCStext()` in fcs_utils.R expects.
-#'
-#' That function has taken an `offsets` argument since it was written and
-#' nothing in the repo ever produced one. This is the producer.
-fcs_header_offsets <- function(hdr) {
-  c(textstart = hdr$textstart, textend = hdr$textend,
-    FCSversion = hdr$fcs_major)
-}
-
 # -----------------------------------------------------------------------------
 # TEXT: parse and serialize
 # -----------------------------------------------------------------------------
@@ -675,22 +666,6 @@ fcs_keyword <- function(path, key, default = NA_character_) {
   fcs_text_get(ins$text, key, default)
 }
 
-#' Print a file's keywords, optionally filtered by a regex on the name.
-fcs_print_keywords <- function(path, pattern = NULL) {
-  kw <- fcs_keywords(path)
-  if (!is.null(pattern) && length(kw)) {
-    kw <- kw[grepl(pattern, names(kw), ignore.case = TRUE)]
-  }
-  cat("--- ", basename(path), " (", length(kw), " keywords)\n", sep = "")
-  if (length(kw)) {
-    w <- max(nchar(names(kw)))
-    for (i in seq_along(kw)) {
-      cat("    ", formatC(names(kw)[i], width = -w), "  ", kw[[i]], "\n", sep = "")
-    }
-  }
-  invisible(kw)
-}
-
 # -----------------------------------------------------------------------------
 # Layout planning
 # -----------------------------------------------------------------------------
@@ -820,19 +795,14 @@ fcs_range_identical <- function(path_a, from_a, path_b, from_b, n,
 #' @param set Named character vector of keyword = value to write.
 #' @param unset Character vector of keywords to remove.
 #' @param output_path Where to write. NULL means patch `path` itself.
-#' @param strategy "auto", or force one of neutral/patch/rewrite (tests only).
 #' @param allow Refusal codes to downgrade.
-#' @param verify Run the five post-write witnesses. Leave this on.
 #' @param dry_run Plan and report, write nothing.
 #' @param .fault Test-only fault injection; NULL in every real call.
 #' @return list(status = ok|unchanged|refused|failed, strategy, changed, ...).
 fcs_write_keywords <- function(path, set = character(), unset = character(),
-                               output_path = NULL,
-                               strategy = c("auto", "neutral", "patch", "rewrite"),
-                               allow = character(), verify = TRUE,
+                               output_path = NULL, allow = character(),
                                dry_run = FALSE, chunk_bytes = 8 * 1024^2,
                                .fault = NULL) {
-  strategy <- match.arg(strategy)
   res <- list(path = path, output_path = output_path, status = "failed",
               strategy = NA_character_, changed = character(0),
               refusals = character(0), warnings = character(0),
@@ -919,7 +889,6 @@ fcs_write_keywords <- function(path, set = character(), unset = character(),
   new_txt <- fcs_text_set(txt, set = set, unset = unset)
   natural <- length(fcs_serialize_text(new_txt))
   plan <- fcs_plan_layout(seg$text_len, seg$room, natural)
-  if (strategy != "auto") plan$strategy <- strategy
 
   shift <- 0
   if (plan$strategy == "rewrite") {
@@ -989,7 +958,7 @@ fcs_write_keywords <- function(path, set = character(), unset = character(),
       .fcs_write_rewrite(path, dest, hdr, seg, new_text_raw, plan, shift,
                          in_place, chunk_bytes, .fault)
     } else {
-      .fcs_write_patch(path, hdr, seg, new_text_raw, plan, chunk_bytes, .fault)
+      .fcs_write_patch(path, hdr, seg, new_text_raw, plan, .fault)
     },
     error = function(e) e)
 
@@ -1002,19 +971,15 @@ fcs_write_keywords <- function(path, set = character(), unset = character(),
   res$warnings <- c(res$warnings, out$warnings)
 
   # --- verify ---------------------------------------------------------------
-  if (verify) {
-    v <- .fcs_verify(path, out$dest, ins, new_txt, plan, shift, in_place,
-                     chunk_bytes, expected_delta = delta)
-    res$data_identical <- v$data_identical
-    if (!v$ok) {
-      if (!is.null(out$restore)) out$restore()
-      res$status <- "failed"
-      res$message <- paste("verification failed:", v$message,
-                           if (!is.null(out$restore)) "(original restored)" else "")
-      return(res)
-    }
-  } else {
-    res$data_identical <- NA
+  v <- .fcs_verify(path, out$dest, ins, new_txt, plan, shift, in_place,
+                   chunk_bytes, expected_delta = delta)
+  res$data_identical <- v$data_identical
+  if (!v$ok) {
+    if (!is.null(out$restore)) out$restore()
+    res$status <- "failed"
+    res$message <- paste("verification failed:", v$message,
+                         if (!is.null(out$restore)) "(original restored)" else "")
+    return(res)
   }
   if (!is.null(out$commit)) out$commit()
 
@@ -1037,8 +1002,7 @@ fcs_write_keywords <- function(path, set = character(), unset = character(),
 # kilobyte or so, not a copy of the events — written and closed BEFORE the file
 # is opened for writing. R exposes no fsync, so a power cut mid-write can still
 # tear the segment; this is what makes that recoverable.
-.fcs_write_patch <- function(path, hdr, seg, new_text_raw, plan, chunk_bytes,
-                             .fault = NULL) {
+.fcs_write_patch <- function(path, hdr, seg, new_text_raw, plan, .fault = NULL) {
   room <- seg$room
   stopifnot(length(new_text_raw) <= room)
   textend_new <- seg$textstart + length(new_text_raw) - 1

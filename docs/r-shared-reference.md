@@ -1044,7 +1044,6 @@ post-write verification.
 | Function | Signature | Returns |
 |----------|-----------|---------|
 | `fcs_read_header()` | `(path)` | version, the six offsets as **doubles**, OTHER region, file size |
-| `fcs_header_offsets()` | `(hdr)` | `c(textstart=, textend=, FCSversion=)` — the vector `readFCStext()` in `fcs_utils.R` expects |
 | `fcs_parse_text()` | `(txt_raw)` | `"fcs_text"`: delimiter, keys/values as **raw**, honouring the doubled-delimiter escape |
 | `fcs_serialize_text()` | `(txt)` | raw; exact inverse of the parser |
 | `fcs_text_get()` / `fcs_text_num()` | `(txt, key, default)` | one keyword, matched case-insensitively |
@@ -1053,9 +1052,8 @@ post-write verification.
 | `fcs_validate()` | `(hdr, txt, seg, allow)` | refusal codes, or `character(0)` |
 | `fcs_inspect()` | `(path, allow)` | one read: header, text, layout, refusals, warnings. Never throws on a malformed file |
 | `fcs_plan_layout()` | `(text_len_old, room, natural_len)` | `neutral` / `patch` / `rewrite`, plus fill and grow. Pure |
-| `fcs_write_keywords()` | `(path, set, unset, output_path, ..., dry_run)` | writes and verifies; `list(status, strategy, changed, data_identical, ...)` |
+| `fcs_write_keywords()` | `(path, set, unset, output_path, allow, dry_run)` | writes and verifies (always — verification is not optional); `list(status, strategy, changed, data_identical, ...)` |
 | `fcs_keyword()` / `fcs_keywords()` | `(path, key)` / `(path)` | keyword lookup without loading a `flowFrame` |
-| `fcs_print_keywords()` | `(path, pattern)` | prints, returns invisibly |
 | `fcs_range_identical()` | `(pa, from_a, pb, from_b, n)` | chunked byte comparison of two file ranges |
 
 ```r
