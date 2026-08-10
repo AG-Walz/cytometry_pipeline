@@ -98,6 +98,11 @@ Nothing is written without `--apply`, and `--apply` still refuses to guess
 between editing the originals and writing copies — you must say `--in_place` or
 `--output_dir`.
 
+A preview **exits 0 even when it finds problems**: reporting that three files
+cannot be synced, or that two would still collide, is a preview doing its job.
+Only `--apply` turns those into a non-zero exit, because then they stopped a
+write that was supposed to happen.
+
 ### Seeing what is in there
 
 The TEXT segment is a delimiter-packed blob, so `--keyword_table` is how you
@@ -122,8 +127,7 @@ keyword column frozen.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--fcs_dir` | `data` | Folder, searched recursively and case-insensitively (`.fcs` and `.FCS`) |
-| `--probe` | off | Census only. Writes nothing. |
-| `--list_keywords` | off | Dump every keyword of the first few files, then exit |
+| `--probe` | off | Census only — collisions and the keyword table, with no per-file preview. Writes nothing, and cheaper than a preview on a large cohort. |
 | `--apply` | off | Actually write |
 | `--in_place` | off | Patch the originals where they sit |
 | `--output_dir` | — | Write patched copies here instead, mirroring subfolders |
@@ -278,7 +282,7 @@ read a keyword without loading a `flowFrame`:
 ```r
 source("src/R_shared/fcs_keywords.R")
 fcs_keyword("sample.fcs", "$TOT")      # "50"
-fcs_print_keywords("sample.fcs")       # everything
+fcs_keywords("sample.fcs")             # everything, as a named vector
 fcs_inspect("sample.fcs")$refusals     # is it safe to edit?
 ```
 

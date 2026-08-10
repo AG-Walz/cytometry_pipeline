@@ -389,7 +389,7 @@ first, the read-only census, and the three write strategies.
 sync_fcs_names(fcs_dir, apply = FALSE, in_place = TRUE, output_dir = NULL,
                also = character(), set = character(), unset = character(),
                guid = c("never", "auto", "always"), strip_extension = FALSE,
-               recursive = TRUE, probe_only = FALSE, list_keywords = FALSE,
+               recursive = TRUE, probe_only = FALSE,
                revert = FALSE, allow = character(),
                ledger = "fcs_name_sync_ledger.csv",
                keyword_table = NULL, write_original = TRUE, verbose = TRUE)

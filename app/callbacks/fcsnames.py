@@ -95,28 +95,22 @@ def register_callbacks() -> None:
         Input({"comp": "fb-input", "bid": "fcssync"}, "value"),
         Input("fcs-mode", "value"),
         Input("fcs-also", "value"),
-        Input({"comp": "fb-input", "bid": "fcsout"}, "value"),
     )
-    def preview(folder, mode, also, out_dir):
-        spec = rscript.SYNC_MODES.get(mode) or rscript.SYNC_MODES["probe"]
-        argv = rscript.sync_argv((folder or "").strip(), mode or "probe",
-                                 also or "", out_dir or "")
-        note = None
+    def preview(folder, mode, also):
+        spec = rscript.SYNC_MODES.get(mode) or rscript.SYNC_MODES["dry"]
+        argv = rscript.sync_argv((folder or "").strip(), mode or "dry", also or "")
         problem = _folder_problem(folder)
         if problem:
             note = _alert(problem, color="yellow")
-        elif spec.get("needs_output") and not (out_dir or "").strip():
-            note = _alert(
-                "Choose an output folder, or switch to patching in place.",
-                color="yellow",
-            )
         elif spec.get("writes") and mode != "revert":
             note = _alert(
-                "This writes to your files. Every change is recorded in "
-                "fcs_name_sync_ledger.csv next to the data, and 'Undo' "
-                "replays it.",
+                "This writes to your files. The name being replaced is kept in "
+                "ORIGINALFIL, and every change is logged to "
+                "fcs_name_sync_ledger.csv next to the data — Undo replays it.",
                 color="orange",
             )
+        else:
+            note = None
         return rscript.command_string(argv), note, spec["button"], spec["color"]
 
     # -- start a run -------------------------------------------------------
@@ -128,32 +122,26 @@ def register_callbacks() -> None:
         State({"comp": "fb-input", "bid": "fcssync"}, "value"),
         State("fcs-mode", "value"),
         State("fcs-also", "value"),
-        State({"comp": "fb-input", "bid": "fcsout"}, "value"),
         prevent_initial_call=True,
     )
-    def start_sync(_clicks, folder, mode, also, out_dir):
+    def start_sync(_clicks, folder, mode, also):
         problem = _folder_problem(folder)
         if problem:
             return _alert(problem), no_update
 
-        spec = rscript.SYNC_MODES.get(mode) or rscript.SYNC_MODES["probe"]
-        if spec.get("needs_output") and not (out_dir or "").strip():
-            return _alert("Choose an output folder first."), no_update
-
         # The folder only. The mode is deliberately not remembered: a refresh
-        # that restored "apply in place" would turn one stray click into a
-        # cohort-wide write.
+        # that restored "Apply" would turn one stray click into a cohort-wide
+        # write.
         session_state.save({"fcs_sync_dir": folder.strip()})
 
-        argv = rscript.sync_argv(folder.strip(), mode, also or "", out_dir or "")
+        argv = rscript.sync_argv(folder.strip(), mode, also or "")
         ok, message = runner.RUNNER.start(
             argv, cwd=str(config.REPO_ROOT), kind="fcs-names",
             meta={"fcs_dir": folder.strip(), "mode": mode},
         )
         if not ok:
             return _alert(message, color="yellow"), no_update
-        # Switch the right-hand pane to the log: the report is the whole output
-        # and a user who has just clicked Apply should be watching it.
+        # Switch the right-hand pane to the log: the report is the whole output.
         return _alert("Running — watch the Log.", color="blue"), "log"
 
     # -- the stored metadata table -----------------------------------------

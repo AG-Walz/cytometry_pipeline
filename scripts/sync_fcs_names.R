@@ -70,8 +70,6 @@ option_list <- list(
                             "and any group of files sharing BOTH $FIL and ",
                             "$TOT — those are the ones CytoML currently tells ",
                             "apart by luck. Writes nothing.")),
-  make_option("--list_keywords", action = "store_true", default = FALSE,
-              help = "Print every keyword of the first few files, then exit."),
   make_option("--apply", action = "store_true", default = FALSE,
               help = paste0("Perform the writes. Without it the tool reports ",
                             "what it would do and stops. [default %default]")),
@@ -197,7 +195,7 @@ if (!dir.exists(shared_dir)) {
 }
 
 source(file.path(shared_dir, "io_utils.R"))      # make_outdir, die
-# The FCS keyword layer: fcs_inspect, fcs_write_keywords, fcs_print_keywords
+# The FCS keyword layer: fcs_inspect, fcs_write_keywords, fcs_keywords
 source(file.path(shared_dir, "fcs_keywords.R"))
 # wsp_referenced_names(): what a FlowJo workspace asks for, read from the XML
 # alone. Needed to tell a helpful rename from one that breaks the workspaces.
@@ -250,7 +248,6 @@ sync_fcs_names(
   strip_extension = opt$strip_extension,
   recursive       = !opt$no_recursive,
   probe_only      = opt$probe,
-  list_keywords   = opt$list_keywords,
   revert          = opt$revert,
   allow           = split_csv(opt$allow),
   ledger          = opt$ledger,

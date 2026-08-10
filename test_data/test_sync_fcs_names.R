@@ -121,8 +121,12 @@ ok("census writes nothing",
    identical(vapply(scan_fcs_dir(d), fx_md5, character(1)), md5_before))
 ok("census reports the $FIL collision", grepl("\\$FIL: 1 group", res$report))
 ok("census reports the GUID collision", grepl("GUID: 1 group", res$report))
-ok("census projects a write strategy per file",
-   all(res$plan$strategy %in% c("neutral", "patch", "rewrite", "unchanged")))
+# The census deliberately does NOT simulate a write per file -- that is what
+# keeps it cheap enough to run just for the keyword table. Preview does.
+ok("census leaves the per-file strategy unprojected", all(is.na(res$plan$strategy)))
+prev <- quiet(sync_fcs_names(d))
+ok("preview projects a strategy for every file",
+   all(prev$plan$strategy %in% c("neutral", "patch", "rewrite", "unchanged")))
 ok("census says nothing is matched by luck",
    grepl("unique for every file", res$report))
 
@@ -168,18 +172,14 @@ ok("guid=always overrides that", "GUID" %in% names(pl$sets[[1]]))
 pl <- plan_name_sync(pr, fcs_dir = d, set = c("$SRC" = "%stem%_%dir%"))
 eq("--set expands templates", pl$sets[[1]][["$SRC"]], "PatientA_policy")
 
-hits <- find_name_like_keywords(scan_fcs_dir(d)[1],
-                                c("Specimen_001.fcs", "Specimen_001"))
-ok("the census can find the old name hiding in other keywords",
-   all(c("$SRC", "FILENAME", "GUID") %in% hits))
-ok("...without listing the keyword we are already fixing", !("$FIL" %in% hits))
-
 # --- collisions ---------------------------------------------------------------
 cat("\n-- collisions ------------------------------------------------------\n")
 d <- make_cohort(file.path(root, "collide"), c("sub1/A.fcs", "sub2/A.fcs"))
 md5_before <- vapply(scan_fcs_dir(d), fx_md5, character(1))
-throws("two subfolders with the same basename is fatal",
+throws("two subfolders with the same basename is fatal to a WRITE",
        quiet(sync_fcs_names(d, apply = TRUE)), "still share a name")
+ok("...but a preview still runs and says so",
+   grepl("would STILL collide", quiet(sync_fcs_names(d))$report))
 ok("...and nothing was written",
    identical(vapply(scan_fcs_dir(d), fx_md5, character(1)), md5_before))
 res <- quiet(sync_fcs_names(d, probe_only = TRUE))
@@ -471,7 +471,14 @@ fcs_fixture(file.path(d, "Good.fcs"), keywords = list("$FIL" = "Specimen_001.fcs
 fcs_fixture(file.path(d, "Multi.fcs"), keywords = list("$FIL" = "Specimen_001.fcs",
                                                        "$NEXTDATA" = "4096"))
 bad_before <- fx_md5(file.path(d, "Multi.fcs"))
-throws("a refused file fails the run rather than passing silently",
+# A preview whose job is to say "this file cannot be synced" has succeeded at
+# that job. Only the write fails. Otherwise the GUI shows a red run for exactly
+# the folders you most need to look at before touching anything.
+res <- quiet(sync_fcs_names(d))
+eq("a preview REPORTS a refused file without failing",
+   sort(vapply(res$results, function(r) r$status, character(1))),
+   c("ok", "refused"))
+throws("...while applying fails on it",
        quiet(sync_fcs_names(d, apply = TRUE)), "could not be synced")
 eq("the good file was still written", fcs_keyword(file.path(d, "Good.fcs"), "$FIL"),
    "Good.fcs")

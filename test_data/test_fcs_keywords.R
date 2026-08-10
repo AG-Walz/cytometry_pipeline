@@ -100,8 +100,6 @@ if (file.exists(real)) {
      c(58, 801, 802, 2001, 0, 0))
   ok("real: offsets are doubles",
      all(vapply(list(h$textstart, h$dataend), typeof, character(1)) == "double"))
-  eq("real: fcs_header_offsets feeds readFCStext", fcs_header_offsets(h),
-     c(textstart = 58, textend = 801, FCSversion = 3))
 
   ins <- fcs_inspect(real)
   # The delimiter is '|' (0x7C). An early note in this work said form feed

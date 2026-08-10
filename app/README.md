@@ -94,24 +94,23 @@ read-only first, and that ordering is the safety design:
 
 | Mode | Flags | Writes? |
 |---|---|---|
-| Census — read every file and report | `--probe` | no |
-| Dry run — show exactly what would change | — | no |
-| APPLY — patch the originals in place | `--apply --in_place` | **yes** |
-| APPLY — write patched copies elsewhere | `--apply --output_dir` | **yes** |
-| Undo — revert the most recent run | `--revert` | **yes** |
+| Preview — list what would change | — | no |
+| Apply — write `$FIL` into the original files | `--apply --in_place` | **yes** |
+| Undo — restore the names from the last run's ledger | `--revert` | **yes** |
 
-Census is what the page loads on, and the mode is deliberately **not**
-remembered between sessions — a refresh must never bring the app back armed to
-write. Everything a write does is recorded in `fcs_name_sync_ledger.csv` beside
-the data, which is what Undo replays.
+Exactly one of them writes, it is the only red button, and Preview is what the
+page loads on. The mode is deliberately **not** remembered between sessions — a
+refresh must never bring the app back armed to write. Everything a write does
+is recorded in `fcs_name_sync_ledger.csv` beside the data, which is what Undo
+replays, and the name being replaced is kept in `ORIGINALFIL`.
 
-Only four of the script's flags have a UI (`--fcs_dir`, the mode, `--also`,
-`--output_dir`). The rest — `--set`, `--unset`, `--guid`, `--strip_extension`,
-`--allow`, `--ledger`, `--no_recursive`, `--no_original` — stay on the command
-line on purpose. `--allow` especially: it downgrades a refusal that exists to
+Preview is the dry run rather than the CLI's `--probe`, because the dry run's
+output is a strict superset: it prints the whole census *and* the per-file
+plan. Three of the script's flags have a UI (`--fcs_dir`, the mode, `--also`);
+the rest stay on the command line on purpose, and the command preview is
+copy-pasteable. `--allow` especially: it downgrades a refusal that exists to
 stop the tool writing to a file it does not fully understand, and that should
-be a deliberate typed act, not a checkbox. The command preview is
-copy-pasteable, so adding one by hand is easy.
+be a deliberate typed act, not a checkbox.
 
 ### Stored metadata
 

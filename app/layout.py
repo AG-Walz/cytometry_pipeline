@@ -616,42 +616,23 @@ def _fcs_names_panel(state: dict) -> list:
         dmc.Badge("sync_fcs_names.R", variant="dot", color="gray", size="sm"),
         dmc.Space(h=10),
         dmc.Text(
-            "FlowJo shows each file's $FIL keyword, not its name on disk. "
-            "This writes the name on disk into $FIL.",
+            "FlowJo shows the name stored inside each file ($FIL), not the file "
+            "name on disk, so renamed files can all show up as one sample. This "
+            "rewrites $FIL to match the file name; the event data is never "
+            "touched.",
             size="sm", c="dimmed",
         ),
-        dmc.Space(h=8),
-        dmc.Accordion(
-            id="acc-fcs-help",
-            value=None,
-            variant="contained",
-            chevronPosition="left",
-            children=[
-                dmc.AccordionItem(
-                    value="why",
-                    children=[
-                        dmc.AccordionControl(
-                            dmc.Text("Why the names look wrong", size="sm")),
-                        dmc.AccordionPanel(
-                            dmc.Text(
-                                "A run acquired under one file name records "
-                                "that name inside every file, in $FIL. "
-                                "Renaming the files on disk does not change "
-                                "it, so the workspace shows a column of "
-                                "identical samples. Check FlowJo → Preferences "
-                                "→ Workspace → “How should data files be "
-                                "named” first: set to “Use Short File Name”, "
-                                "you do not need this at all.",
-                                size="xs", c="dimmed")),
-                    ],
-                )
-            ],
+        dmc.Space(h=6),
+        dmc.Text(
+            "If FlowJo → Preferences → Workspace → \"How should data files be "
+            "named\" can be set to \"Use Short File Name\", you do not need this.",
+            size="xs", c="dimmed",
         ),
         dmc.Space(h=14),
         browser_field(
             "fcssync",
             "FCS folder",
-            "Searched recursively",
+            "Searched recursively; .fcs and .FCS alike",
             mode="dir",
             placeholder="/path/to/renamed",
             value=state.get("fcs_sync_dir", ""),
@@ -659,7 +640,7 @@ def _fcs_names_panel(state: dict) -> list:
         dmc.Space(h=14),
         dmc.RadioGroup(
             id="fcs-mode",
-            value="probe",
+            value="dry",
             label="What to do",
             # The escalation, attached to the control that orders it rather
             # than left in a paragraph above.
@@ -674,45 +655,14 @@ def _fcs_names_panel(state: dict) -> list:
             ),
         ),
         dmc.Space(h=12),
-        # Always mounted, never conditionally rendered: hiding it would need a
-        # callback, and layout.py's doctrine is that every input exists from
-        # the start. It is simply ignored by every mode but "copy".
-        browser_field(
-            "fcsout",
-            "Output folder",
-            "Copies mode only, outside the FCS folder",
-            mode="dir",
-            placeholder="/path/to/patched_copies",
-        ),
-        dmc.Space(h=12),
-        dmc.Accordion(
-            id="acc-fcs-more",
-            value=None,
-            variant="contained",
-            chevronPosition="left",
-            children=[
-                dmc.AccordionItem(
-                    value="more",
-                    children=[
-                        dmc.AccordionControl(
-                            dmc.Group(
-                                [dmc.Text("More options", size="sm"),
-                                 html.Div(id="fcs-also-badge")],
-                                gap="xs")),
-                        dmc.AccordionPanel(
-                            dmc.TextInput(
-                                id="fcs-also",
-                                label="Also sync these keywords",
-                                description=(
-                                    "Comma-separated, e.g. $SRC,TUBE NAME. "
-                                    "$FIL is always written; the replaced name "
-                                    "is kept in ORIGINALFIL."
-                                ),
-                                placeholder="",
-                            )),
-                    ],
-                )
-            ],
+        dmc.TextInput(
+            id="fcs-also",
+            label="Also sync these keywords",
+            description=(
+                "Comma-separated, e.g. $SRC,TUBE NAME. Only for FlowJo's "
+                "\"Keyword Combination\" naming; $FIL is always written."
+            ),
+            placeholder="",
         ),
         dmc.Space(h=16),
         # Visible, always: this is the pre-write disclosure, and the documented
@@ -724,11 +674,17 @@ def _fcs_names_panel(state: dict) -> list:
         dmc.Space(h=10),
         html.Div(id="fcs-note"),
         dmc.Space(h=8),
-        dmc.Button("Run census", id="btn-fcs", fullWidth=True, size="md"),
+        dmc.Button("Preview", id="btn-fcs", fullWidth=True, size="md"),
         dmc.Space(h=8),
         html.Div(id="fcs-feedback"),
         dmc.Space(h=18),
         dmc.Divider(label="Stored metadata", labelPosition="center"),
+        dmc.Space(h=8),
+        dmc.Text(
+            "What each file in the folder currently stores, side by side. "
+            "Read-only.",
+            size="xs", c="dimmed",
+        ),
         dmc.Space(h=8),
         dmc.Group(
             [

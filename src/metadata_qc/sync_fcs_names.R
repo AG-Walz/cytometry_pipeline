@@ -108,10 +108,7 @@ probe_fcs_dir <- function(files, fcs_dir = NULL, allow = character()) {
     rel = if (is.null(fcs_dir)) basename(files) else
       sub(paste0("^", gsub("([.|()\\^{}+$*?\\[\\]])", "\\\\\\1", fcs_dir),
                  .Platform$file.sep, "?"), "", files),
-    version = blank(NA_character_), delim = blank(NA_integer_),
-    n_pairs = blank(NA_integer_), text_len = blank(NA_real_),
-    room = blank(NA_real_), nextdata = blank(NA_real_),
-    trailer = blank(NA_character_), tot = blank(NA_character_),
+    tot = blank(NA_character_),
     fil = blank(NA_character_), filename_kw = blank(NA_character_),
     guid = blank(NA_character_), src = blank(NA_character_),
     tube = blank(NA_character_), originalfil = blank(NA_character_),
@@ -126,10 +123,7 @@ probe_fcs_dir <- function(files, fcs_dir = NULL, allow = character()) {
     out$refusals[i] <- paste(ins$refusals, collapse = ",")
     out$warnings[i] <- paste(ins$warnings, collapse = ",")
     if (is.null(ins$header)) next
-    out$version[i] <- ins$header$version
     if (!is.null(ins$text)) {
-      out$delim[i] <- as.integer(ins$text$delimiter)
-      out$n_pairs[i] <- ins$text$n_pairs
       out$fil[i] <- fcs_text_get(ins$text, "$FIL")
       out$filename_kw[i] <- fcs_text_get(ins$text, "FILENAME")
       out$guid[i] <- fcs_text_get(ins$text, "GUID")
@@ -138,12 +132,6 @@ probe_fcs_dir <- function(files, fcs_dir = NULL, allow = character()) {
       out$originalfil[i] <- fcs_text_get(ins$text, FCS_ORIGINAL_NAME_KEYWORD)
       out$tot[i] <- fcs_text_get(ins$text, "$TOT")
     }
-    if (!is.null(ins$seg)) {
-      out$text_len[i] <- ins$seg$text_len
-      out$room[i] <- ins$seg$room
-      out$nextdata[i] <- ins$seg$nextdata
-    }
-    out$trailer[i] <- if (is.null(ins$trailer)) NA_character_ else ins$trailer
   }
   out
 }
@@ -158,30 +146,6 @@ collision_groups <- function(values, names_) {
   tab[vapply(tab, length, integer(1)) > 1L]
 }
 
-#' Keywords, other than the ones we are about to write, whose value still looks
-#' like the file's old name.
-#'
-#' This is how a "Keyword Combination" site finds out that FlowJo is showing it
-#' $SRC or TUBE NAME rather than $FIL, and therefore that the default keyword
-#' set will not change anything it can see.
-find_name_like_keywords <- function(path, old_names, skip = "$FIL") {
-  ins <- tryCatch(fcs_inspect(path), error = function(e) NULL)
-  if (is.null(ins) || is.null(ins$text)) return(character(0))
-  hits <- character(0)
-  old <- tolower(old_names[!is.na(old_names) & nzchar(old_names)])
-  if (!length(old)) return(hits)
-  for (i in seq_len(ins$text$n_pairs)) {
-    key <- ins$text$keys_upper[i]
-    if (is.na(key) || key %in% toupper(skip)) next
-    val <- tolower(.fcs_value_string(ins$text$values_raw[[i]]))
-    if (!nzchar(val)) next
-    if (any(old == val) || any(old == tolower(basename(val)))) {
-      hits <- c(hits, key)
-    }
-  }
-  unique(hits)
-}
-
 #' Every keyword of every file, as a long-format CSV.
 #'
 #' The TEXT segment is a delimiter-packed blob that nothing outside a parser can
@@ -190,7 +154,7 @@ find_name_like_keywords <- function(path, old_names, skip = "$FIL") {
 #' at once.
 #'
 #' Long format (one row per file/keyword) rather than a wide grid because files
-#' do not have to carry the same keywords — a wide table would need a union of
+#' do not have to carry the same keywords -- a wide table would need a union of
 #' columns and a rule for the holes, and the caller that wants a grid can pivot
 #' far more easily than one that wants tidy rows can unpivot.
 #'
@@ -297,7 +261,6 @@ plan_name_sync <- function(probe, fcs_dir = NULL, also = character(),
   plan$new_fil <- NA_character_
   plan$sets <- vector("list", n)
   plan$unsets <- vector("list", n)
-  plan$action <- rep("sync", n)
 
   for (i in seq_len(n)) {
     nm <- probe$name[i]
@@ -723,7 +686,6 @@ format_sync_report <- function(results) {
 #' @param guid "never" (default), "auto" or "always".
 #' @param strip_extension Write $FIL without the .fcs suffix.
 #' @param probe_only Census only.
-#' @param list_keywords Dump the keywords of the first few files and stop.
 #' @param revert Undo a previous run from its ledger.
 #' @param allow Refusal codes to downgrade.
 #' @param ledger Ledger file name, relative to the output/ledger directory.
@@ -743,12 +705,11 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
                            set = character(), unset = character(),
                            guid = c("never", "auto", "always"),
                            strip_extension = FALSE, recursive = TRUE,
-                           probe_only = FALSE, list_keywords = FALSE,
+                           probe_only = FALSE,
                            revert = FALSE, allow = character(),
                            ledger = "fcs_name_sync_ledger.csv",
                            keyword_table = NULL, write_original = TRUE,
-                           wsp = character(),
-                           n_list = 3L, verbose = TRUE) {
+                           verbose = TRUE) {
   guid <- match.arg(guid)
   if (!dir.exists(fcs_dir)) {
     stop("Folder does not exist: ", fcs_dir, call. = FALSE)
@@ -786,11 +747,6 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
     stop("No .fcs files found under ", fcs_dir, call. = FALSE)
   }
 
-  if (list_keywords) {
-    for (f in head(files, n_list)) fcs_print_keywords(f)
-    return(invisible(list(files = files, report = "")))
-  }
-
   # Leftovers from a run that died mid-write. Naming them is more useful than
   # cleaning them up silently, because one of them may be the only copy.
   orphans <- list.files(c(fcs_dir, if (!is.null(output_dir)) output_dir),
@@ -809,19 +765,6 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
                          strip_extension = strip_extension,
                          write_original = write_original)
 
-  # Project the strategy for the census, without writing.
-  plan$strategy <- NA_character_
-  for (i in seq_len(nrow(plan))) {
-    if (nzchar(plan$refusals[i])) { plan$strategy[i] <- "refused"; next }
-    d <- tryCatch(fcs_write_keywords(plan$path[i], set = plan$sets[[i]],
-                                     unset = plan$unsets[[i]], allow = allow,
-                                     dry_run = TRUE),
-                  error = function(e) list(status = "failed", strategy = NA))
-    plan$strategy[i] <- if (identical(d$status, "unchanged")) "unchanged"
-                        else if (identical(d$status, "ok")) d$strategy
-                        else d$status
-  }
-
   if (!is.null(keyword_table) && nzchar(keyword_table)) {
     kwt <- write_keyword_table(files, keyword_table, fcs_dir = fcs_dir,
                                allow = allow)
@@ -833,59 +776,36 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
   collisions <- detect_collisions(plan)
   workspaces <- list.files(fcs_dir, pattern = "\\.(wsp|jo)$", recursive = TRUE,
                            ignore.case = TRUE)
-
-  # Does anything read these files by $FIL? Checked on EVERY mode, census and
-  # dry run included, because the answer is the thing someone needs before they
-  # decide to apply — not after.
-  wsp_paths <- find_nearby_workspaces(fcs_dir, extra = wsp,
-                                      recursive = recursive)
-  wsp_check <- check_workspace_match(plan, wsp_paths)
-
-  report <- format_probe_report(probe, plan, collisions, workspaces)
-  if (verbose) {
-    cat(report, "\n", sep = "")
-    if (identical(wsp_check$status, "regression")) {
-      cat("\n", wsp_check$message, "\n", sep = "")
-    } else if (identical(wsp_check$status, "ok") && wsp_check$before > 0) {
-      cat(sprintf(
-        "\n%d nearby workspace(s) match %d file(s) by $FIL; this sync keeps %d of them.\n",
-        wsp_check$n_workspaces, wsp_check$before, wsp_check$after))
-    }
-  }
+  plan$strategy <- NA_character_
 
   out <- list(probe = probe, plan = plan, collisions = collisions,
-              workspaces = workspaces, workspace_match = wsp_check,
-              results = list(), report = report, ledger = ledger_path)
+              workspaces = workspaces, results = list(), report = "",
+              ledger = ledger_path)
 
-  if (probe_only) return(invisible(out))
+  # A census stops here: no per-file simulation, which is what keeps it cheap
+  # enough to run just for the keyword table.
+  if (probe_only) {
+    out$report <- format_probe_report(probe, plan, collisions, workspaces)
+    if (verbose) cat(out$report, "\n", sep = "")
+    return(invisible(out))
+  }
 
-  if (length(collisions$exact)) {
+  if (apply && length(collisions$exact)) {
+    cat(format_probe_report(probe, plan, collisions, workspaces), "\n",
+        sep = "", file = stderr())
     stop(length(collisions$exact), " group(s) of files would still share a name ",
          "after the sync. Nothing was written. See the report above.",
          call. = FALSE)
   }
 
-  # Refused only when it would actually WRITE. A dry run has already printed the
-  # warning above, which is exactly when it is most useful to read it.
-  if (apply && identical(wsp_check$status, "regression") &&
-      !("workspace_match" %in% allow)) {
-    stop("this sync would break ", wsp_check$before - wsp_check$after,
-         " FlowJo sample match(es). Nothing was written. See the report above, ",
-         "and use --allow workspace_match to override.", call. = FALSE)
-  }
-
-  # --- the change list -------------------------------------------------------
-  if (verbose) {
-    cat("\n", if (apply) "Applying" else "DRY RUN — nothing will be written",
-        ":\n", sep = "")
-  }
-  # Millisecond resolution AND the pid. A plain second-resolution stamp merges
-  # two runs launched in the same second into one ledger entry, and --revert
-  # then restores a mixture of both -- for a folder synced twice in quick
-  # succession that is a state the files were never in.
   run_id <- paste0(format(Sys.time(), "%Y%m%dT%H%M%OS3"), "-", Sys.getpid())
   results <- vector("list", nrow(plan))
 
+  # ONE pass. This used to be two: a projection loop that ran a dry-run write
+  # per file purely to fill plan$strategy for the report, then the real loop
+  # making the same call again -- so a preview simulated every file twice. The
+  # strategies come out of the results instead, and the report is printed after
+  # the pass rather than before it.
   for (i in seq_len(nrow(plan))) {
     p <- plan$path[i]
     dest <- if (is.null(output_dir)) NULL else
@@ -912,28 +832,24 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
                                message = conditionMessage(e)))
     r$path <- p
     results[[i]] <- r
+    plan$strategy[i] <- if (identical(r$status, "ok")) r$strategy else r$status
 
     if (apply) {
       append_ledger(ledger_path, run_id, "after", p, strategy = r$strategy,
                     status = r$status)
     }
-    if (verbose) {
-      cat(sprintf("  %-9s %-9s %s\n", r$status,
-                  if (is.na(r$strategy)) "" else r$strategy, plan$rel[i]))
-      # The VALUES, not just the file name. "ok rewrite <file>" tells you a
-      # write is planned but not what it would write, which is the one thing you
-      # need in order to approve it — and $FIL is exactly the keyword where
-      # being wrong is expensive. Only changed keywords are shown, so a file
-      # already in sync stays a single line.
-      for (k in names(plan$sets[[i]])) {
-        new <- plan$sets[[i]][[k]]
-        col <- .SYNC_KEYWORD_COLUMN[[k]]
-        old <- if (is.null(col)) NA_character_ else plan[[col]][i]
-        if (!is.na(old) && identical(old, new)) next
-        cat(sprintf("              %-12s %s -> %s\n", k,
-                    if (is.na(old)) "<absent>" else sprintf("\"%s\"", old),
-                    sprintf("\"%s\"", new)))
-      }
+  }
+
+  out$plan <- plan
+  out$report <- format_probe_report(probe, plan, collisions, workspaces)
+  if (verbose) {
+    cat(out$report, "\n", sep = "")
+    cat("\n", if (apply) "Applying" else "PREVIEW — nothing will be written",
+        ":\n", sep = "")
+    for (i in seq_len(nrow(plan))) {
+      cat(sprintf("  %-9s %-9s %s\n", results[[i]]$status,
+                  if (is.na(results[[i]]$strategy)) "" else results[[i]]$strategy,
+                  plan$rel[i]))
     }
   }
   out$results <- results
@@ -950,14 +866,20 @@ sync_fcs_names <- function(fcs_dir, apply = FALSE, in_place = TRUE,
     if (!apply) cat("Nothing was written. Re-run with --apply.\n")
   }
 
+  # Gated on `apply`. A preview whose job is to tell you three files cannot be
+  # synced has SUCCEEDED at that job; failing it would make the GUI show a red
+  # run for exactly the folders you most need to look at first. The detail is
+  # printed either way.
   if (n_bad > 0) {
     # Same shape as umap_from_flowjo.R:689-699 — the detail goes to stderr
     # BEFORE stop(), because R truncates the message it prints from stop()
     # at warning.length and would swallow most of a cohort-sized report.
     detail <- format_sync_report(results[!(status %in% c("ok", "unchanged"))])
     cat("\nFiles that were not touched:\n", detail, "\n", sep = "", file = stderr())
-    stop(n_bad, " of ", length(results), " file(s) could not be synced. ",
-         "See the report above.", call. = FALSE)
+    if (apply) {
+      stop(n_bad, " of ", length(results), " file(s) could not be synced. ",
+           "See the report above.", call. = FALSE)
+    }
   }
   invisible(out)
 }
