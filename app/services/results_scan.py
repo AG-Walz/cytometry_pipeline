@@ -22,7 +22,12 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app.config import EXTENSION_PREFERENCE, PLOT_EXTENSIONS, PREVIEW_EXTENSIONS
+from app.config import (
+    EXTENSION_PREFERENCE,
+    MAX_INLINE_SVG_BYTES,
+    PLOT_EXTENSIONS,
+    PREVIEW_EXTENSIONS,
+)
 
 
 @dataclass
@@ -38,11 +43,32 @@ class Plot:
 
     @property
     def preview(self) -> Path | None:
-        """The best file to show inline, or None when only PDF exists."""
+        """The best file to show inline, or None when nothing embeddable exists.
+
+        An SVG over ``MAX_INLINE_SVG_BYTES`` does not count: it carries one
+        node per cell and would stall the page, so it is download-only.
+        """
         for ext in EXTENSION_PREFERENCE:
             if ext in PREVIEW_EXTENSIONS and ext in self.variants:
-                return self.variants[ext]
+                path = self.variants[ext]
+                if ext == ".svg" and self._size_of(path) > MAX_INLINE_SVG_BYTES:
+                    continue
+                return path
         return None
+
+    @property
+    def oversized_svg(self) -> bool:
+        """True when the only embeddable file is an SVG too large to embed."""
+        svg = self.variants.get(".svg")
+        return (self.preview is None and svg is not None
+                and self._size_of(svg) > MAX_INLINE_SVG_BYTES)
+
+    @staticmethod
+    def _size_of(path: Path) -> int:
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
 
     @property
     def downloads(self) -> list[tuple[str, Path]]:

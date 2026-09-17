@@ -24,12 +24,8 @@ def _number(id_: str, label: str, value, **kwargs) -> dmc.NumberInput:
 def _step_data(state: dict) -> list:
     return [
         dmc.Text(
-            "Point at the folder holding your FlowJo workspaces and the folder "
-            "holding the FCS files, then load them. Both are searched "
-            "recursively, and each workspace is paired with its own FCS files "
-            "by file name. The gating tree and marker panel only exist once "
-            "the workspaces have been read, so steps 2–4 stay locked until "
-            "this succeeds.",
+            "Both folders are searched recursively; workspaces are paired "
+            "with FCS files by file name.",
             size="sm",
             c="dimmed",
         ),
@@ -37,7 +33,7 @@ def _step_data(state: dict) -> list:
         browser_field(
             "wsp",
             "FlowJo workspace folder",
-            "Searched recursively for .wsp — a single .wsp file also works",
+            "A folder of .wsp files, or a single .wsp",
             mode="dir",
             extensions=config.WSP_EXTENSIONS,
             placeholder="/path/to/workspaces",
@@ -49,7 +45,7 @@ def _step_data(state: dict) -> list:
         browser_field(
             "fcs",
             "FCS folder",
-            "Searched recursively; subfolders need no particular layout",
+            "Searched recursively",
             mode="dir",
             placeholder="/path/to/fcs",
             value=state["fcs_dir"],
@@ -81,38 +77,16 @@ def _step_data(state: dict) -> list:
                         ),
                         dmc.AccordionPanel(
                             [
-                                dmc.Text(
-                                    "A FlowJo workspace can hold several "
-                                    "groups of samples — “All Samples” plus "
-                                    "any the analyst created, such as "
-                                    "“Killing” or “Controls”. Only one group "
-                                    "is loaded, and it decides which samples "
-                                    "are analysed at all. Group 1 is “All "
-                                    "Samples” in almost every workspace, so "
-                                    "you can normally ignore this.",
-                                    size="xs",
-                                    c="dimmed",
-                                ),
-                                dmc.Space(h=10),
                                 dmc.TextInput(
                                     id="in-group",
                                     label="Sample group",
                                     value=str(state["group"]),
                                     description=(
-                                        "An index (1, 2, …) or the group's "
-                                        "name. Use the name when loading "
-                                        "several workspaces: the same group "
-                                        "can sit at a different index in each."
+                                        "FlowJo group to load: an index or a "
+                                        "name (1 = All Samples). The Log "
+                                        "lists each workspace's groups."
                                     ),
                                     placeholder="1",
-                                ),
-                                dmc.Space(h=8),
-                                dmc.Text(
-                                    "Loading lists every workspace's groups in "
-                                    "the Log tab, so a name that does not "
-                                    "match tells you the valid ones.",
-                                    size="xs",
-                                    c="dimmed",
                                 ),
                                 dmc.Space(h=14),
                                 dmc.Divider(
@@ -124,14 +98,9 @@ def _step_data(state: dict) -> list:
                                     id="sw-allow-missing",
                                     label="Load anyway when FCS files are missing",
                                     description=(
-                                        "By default one .fcs file a workspace "
-                                        "names but that is not under the FCS "
-                                        "folder stops the whole run. Turn this "
-                                        "on to drop those samples and load the "
-                                        "rest; the Log lists every one dropped. "
-                                        "A workspace left with no files is "
-                                        "skipped, and its cells are simply not "
-                                        "in the UMAP."
+                                        "Drop samples whose .fcs is not found "
+                                        "instead of failing; the Log lists "
+                                        "them."
                                     ),
                                     checked=state["allow_missing_samples"],
                                 ),
@@ -177,12 +146,8 @@ def _step_gates(state: dict) -> list:
             id="sw-per-wsp",
             label="Pick the population separately in each workspace",
             description=(
-                "Use this when workspaces name the same biology differently "
-                "— \"Live/CD8\" in one, \"Live cells/CD8\" in another. The "
-                "list above them is only the gates ALL workspaces share, "
-                "which collapses to a couple of nodes when they were gated "
-                "independently. A workspace you leave unset is left out of "
-                "the UMAP."
+                "For workspaces that name the same gate differently. A "
+                "workspace left unset is excluded from the UMAP."
             ),
             checked=bool(state.get("population_map")),
         ),
@@ -199,8 +164,7 @@ def _step_gates(state: dict) -> list:
             children=dmc.Select(
                 id="sel-wsp",
                 label="Workspace",
-                description=("The tree below shows this workspace's own gates; "
-                             "clicking one sets its population."),
+                description="Clicking a gate below sets this workspace's population.",
                 data=[],
                 value="",
                 searchable=True,
@@ -239,10 +203,7 @@ def _step_gates(state: dict) -> list:
         dmc.Switch(
             id="sw-explicit",
             label="Choose an explicit gate set instead of a mode",
-            description=(
-                "Tick gates in the tree above to build a custom colour "
-                "partition (--subpop_select), overriding the mode below."
-            ),
+            description="Tick gates under the population (--subpop_select).",
             checked=state["explicit_subpop"],
         ),
         dmc.Space(h=10),
@@ -267,10 +228,7 @@ def _step_gates(state: dict) -> list:
         dmc.MultiSelect(
             id="in-markers",
             label="Markers to use",
-            description=(
-                "Leave empty to use every marker common to all samples. "
-                "Selection order is preserved."
-            ),
+            description="Empty = every marker common to all samples.",
             data=[],
             value=state["markers"],
             searchable=True,
@@ -282,18 +240,11 @@ def _step_gates(state: dict) -> list:
         dmc.Space(h=16),
         dmc.Divider(label="Sample annotations", labelPosition="center"),
         dmc.Space(h=10),
-        dmc.Text(
-            "Group the samples by anything you know about them — patient, "
-            "timepoint, response — and get one plot coloured by it plus one "
-            "plot per level, all on the same embedding. Optional.",
-            size="xs",
-            c="dimmed",
-        ),
-        dmc.Space(h=10),
         browser_field(
             "meta",
             "Metadata CSV",
-            "Keyed on sample; every other column becomes an annotation",
+            "A sample_id column plus one column per annotation "
+            "(patient, timepoint, …). Optional.",
             mode="file",
             extensions=config.METADATA_EXTENSIONS,
             placeholder="/path/to/cohort.csv",
@@ -302,11 +253,8 @@ def _step_gates(state: dict) -> list:
         dmc.Space(h=10),
         dmc.TextInput(
             id="in-pattern",
-            label="…or derive from the sample name",
-            description=(
-                "A regex with named groups, used only when no CSV is given. "
-                "Example: (?<patient>MTB[0-9]+)_(?<timepoint>TP[0-9]+)"
-            ),
+            label="…or a regex on the sample name",
+            description="Named groups become columns; used only without a CSV.",
             value=state["sample_pattern"],
             placeholder="(?<patient>...)_(?<timepoint>...)",
         ),
@@ -316,7 +264,7 @@ def _step_gates(state: dict) -> list:
         dmc.MultiSelect(
             id="in-annotate",
             label="Annotations to plot",
-            description="Leave empty to plot every column that resolves.",
+            description="Empty = every column.",
             data=[],
             value=state["annotate"],
             searchable=True,
@@ -330,17 +278,10 @@ def _step_gates(state: dict) -> list:
 
 def _step_params(state: dict) -> list:
     return [
-        dmc.Text(
-            "These map one-to-one onto the CLI options; anything left at its "
-            "default is omitted from the command.",
-            size="sm",
-            c="dimmed",
-        ),
-        dmc.Space(h=14),
         dmc.Select(
             id="in-normalize",
             label="Per-marker normalisation",
-            description="Computed from the pooled gated cells, before UMAP",
+            description="From the pooled cells, before UMAP",
             data=[{"value": n, "label": n} for n in config.NORMALIZE_METHODS],
             value=state["normalize"],
             allowDeselect=False,
@@ -413,11 +354,7 @@ def _step_params(state: dict) -> list:
         dmc.CheckboxGroup(
             id="in-formats",
             label="Output formats",
-            description=(
-                "Exactly what is passed to --output_formats. PNG or SVG is "
-                "needed for the in-app gallery; PDF-only runs show download "
-                "links instead."
-            ),
+            description="PNG is what the gallery previews.",
             value=state["output_formats"],
             children=dmc.Group(
                 [dmc.Checkbox(label=f, value=f) for f in config.OUTPUT_FORMATS],
@@ -434,7 +371,7 @@ def _step_run(state: dict) -> list:
         browser_field(
             "outparent",
             "Output parent directory",
-            "The run writes into a new subfolder of this directory",
+            "A new subfolder is created here",
             mode="dir",
             placeholder="/path/to/results",
             value=state["output_parent"],
@@ -443,7 +380,7 @@ def _step_run(state: dict) -> list:
         dmc.TextInput(
             id="in-outname",
             label="Output folder name",
-            description="Pre-filled from the population and the current time",
+            description="Pre-filled from population and time",
             value=state["output_name"],
             placeholder="umap_viable_cells_20260728_1432",
         ),
@@ -452,13 +389,6 @@ def _step_run(state: dict) -> list:
         dmc.Space(h=16),
         dmc.Divider(label="Command", labelPosition="center"),
         dmc.Space(h=10),
-        dmc.Text(
-            "This is exactly what will be executed — copy it to reproduce the "
-            "run from a shell.",
-            size="xs",
-            c="dimmed",
-        ),
-        dmc.Space(h=6),
         dmc.Code(id="cmd-preview", block=True, children="",
                  style={"whiteSpace": "pre-wrap", "wordBreak": "break-all"}),
         dmc.Space(h=14),
@@ -478,23 +408,16 @@ def _fcs_names_panel(state: dict) -> list:
         dmc.Badge("sync_fcs_names.R", variant="dot", color="gray", size="sm"),
         dmc.Space(h=10),
         dmc.Text(
-            "FlowJo shows the name stored inside each file ($FIL), not the file "
-            "name on disk, so renamed files can all show up as one sample. This "
-            "rewrites $FIL to match the file name; the event data is never "
+            "Rewrites each file's $FIL keyword to its name on disk, so renamed "
+            "files stop appearing as one sample in FlowJo. Event data is not "
             "touched.",
             size="sm", c="dimmed",
-        ),
-        dmc.Space(h=6),
-        dmc.Text(
-            "If FlowJo → Preferences → Workspace → \"How should data files be "
-            "named\" can be set to \"Use Short File Name\", you do not need this.",
-            size="xs", c="dimmed",
         ),
         dmc.Space(h=14),
         browser_field(
             "fcssync",
             "FCS folder",
-            "Searched recursively; .fcs and .FCS alike",
+            "Searched recursively",
             mode="dir",
             placeholder="/path/to/renamed",
             value=state.get("fcs_sync_dir", ""),
@@ -517,10 +440,7 @@ def _fcs_names_panel(state: dict) -> list:
         dmc.TextInput(
             id="fcs-also",
             label="Also sync these keywords",
-            description=(
-                "Comma-separated, e.g. $SRC,TUBE NAME. Only for FlowJo's "
-                "\"Keyword Combination\" naming; $FIL is always written."
-            ),
+            description="Comma-separated, e.g. $SRC,TUBE NAME",
             placeholder="",
         ),
         dmc.Space(h=16),
@@ -536,12 +456,6 @@ def _fcs_names_panel(state: dict) -> list:
         html.Div(id="fcs-feedback"),
         dmc.Space(h=18),
         dmc.Divider(label="Stored metadata", labelPosition="center"),
-        dmc.Space(h=8),
-        dmc.Text(
-            "What each file in the folder currently stores, side by side. "
-            "Read-only.",
-            size="xs", c="dimmed",
-        ),
         dmc.Space(h=8),
         dmc.Group(
             [
@@ -606,7 +520,7 @@ def _left_column(state: dict) -> dmc.Paper:
     )
 
 
-def _right_column() -> dmc.Paper:
+def _right_column(state: dict) -> dmc.Paper:
     return dmc.Paper(
         [
             dmc.Tabs(
@@ -683,12 +597,26 @@ def _right_column() -> dmc.Paper:
                     dmc.TabsPanel(
                         [
                             dmc.Space(h=12),
+                            # The gallery shows whatever folder this names. A
+                            # finished run fills it in; typing or browsing to
+                            # an older run's folder shows that run instead, and
+                            # the value is remembered with the rest of the form
+                            # so a reload or a server restart does not lose it.
+                            browser_field(
+                                "results",
+                                "Results folder",
+                                "Filled in when a run finishes; pick any "
+                                "earlier run to view it",
+                                mode="dir",
+                                placeholder="/path/to/results/umap_…",
+                                value=state.get("results_dir", ""),
+                            ),
+                            dmc.Space(h=6),
                             dmc.Group(
                                 [
                                     dmc.Text("No results yet.", id="results-path",
                                              size="sm", c="dimmed",
-                                             style={"wordBreak": "break-all",
-                                                    "flex": 1}),
+                                             style={"flex": 1}),
                                     dmc.Button("Refresh", id="btn-refresh-results",
                                                variant="default",
                                                size="compact-sm"),
@@ -781,7 +709,6 @@ def build_layout(state: dict):
                 # widget that owns it; it is read back through FORM_FIELDS like
                 # any other field, and persists with the rest of the form.
                 dcc.Store(id="store-popmap", data=state.get("population_map") or {}),
-                dcc.Store(id="store-results-dir", data=""),
                 dcc.Store(id="store-run-generation", data=-1),
                 dcc.Interval(id="poll", interval=POLL_MS, disabled=False),
                 # Sink for callbacks whose only real effect is starting or
@@ -841,7 +768,7 @@ def build_layout(state: dict):
                                 id="tool-tabs", value="umap",
                             ),
                             span={"base": 12, "lg": 5}),
-                        dmc.GridCol(_right_column(), span={"base": 12, "lg": 7}),
+                        dmc.GridCol(_right_column(state), span={"base": 12, "lg": 7}),
                     ],
                     gutter="md",
                 ),

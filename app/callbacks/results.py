@@ -54,6 +54,11 @@ def _card(plot: results_scan.Plot):
                 "borderRadius": "4px",
             },
         )
+    elif plot.oversized_svg:
+        body = dmc.Alert(
+            "SVG too large to preview — download it, or tick PNG next run.",
+            color="gray", variant="light",
+        )
     else:
         body = dmc.Alert(
             "PDF only — no inline preview.", color="gray", variant="light"
@@ -107,7 +112,7 @@ def register_callbacks() -> None:
         Output("results-path", "children"),
         Output("filter-marker", "data"),
         Output("filter-sample", "data"),
-        Input("store-results-dir", "data"),
+        Input({"comp": "fb-input", "bid": "results"}, "value"),
         Input("store-run-generation", "data"),
         Input("btn-refresh-results", "n_clicks"),
         Input("filter-marker", "value"),
@@ -126,10 +131,11 @@ def register_callbacks() -> None:
         """
         open_markers = set(open_markers or [])
         open_annotations = set(open_annotations or [])
+        directory = (directory or "").strip()
         if not directory:
             return (
                 dmc.Alert(
-                    "Run something to see its plots here.",
+                    "Run something, or pick a results folder above.",
                     color="gray",
                     variant="light",
                 ),
@@ -144,23 +150,17 @@ def register_callbacks() -> None:
         serving.allow(directory)
         results = results_scan.scan(directory)
 
-        path_text = dmc.Text(
-            [
-                dmc.Text(str(results.directory), span=True, fw=600,
-                         style={"wordBreak": "break-all"}),
-                dmc.Text(f"  ·  {results.n_files} file(s)", span=True, c="dimmed"),
-            ],
-            size="sm",
-        )
+        path_text = dmc.Text(f"{results.n_files} file(s)", size="sm",
+                             c="dimmed")
 
         marker_options = [{"value": m, "label": m} for m in results.markers]
         sample_options = [{"value": s, "label": s} for s in results.samples]
 
         if results.is_empty:
             note = (
-                "The directory does not exist yet."
+                "This folder does not exist."
                 if not Path(directory).is_dir()
-                else "No plot files here yet."
+                else "No plot files in this folder."
             )
             return (
                 dmc.Alert(note, color="gray", variant="light"),

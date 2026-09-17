@@ -228,10 +228,7 @@ def register_callbacks() -> None:
             data = gating.flat_subgate_tree(populations, population)
             expanded: list[str] = []
             mode_note = dmc.Text(
-                "Every gate under the selected population. Turn this off to "
-                "change the population.",
-                size="xs",
-                c="dimmed",
+                "Gates under the selected population.", size="xs", c="dimmed",
                 mb=6,
             )
         else:
@@ -254,37 +251,17 @@ def register_callbacks() -> None:
         ]
         if multi:
             # With several workspaces the gate list is their INTERSECTION, and
-            # saying so here saves you hunting for a gate that only one of them
-            # has. In per-workspace mode that is no longer true, and a stale
-            # sentence here would flatly contradict the tree underneath it.
+            # saying so saves you hunting for a gate only one of them has. In
+            # per-workspace mode that is no longer true.
             body += [
                 dmc.Space(h=4),
                 dmc.Text(
-                    (f"The tree below shows {wsp}'s OWN gates. Each workspace "
-                     "contributes the gate you pick for it."
-                     if per_wsp else
-                     "The tree below shows only the gates shared by every "
-                     "workspace — those are the ones a run can use."),
-                    size="xs",
-                ),
-                dmc.Space(h=6),
-                dmc.Group(
-                    [dmc.Badge(w.get("label", "?"), variant="light", size="sm",
-                               tt="none")
-                     for w in workspaces],
-                    gap=4,
+                    (f"Tree: {wsp}'s own gates." if per_wsp else
+                     "Tree: gates shared by every workspace."),
+                    size="xs", c="dimmed",
                 ),
             ]
-        body += [
-            dmc.Space(h=4),
-            dmc.Text(", ".join(samples) or "—", size="xs", c="dimmed"),
-        ]
-        summary = dmc.Alert(
-            body,
-            color="green",
-            variant="light",
-            title="Workspaces loaded" if multi else "Workspace loaded",
-        )
+        summary = dmc.Alert(body, color="green", variant="light")
         return (
             data,
             expanded,
@@ -341,9 +318,7 @@ def register_callbacks() -> None:
         if not per_wsp:
             return None
         if not by_wsp:
-            return _alert(
-                "Load the workspaces in step 1 first — this needs each "
-                "workspace's own gating tree.", color="gray")
+            return _alert("Load the workspaces in step 1 first.", color="gray")
 
         pop_map = pop_map or {}
         labels = list(by_wsp)
@@ -505,11 +480,8 @@ def register_callbacks() -> None:
         }
         chosen = common.subpop_selection(form, populations)
         if not chosen:
-            return _alert(
-                "Tick gates underneath the selected population to build the "
-                "colour partition.",
-                color="yellow",
-            )
+            return _alert("Tick gates under the selected population.",
+                          color="yellow")
         return dmc.Box(
             [
                 dmc.Text(f"--subpop_select ({len(chosen)} gate(s))",
@@ -660,9 +632,7 @@ def register_callbacks() -> None:
             )
         if "svg" in formats and "png" not in formats:
             return _alert(
-                "SVG previews of a large embedding carry one node per cell and "
-                "can be slow to render in the browser. Tick PNG too for a fast "
-                "gallery.",
+                "Large SVGs are not previewed in the gallery; tick PNG too.",
                 color="blue",
             )
         return None
