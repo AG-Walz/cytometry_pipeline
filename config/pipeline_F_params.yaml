@@ -1,0 +1,73 @@
+# =============================================================================
+# Pipeline F — one shared UMAP over a FlowJo-gated population
+# =============================================================================
+#   nextflow run nextflow/main.nf -params-file config/pipeline_F_params.yaml
+#
+# There is no input_dir: the workspaces say which cells are wanted, so the two
+# inputs are the workspace folder and the FCS folder. Both are searched
+# recursively and each workspace is paired with its own files, so the layout on
+# disk needs no particular shape.
+# =============================================================================
+pipeline: F
+output_dir: ./results/pipeline_F
+
+# --- Inputs ---
+# A single .wsp also works. With several, every workspace's cells go into ONE
+# shared embedding and an extra "by workspace" plot is written.
+wsp: /path/to/workspaces
+fcs_dir: /path/to/fcs
+
+# The gate to extract. A leading '/' is optional and a suffix is matched
+# against the tree, so "Single Cells/Viable cells" resolves.
+population: Lymphocytes/Single Cells/Viable cells
+# When workspaces name the same biology differently, choose per workspace
+# instead. Overrides `population`; a workspace with no entry is excluded.
+# population_map: "MTB016=/Lymphocytes/Live cells;MTB023=/Lymphocytes/Viable"
+
+# The FlowJo sample group: an index, or its NAME. A name is what lets one value
+# cover several workspaces that order their groups differently.
+group: "1"
+
+# --- Pairing samples with files ---
+# 'content' pairs on the file name first, then on the $FIL keyword inside each
+# file plus its event count — which is what still works after the files have
+# been renamed on disk. 'strict' makes a name mismatch final.
+match_mode: content
+allow_missing_samples: true
+
+# --- Marker panel ---
+# Workspaces that spell one marker two ways share no panel at all. Run once and
+# the load report names the spellings it saw and suggests pairings; nothing is
+# ever merged on its own.
+# marker_aliases: "TNF=TNFa;IFN=INFy"
+# A file whose $PnS was never filled in has no marker names, and so no usable
+# channels. On by default: it borrows them from the files that do have them,
+# matched on the detector each was measured on.
+recover_markers: true
+# markers: "CD4,CD8,IFN,TNF"     # subset; default is every shared marker
+
+# --- Colouring by FlowJo subgate ---
+# furthest | cd4cd8 | direct | deepest | none
+subpop_mode: furthest
+# subpop_select: "CD4/IFN,CD4/TNF,CD8/IFN,CD8/TNF"   # explicit set instead
+
+# --- Per-sample annotations (patient, timepoint, response, ...) ---
+# sample_metadata: /path/to/samples.csv
+# sample_pattern: "(?<patient>MTB[0-9]+)_(?<timepoint>V[0-9]+)"
+# annotate: "patient,timepoint"
+
+# --- Embedding ---
+dimred_method: umap          # umap | tsne | diffusion_map
+n_neighbors: 15
+umap_min_dist: 0.1
+umap_metric: euclidean
+normalize: none              # none | zscore | minmax
+downsample: 0                # max cells per sample AFTER gating (0 = all)
+seed: 42
+
+# --- Output ---
+output_formats: png          # png, svg, pdf — comma-separated
+plot_width: 10
+plot_height: 8
+point_size: 0.4
+point_alpha: 0.6

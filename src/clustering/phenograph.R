@@ -7,7 +7,35 @@
 # community detection to identify cell populations.
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      # Rscript src/foo/bar.R carries no source frame; recover from --file=.
+      if (is.null(of)) {
+        a <- commandArgs(FALSE); m <- grep("^--file=", a)
+        if (length(m)) of <- sub("^--file=", "", a[m[[1]]])
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of, mustWork = FALSE)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+# Guarded, NOT unconditional: nextflow/bin/*_cli.R and scripts/*.R set shared_dir
+# themselves (the --src_dir convention), and clobbering it here would send every
+# source() below to whichever tree this file happens to live in rather than the
+# one the caller chose.
+if (!exists("shared_dir")) shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "stats_utils.R"))
 
@@ -19,7 +47,7 @@ source(file.path(shared_dir, "stats_utils.R"))
 #'
 #' Input from: build_combined_expr_matrix() (R_shared/flowframe_utils.R),
 #'             normalize_expression() (preprocessing/normalization.R)
-#' Output to:  clusters_to_gating_csv() (clustering/leiden.R),
+#' Output to:  clusters_to_gating_csv() (R_shared/cluster_utils.R),
 #'             validate_clusters() (clustering/cluster_validation.R),
 #'             annotate_clusters() (clustering/cell_annotation.R)
 #'

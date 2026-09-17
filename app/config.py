@@ -57,6 +57,15 @@ DEFAULTS: dict = {
     # Text, not a number: the R side takes an index OR a sample-group name.
     "group": "1",
     "allow_missing_samples": False,
+    # How a workspace's samples are paired with FCS files. "content" (the R
+    # default) tries the file name first, then lets CytoML pair the rest on the
+    # $FIL keyword inside each file plus its event count. "strict" makes a name
+    # mismatch final. See --match_mode in scripts/umap_from_flowjo.R.
+    "match_mode": "content",
+    # "INFy=IFN;TNFa=TNF" — spellings to treat as the same marker. Empty by
+    # default: merging two markers is the user's call, never a guess.
+    "marker_aliases": "",
+    "recover_markers": True,
     "population": "",
     # {workspace label: gate}. Empty means "one population for every
     # workspace", the original behaviour; non-empty switches the run to
@@ -71,6 +80,9 @@ DEFAULTS: dict = {
     "subpop_select": [],
     "normalize": "none",
     "downsample": 0,
+    # Worker processes for the per-file plots, which are ~90% of a run.
+    # 0 = decide automatically (all cores but one, capped by the cgroup quota).
+    "n_cores": 0,
     "n_neighbors": 15,
     "min_dist": 0.1,
     "metric": "euclidean",

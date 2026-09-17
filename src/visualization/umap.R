@@ -5,7 +5,43 @@
 # Merged from: R_scripts/06_visualization/UMAP.R + UMAP_filt.R
 # =============================================================================
 
-shared_dir <- file.path(dirname(getwd()), "src", "R_shared")
+# Respect a shared_dir the caller already set — the CLI convention used by
+# nextflow/bin/*_cli.R and scripts/*.R — and only guess from the working
+# directory when there is none. The unconditional assignment this replaces
+# clobbered the caller's value, so sourcing this file from anywhere but the
+# subproject directory sent every source() below to a path that does not exist.
+# That is not hypothetical: run_dimred() source()s this file, and the FlowJo
+# UMAP run died on "/tmp/src/R_shared/io_utils.R: No such file or directory".
+# Same guard as loading/load_flowjo_wsp.R.
+# ---- cytometry src bootstrap (Nextflow-safe); see src/R_shared/paths.R ----
+if (!exists(".cyto_paths_loaded", inherits = TRUE)) {
+  local({
+    root <- Sys.getenv("CYTOMETRY_SRC", "")
+    if (!nzchar(root) || !dir.exists(file.path(root, "R_shared"))) {
+      of <- NULL
+      frames <- sys.frames()
+      for (i in rev(seq_along(frames))) {
+        f <- frames[[i]]$ofile
+        if (!is.null(f) && nzchar(f)) { of <- f; break }
+      }
+      # Rscript src/foo/bar.R carries no source frame; recover from --file=.
+      if (is.null(of)) {
+        a <- commandArgs(FALSE); m <- grep("^--file=", a)
+        if (length(m)) of <- sub("^--file=", "", a[m[[1]]])
+      }
+      d <- if (!is.null(of)) dirname(normalizePath(of, mustWork = FALSE)) else getwd()
+      while (!dir.exists(file.path(d, "R_shared")) && d != dirname(d)) d <- dirname(d)
+      root <- d
+    }
+    source(file.path(root, "R_shared", "paths.R"), local = FALSE)
+  })
+}
+
+# Guarded, NOT unconditional: nextflow/bin/*_cli.R and scripts/*.R set shared_dir
+# themselves (the --src_dir convention), and clobbering it here would send every
+# source() below to whichever tree this file happens to live in rather than the
+# one the caller chose.
+if (!exists("shared_dir")) shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "gui_utils.R"))
 source(file.path(shared_dir, "plot_utils.R"))
@@ -144,12 +180,23 @@ plot_umap_from_matrix <- function(expr_matrix, sample_labels = NULL,
                                    output_dir,
                                    n_neighbors = 15,
                                    min_dist = 0.1,
+                                   metric = "euclidean",
+                                   n_threads = 1L, progress = FALSE,
+                                   verbose = FALSE, init = "auto",
+                                   subsample = 0L,
                                    umap_coords = NULL,
                                    output_formats = list(pdf = FALSE, png = TRUE, svg = TRUE),
                                    plot_width = 10, plot_height = 8,
-                                   seed = 42) {
+                                   seed = 42,
+                                   draw_plots = TRUE) {
   require(ggplot2)
-  make_outdir(output_dir)
+  # draw_plots = FALSE is the "compute the embedding, I will draw it myself"
+  # path: a caller whose figures are its own (the FlowJo population UMAP colours
+  # by gating subpopulation, by workspace and by every marker) still wants THIS
+  # function's coordinates, so that there is one implementation of the embedding
+  # rather than a private copy of run_umap() per caller. No output directory is
+  # needed in that case, and creating one would leave an empty folder behind.
+  if (draw_plots) make_outdir(output_dir)
 
   # Filter markers
   exclude_patterns <- c("^$", "Time", "FSC", "SSC", "index")
@@ -171,13 +218,21 @@ plot_umap_from_matrix <- function(expr_matrix, sample_labels = NULL,
     cat("Computing UMAP on", nrow(expr_subset), "cells x",
         ncol(expr_subset), "markers...\n")
     umap_coords <- run_umap(expr_subset, n_neighbors = n_neighbors,
-                             min_dist = min_dist, seed = seed)
+                             min_dist = min_dist, metric = metric, seed = seed,
+                             n_threads = n_threads, progress = progress,
+                             verbose = verbose, init = init,
+                             subsample = subsample)
   } else {
     cat("Using pre-computed UMAP coordinates for", nrow(umap_coords), "cells\n")
   }
 
   if (is.null(sample_labels)) {
     sample_labels <- rep("all", nrow(expr_matrix))
+  }
+
+  if (!draw_plots) {
+    return(list(umap_coords = umap_coords, sample_labels = sample_labels,
+                plots = list()))
   }
 
   umap_df <- data.frame(UMAP1 = umap_coords[, 1], UMAP2 = umap_coords[, 2],

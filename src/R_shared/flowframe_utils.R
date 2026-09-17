@@ -85,7 +85,7 @@ extract_exprmtx_list <- function(flow_frames_list, sample_names, markers_of_inte
 #'             downsample_flowframes() (preprocessing/downsampling.R),
 #'             homogenize_flowframes() (harmonization/panel_homogenization.R)
 #' Output to:  run_leiden_with_umap() (clustering/leiden.R),
-#'             clusters_to_gating_csv() (clustering/leiden.R),
+#'             clusters_to_gating_csv() (R_shared/cluster_utils.R),
 #'             plot_umap() (visualization/umap.R)
 #'
 #' @param flow_frames_list List of flowFrame objects
@@ -119,14 +119,27 @@ generate_cellID <- function(flowframe, sample_name) {
 from_mtx_to_ffr <- function(mtx, marker_names = NULL) {
   if (!is.null(marker_names)) colnames(mtx) <- marker_names
 
-  # Create minimal annotation
+  # Per-column range values, robust to all-NA or empty columns. flowCore's
+  # validity check on the resulting flowFrame chokes on NA/Inf ranges, so
+  # fall back to a safe default (0, 1) for those columns.
+  .safe_min <- function(x) {
+    v <- suppressWarnings(min(x, na.rm = TRUE))
+    if (!is.finite(v)) 0 else v
+  }
+  .safe_max <- function(x) {
+    v <- suppressWarnings(max(x, na.rm = TRUE))
+    if (!is.finite(v)) 1 else v
+  }
+  col_min <- apply(mtx, 2, .safe_min)
+  col_max <- apply(mtx, 2, .safe_max)
+
   params <- Biobase::AnnotatedDataFrame(
     data.frame(
       name = colnames(mtx),
       desc = colnames(mtx),
-      range = apply(mtx, 2, function(x) diff(range(x, na.rm = TRUE))),
-      minRange = apply(mtx, 2, min, na.rm = TRUE),
-      maxRange = apply(mtx, 2, max, na.rm = TRUE),
+      range = col_max - col_min,
+      minRange = col_min,
+      maxRange = col_max,
       row.names = paste0("$P", seq_len(ncol(mtx))),
       stringsAsFactors = FALSE
     )

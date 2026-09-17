@@ -24,6 +24,9 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("output_name", "in-outname", "value"),
     ("group", "in-group", "value"),
     ("allow_missing_samples", "sw-allow-missing", "checked"),
+    ("match_mode", "in-match-mode", "value"),
+    ("marker_aliases", "in-marker-aliases", "value"),
+    ("recover_markers", "sw-recover-markers", "checked"),
     ("sample_metadata", {"comp": "fb-input", "bid": "meta"}, "value"),
     ("sample_pattern", "in-pattern", "value"),
     ("annotate", "in-annotate", "value"),
@@ -32,6 +35,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("subpop_mode", "subpop-mode", "value"),
     ("normalize", "in-normalize", "value"),
     ("downsample", "in-downsample", "value"),
+    ("n_cores", "in-cores", "value"),
     ("n_neighbors", "in-neighbors", "value"),
     ("min_dist", "in-mindist", "value"),
     ("metric", "in-metric", "value"),
@@ -43,6 +47,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("output_formats", "in-formats", "value"),
     ("results_dir", {"comp": "fb-input", "bid": "results"}, "value"),
     ("population_map", "store-popmap", "data"),
+    ("excluded_workspaces", "store-wsp-exclude", "data"),
     ("selected_gates", "gate-tree", "selected"),
     ("checked_gates", "gate-tree", "checked"),
 ]
@@ -117,7 +122,44 @@ def output_dir_of(form: dict) -> str:
     return str(Path(parent) / name)
 
 
-def run_params(form: dict, populations: list[str]) -> dict:
+def workspace_selection(form: dict, inspect: dict | None) -> list[str]:
+    """The ``--workspaces`` INCLUDE list, or [] meaning "all of them".
+
+    The UI stores what is switched OFF; the CLI takes what to switch ON. The
+    conversion needs to know what loaded, which only the report does — so an
+    empty exclusion set returns [] and the flag is omitted entirely rather than
+    spelling out all thirty-three names for a run that excludes nothing.
+    """
+    excluded = set(form.get("excluded_workspaces") or [])
+    if not excluded:
+        return []
+    loaded = list((inspect or {}).get("populations_by_workspace") or {})
+    return [w for w in loaded if w not in excluded]
+
+
+def population_map_of(form: dict) -> dict:
+    """The ``--population_map``, minus workspaces this run does not load.
+
+    Two filters, both of which R would otherwise turn into a hard stop:
+
+    An entry with no gate is dropped because "workspace X, no gate" and "no
+    entry for workspace X" mean the same thing — X contributes no cells — and
+    only the second is a thing the flag can express.
+
+    An entry naming an EXCLUDED workspace is dropped because ``--workspaces``
+    is applied at discovery, before any workspace is read, so a workspace
+    switched off in the health panel is never loaded at all — and the map
+    naming one is exactly the "population_map names workspace(s) that were not
+    loaded" error, raised at the end of a load that took minutes. Dropping it
+    costs nothing: excluded and unmapped already mean the same thing.
+    """
+    excluded = set(form.get("excluded_workspaces") or [])
+    return {w: p for w, p in (form.get("population_map") or {}).items()
+            if p and w not in excluded}
+
+
+def run_params(form: dict, populations: list[str],
+               inspect: dict | None = None) -> dict:
     """Everything ``rscript.run_argv`` needs, derived from the form.
 
     An explicit whitelist, not a copy of ``form``: gate selections and other
@@ -133,8 +175,12 @@ def run_params(form: dict, populations: list[str]) -> dict:
         "population": population_of(form),
         "output_dir": output_dir_of(form),
         "group": form.get("group"),
-        "population_map": form.get("population_map") or {},
+        "population_map": population_map_of(form),
         "allow_missing_samples": bool(form.get("allow_missing_samples")),
+        "match_mode": form.get("match_mode") or config.DEFAULTS["match_mode"],
+        "workspaces": workspace_selection(form, inspect),
+        "marker_aliases": form.get("marker_aliases") or "",
+        "recover_markers": bool(form.get("recover_markers", True)),
         "sample_metadata": (form.get("sample_metadata") or "").strip(),
         "sample_pattern": (form.get("sample_pattern") or "").strip(),
         "annotate": form.get("annotate") or [],
@@ -143,6 +189,7 @@ def run_params(form: dict, populations: list[str]) -> dict:
         "subpop_select": subpop_selection(form, populations),
         "normalize": form.get("normalize"),
         "downsample": form.get("downsample"),
+        "n_cores": form.get("n_cores"),
         "n_neighbors": form.get("n_neighbors"),
         "min_dist": form.get("min_dist"),
         "metric": form.get("metric"),
@@ -169,19 +216,30 @@ def validate_run(form: dict, inspect: dict) -> list[str]:
     elif not Path(fcs_dir).is_dir():
         problems.append(f"FCS directory does not exist: {fcs_dir}")
 
-    pop_map = {w: p for w, p in (form.get("population_map") or {}).items() if p}
+    picked = {w: p for w, p in (form.get("population_map") or {}).items() if p}
+    pop_map = population_map_of(form)
     loaded = inspect.get("populations_by_workspace") or {}
     if not inspect.get("populations") and not loaded:
         problems.append("Workspaces not loaded yet — run 'Load workspaces' in step 1.")
+    elif picked and not pop_map:
+        # Every workspace with a gate is switched off, so the run has no cells
+        # at all. R says so too, but only after a load that takes minutes.
+        problems.append(
+            "Every workspace with a per-workspace population is switched off "
+            "in step 1, so nothing would go into the UMAP. Switch one back on, "
+            "or pick a gate for a workspace that is on (step 2)."
+        )
     elif pop_map:
-        # A gate chosen for a workspace that is no longer loaded would be a
-        # hard error on the R side; catch it while it is still fixable.
+        # A gate chosen for a workspace that is no longer loaded is a hard
+        # error on the R side. The mapping is pruned on every load, so this
+        # should be unreachable from the UI — it survives as a backstop for a
+        # hand-edited session file, and for a load that reported no workspaces.
         stale = [w for w in pop_map if loaded and w not in loaded]
         if stale:
             problems.append(
                 "The per-workspace populations name workspace(s) that are not "
                 "loaded: " + ", ".join(sorted(stale)) +
-                ". Re-pick them in step 2."
+                ". Load the workspaces again in step 1 — that drops them."
             )
     elif not population_of(form):
         problems.append("No population selected (step 2).")

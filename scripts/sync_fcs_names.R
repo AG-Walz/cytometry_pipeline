@@ -130,6 +130,15 @@ option_list <- list(
               help = paste0("Undo ledger, written next to the data (or in ",
                             "--output_dir). Semicolon-separated. ",
                             "[default %default]")),
+  make_option("--wsp", type = "character", default = NULL,
+              help = paste0("FlowJo workspace file(s) or folder(s) to check ",
+                            "this sync against, comma-separated. Default: any ",
+                            ".wsp under --fcs_dir or its parent. A workspace ",
+                            "whose samples currently pair with these files by ",
+                            "$FIL would LOSE that pairing if $FIL is ",
+                            "overwritten with the disk names, so a sync that ",
+                            "reduces the number of matches is refused (see ",
+                            "--allow workspace_match).")),
   make_option("--no_recursive", action = "store_true", default = FALSE,
               help = "Do not descend into subfolders."),
   make_option("--src_dir", type = "character", default = NULL,
@@ -188,6 +197,9 @@ if (!dir.exists(shared_dir)) {
 source(file.path(shared_dir, "io_utils.R"))      # make_outdir, die
 # The FCS keyword layer: fcs_inspect, fcs_write_keywords, fcs_keywords
 source(file.path(shared_dir, "fcs_keywords.R"))
+# wsp_referenced_names(): what a FlowJo workspace asks for, read from the XML
+# alone. Needed to tell a helpful rename from one that breaks the workspaces.
+source(file.path(src_dir, "loading", "flowjo_workspace.R"))
 source(file.path(src_dir, "metadata_qc", "sync_fcs_names.R"))  # sync_fcs_names
 
 # -----------------------------------------------------------------------------
@@ -240,5 +252,6 @@ sync_fcs_names(
   allow           = split_csv(opt$allow),
   ledger          = opt$ledger,
   keyword_table   = opt$keyword_table,
-  write_original  = !opt$no_original
+  write_original  = !opt$no_original,
+  wsp             = split_csv(opt$wsp)
 )

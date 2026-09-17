@@ -500,16 +500,31 @@ fcs_validate <- function(hdr, txt, seg, allow = character()) {
 
   # OTHER segments live between the header and TEXT and carry their own
   # absolute offsets. We never shift them, so they are tolerated only when they
-  # are the all-zero padding some writers emit.
+  # are padding rather than a real segment table.
   if (!is.na(hdr$textstart) && hdr$textstart > 58) {
     other <- hdr$other_raw
-    pad_ok <- !isTRUE(hdr$other_oversize) &&
-      length(other) %% 8L == 0L &&
+    ints  <- as.integer(other)
+    known <- !isTRUE(hdr$other_oversize) && length(other) > 0L
+
+    # (a) Nothing but spaces and/or NULs. An OTHER offset is a right-justified
+    # ASCII integer, so a region with no digits in it cannot encode one: every
+    # 8-byte window reads as 0, which the spec defines as "no segment". This is
+    # its own case rather than a subset of (b) because the region's LENGTH need
+    # not be a multiple of 8 — BD Diva starts TEXT at 256 and space-pads bytes
+    # 58..255, which is 198 bytes, and the pair-wise check below would reject a
+    # cohort of perfectly ordinary files on the strength of that remainder
+    # alone.
+    blank_pad <- known && all(ints == 32L | ints == 0L)
+
+    # (b) A well-formed table of 8-byte offset fields that are all zero, i.e.
+    # the writer reserved the space and declared no segments.
+    zero_pairs <- known && length(other) %% 8L == 0L &&
       all(vapply(seq_len(length(other) %/% 8L), function(i) {
         v <- .fcs_num_field(other[((i - 1L) * 8L + 1L):(i * 8L)])
         !is.na(v) && v == 0
       }, logical(1)))
-    if (!isTRUE(pad_ok)) add("other_segments")
+
+    if (!isTRUE(blank_pad || zero_pairs)) add("other_segments")
   }
 
   if (!is.na(seg$last_seg_end) && hdr$file_size < seg$last_seg_end + 1) {

@@ -9,7 +9,11 @@ process DIMRED {
     path cluster_ids_rds
 
     output:
-    path "dimred/", emit: plots
+    path "dimred/",          emit: plots
+    // Emitted so a later step can colour THIS embedding rather than computing
+    // a second one that would not agree with it. Pipeline F's facet step
+    // consumes it; the other pipelines simply ignore the channel.
+    path "dimred_coords.rds", emit: coords
 
     script:
     """
@@ -17,9 +21,11 @@ process DIMRED {
         --expr_rds ${expr_data_rds} \
         --cluster_rds ${cluster_ids_rds} \
         --output_dir dimred \
+        --output_rds dimred_coords.rds \
         --method ${params.dimred_method} \
         --n_neighbors ${params.n_neighbors} \
         --umap_min_dist ${params.umap_min_dist} \
+        --metric ${params.umap_metric} \
         --tsne_perplexity ${params.tsne_perplexity} \
         --tsne_max_iter ${params.tsne_max_iter} \
         --output_formats ${params.output_formats} \

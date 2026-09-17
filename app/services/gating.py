@@ -9,14 +9,25 @@ keeps the full path as each node's value, so a selection is directly usable as
 from __future__ import annotations
 
 
-def build_tree(paths: list[str]) -> list[dict]:
+def build_tree(paths: list[str], labels: dict | None = None) -> list[dict]:
     """Nested dmc.Tree data covering every path, parents included.
 
     A path with no "/" — in practice the bare ``root`` node the gating tree
     starts with — is kept verbatim as its own value. Splitting it like the rest
     would invent "/root", which is not a gate and would not resolve on the R
     side.
+
+    ``labels`` maps a full gate path to the text to show for it, and comes from
+    R (``gate_display_label``). FlowJo permits a gate named with nothing but
+    spaces, and real workspaces contain them — two siblings called " " and "  "
+    render as two invisible, indistinguishable rows. R supplies a readable
+    stand-in; the VALUE stays the untouched path, because that is what
+    ``--population`` has to resolve against.
+
+    Splitting on "/" keeps empty segments out, so an intermediate node invented
+    for a parent path still falls back to its own segment text.
     """
+    labels = labels or {}
     root: dict = {}
     for path in paths:
         if "/" not in path:
@@ -32,8 +43,10 @@ def build_tree(paths: list[str]) -> list[dict]:
 
     def to_nodes(mapping: dict) -> list[dict]:
         out = []
-        for label, payload in mapping.items():
-            node: dict = {"value": payload["__value__"], "label": label}
+        for segment, payload in mapping.items():
+            value = payload["__value__"]
+            node: dict = {"value": value,
+                          "label": labels.get(value) or segment}
             children = to_nodes(payload["__children__"])
             if children:
                 node["children"] = children

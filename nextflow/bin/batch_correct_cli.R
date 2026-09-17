@@ -17,6 +17,11 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+# --- Input validation ---
+if (!is.null(opt$input_rds_dir) && !dir.exists(opt$input_rds_dir)) {
+  stop("Input directory not found: ", opt$input_rds_dir)
+}
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
@@ -24,46 +29,53 @@ source(file.path(shared_dir, "flowframe_utils.R"))
 source(file.path(shared_dir, "batch_correction_dispatch.R"))
 source(file.path(src_dir, "loading", "create_flowframes.R"))
 
-markers <- strsplit(opt$markers_of_interest, ",")[[1]]
-batch_labels <- strsplit(opt$batch_names, ",")[[1]]
+tryCatch({
+  markers <- strsplit(opt$markers_of_interest, ",")[[1]]
+  batch_labels <- strsplit(opt$batch_names, ",")[[1]]
 
-# Load all flowFrames
-rds_files <- sort(list.files(opt$input_rds_dir, pattern = "\\.rds$",
-                             full.names = TRUE))
-flow_frames <- lapply(rds_files, readRDS)
-sample_names <- tools::file_path_sans_ext(basename(rds_files))
-names(flow_frames) <- sample_names
+  # Load all flowFrames
+  rds_files <- sort(list.files(opt$input_rds_dir, pattern = "\\.rds$",
+                               full.names = TRUE))
+  flow_frames <- lapply(rds_files, readRDS)
+  sample_names <- tools::file_path_sans_ext(basename(rds_files))
+  names(flow_frames) <- sample_names
 
-batch_result <- run_batch_correction_dispatch(
-  data                = flow_frames,
-  method              = opt$method,
-  batch_labels        = batch_labels,
-  markers_of_interest = markers,
-  sample_names        = sample_names,
-  params              = list(
-    batch_do_pca        = opt$batch_do_pca,
-    combat_method       = opt$combat_method,
-    cytonorm_n_clusters = opt$cytonorm_n_clusters,
-    cytonorm_goal       = opt$cytonorm_goal,
-    seed                = opt$seed
+  batch_result <- run_batch_correction_dispatch(
+    data                = flow_frames,
+    method              = opt$method,
+    batch_labels        = batch_labels,
+    markers_of_interest = markers,
+    sample_names        = sample_names,
+    params              = list(
+      batch_do_pca        = opt$batch_do_pca,
+      combat_method       = opt$combat_method,
+      cytonorm_n_clusters = opt$cytonorm_n_clusters,
+      cytonorm_goal       = opt$cytonorm_goal,
+      seed                = opt$seed
+    )
   )
-)
 
-# Convert back to flowFrame list if needed
-if (!is.null(batch_result$corrected_frames)) {
-  corrected <- batch_result$corrected_frames
-} else if (!is.null(batch_result$corrected_matrix)) {
-  corrected <- create_flowframes_from_matrices(
-    expr_list = split(as.data.frame(batch_result$corrected_matrix),
-                      batch_result$sample_labels),
-    markers_of_interest = batch_result$markers
-  )
-} else {
-  corrected <- flow_frames
-}
+  # Convert back to flowFrame list if needed
+  if (!is.null(batch_result$corrected_frames)) {
+    corrected <- batch_result$corrected_frames
+  } else if (!is.null(batch_result$corrected_matrix)) {
+    corrected <- create_flowframes_from_matrices(
+      expr_list = split(as.data.frame(batch_result$corrected_matrix),
+                        batch_result$sample_labels),
+      markers_of_interest = batch_result$markers
+    )
+  } else {
+    corrected <- flow_frames
+  }
 
-dir.create(opt$output_dir, recursive = TRUE, showWarnings = FALSE)
-for (nm in names(corrected)) {
-  saveRDS(corrected[[nm]], file.path(opt$output_dir, paste0(nm, ".rds")))
-}
-cat("Batch-corrected", length(corrected), "samples ->", opt$output_dir, "\n")
+  dir.create(opt$output_dir, recursive = TRUE, showWarnings = FALSE)
+  for (nm in names(corrected)) {
+    saveRDS(corrected[[nm]], file.path(opt$output_dir, paste0(nm, ".rds")))
+  }
+  cat("Batch-corrected", length(corrected), "samples ->", opt$output_dir, "\n")
+}, error = function(e) {
+  cat(sprintf("\n[ERROR] Batch correction failed: %s\n", conditionMessage(e)), file = stderr())
+  cat("Stack trace:\n", file = stderr())
+  traceback(e)
+  quit(status = 1)
+})

@@ -9,6 +9,11 @@ option_list <- list(
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
+# --- Input validation ---
+if (!is.null(opt$fcs_file) && !file.exists(opt$fcs_file)) {
+  stop("Input file not found: ", opt$fcs_file)
+}
+
 src_dir    <- Sys.getenv("CYTOMETRY_SRC", "/opt/cytometry/src")
 shared_dir <<- file.path(src_dir, "R_shared")
 source(file.path(shared_dir, "io_utils.R"))
@@ -17,8 +22,15 @@ source(file.path(shared_dir, "flowframe_utils.R"))
 
 suppressPackageStartupMessages(library(flowCore))
 
-ff <- read.FCS(opt$fcs_file, truncate_max_range = opt$truncation)
+tryCatch({
+  ff <- read.FCS(opt$fcs_file, truncate_max_range = opt$truncation)
 
-saveRDS(ff, opt$output_rds)
-cat("Loaded:", opt$sample_name, "->", opt$output_rds,
-    "(", nrow(ff), "events )\n")
+  saveRDS(ff, opt$output_rds)
+  cat("Loaded:", opt$sample_name, "->", opt$output_rds,
+      "(", nrow(ff), "events )\n")
+}, error = function(e) {
+  cat(sprintf("\n[ERROR] FCS loading failed: %s\n", conditionMessage(e)), file = stderr())
+  cat("Stack trace:\n", file = stderr())
+  traceback(e)
+  quit(status = 1)
+})

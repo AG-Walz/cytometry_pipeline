@@ -42,6 +42,13 @@ test_that("run_leiden returns integer vector of correct length", {
   skip_if_not_installed("leiden")
   skip_if_not_installed("Matrix")
   skip_if_not_installed("uwot")
+  # The R `leiden` package delegates to Python's leidenalg. Skip if the
+  # Python module isn't available (e.g., not installed via pip).
+  skip_if_not(
+    requireNamespace("reticulate", quietly = TRUE) &&
+      reticulate::py_module_available("leidenalg"),
+    "Python leidenalg module not available"
+  )
 
   source(file.path(shared_dir, "stats_utils.R"))
   source(file.path(cluster_dir, "leiden.R"))
@@ -190,7 +197,7 @@ test_that("estimate_eps returns a finite positive number", {
 
 # ====================== clusters_to_gating_csv() ============================
 test_that("clusters_to_gating_csv writes correct per-sample CSV files", {
-  source(file.path(cluster_dir, "leiden.R"))
+  source(file.path(shared_dir, "cluster_utils.R"))
 
   n_cells <- 30
   n_markers <- 3

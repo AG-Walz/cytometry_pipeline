@@ -10,14 +10,32 @@
 #' @param flowframe A flowFrame object
 #' @param sample_name Sample identifier
 #' @param markers_of_interest Character vector of marker names to transform
-#' @param offset_list Numeric vector of offsets (one per marker)
-#' @param width_list Numeric vector of widths (one per marker)
+#' @param offset_list Numeric vector of offsets (one per marker). When NULL,
+#'   defaults to 0 for all markers (cofactor-style arcsinh).
+#' @param width_list Numeric vector of widths (one per marker). When NULL,
+#'   defaults to a sensible per-transform value: 1/5 for arcsinh (cofactor=5),
+#'   1 for log, ignored for logicle/biexponential.
 #' @param transform_type "arcsinh", "logicle", "biexponential", "log", or "None"
 #' @return Transformed flowFrame
 transform_flowframe <- function(flowframe, sample_name,
                                 markers_of_interest,
-                                offset_list, width_list,
+                                offset_list = NULL, width_list = NULL,
                                 transform_type = "arcsinh") {
+  valid_transforms <- c("arcsinh", "logicle", "biexponential", "log", "None")
+  if (!transform_type %in% valid_transforms) {
+    stop("Invalid transform_type: '", transform_type, "'. Must be one of: ",
+         paste(valid_transforms, collapse = ", "))
+  }
+  if (is.null(offset_list)) {
+    offset_list <- rep(0, length(markers_of_interest))
+  }
+  if (is.null(width_list)) {
+    default_width <- switch(transform_type,
+                            "arcsinh" = 1 / 5,    # cofactor = 5
+                            "log"     = 1,
+                            1)                     # ignored by logicle/biexponential
+    width_list <- rep(default_width, length(markers_of_interest))
+  }
   if (length(markers_of_interest) != length(offset_list)) {
     stop("Marker and offset lists must have the same length.")
   }
@@ -33,7 +51,7 @@ transform_flowframe <- function(flowframe, sample_name,
     offset <- offset_list[i]
     width <- width_list[i]
 
-    if (!(marker %in% colnames(flowframe))) {
+    if (!(marker %in% flowCore::colnames(flowframe))) {
       warning("Skipping marker '", marker, "' — not found in flowFrame.")
       next
     }
