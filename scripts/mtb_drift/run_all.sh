@@ -2,12 +2,12 @@
 # Run the whole drift analysis. Steps 1-6 and 9-10 give the complete yardstick answer; 7-8 are the
 # BayesFlow experiment and run last. Intended for a screen session on highmem1:
 #   screen -S mtb_drift
-#   bash scripts/mtb_drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift [conda_env] [bf_venv]
+#   bash scripts/mtb_drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift [r_conda_env] [bayesflow_conda_env]
 # DATA_ROOT must contain fcs/ and wsp/ (or set FCS_DIR and WSP_DIR). Set SKIP_BF=1 to skip 7-8.
 set -euo pipefail
-DATA_ROOT="${1:?data root}"; OUT="${2:?results dir}"; ENV="${3:-cytometry_env}"; BFVENV="${4:-$HOME/bfvenv}"
+DATA_ROOT="${1:?data root}"; OUT="${2:?results dir}"; ENV="${3:-cytometry_env}"; BFENV="${4:-bayesflow_env}"
 FCS_DIR="${FCS_DIR:-$DATA_ROOT/fcs}"; WSP_DIR="${WSP_DIR:-$DATA_ROOT/wsp}"
-HERE="$(cd "$(dirname "$0")" && pwd)"; R="conda run --no-capture-output -n $ENV Rscript"
+HERE="$(cd "$(dirname "$0")" && pwd)"; R="conda run --no-capture-output -n $ENV Rscript"; PY="conda run --no-capture-output -n $BFENV python"
 mkdir -p "$OUT"; exec > >(tee -a "$OUT/run_all.log") 2>&1
 step() { echo; echo "===== $(date '+%F %T') $* ====="; }
 
@@ -22,8 +22,8 @@ step 6c lme4;           $R "$HERE/06_lme4.R" --out "$OUT"
 step 9 decision;        $R "$HERE/09_decision.R" --out "$OUT"
 step 10 report;         $R -e "rmarkdown::render('$HERE/10_report.Rmd', params = list(out = normalizePath('$OUT')), output_dir = normalizePath('$OUT'))"
 if [ -z "${SKIP_BF:-}" ]; then
-  step 7 bayesflow v1;  "$BFVENV/bin/python" "$HERE/07_bayesflow_v1.py" --out "$OUT" --epochs "${BF_EPOCHS:-50}" --num_sims "${BF_SIMS:-50000}"
-  step 8 bayesflow v2;  "$BFVENV/bin/python" "$HERE/08_bayesflow_v2.py" --out "$OUT" --epochs "${BF_EPOCHS:-40}" --n_cells "${BF_CELLS:-1000}"
+  step 7 bayesflow v1;  $PY "$HERE/07_bayesflow_v1.py" --out "$OUT" --epochs "${BF_EPOCHS:-50}" --num_sims "${BF_SIMS:-50000}"
+  step 8 bayesflow v2;  $PY "$HERE/08_bayesflow_v2.py" --out "$OUT" --epochs "${BF_EPOCHS:-40}" --n_cells "${BF_CELLS:-1000}"
   step 9 decision again, with BayesFlow; $R "$HERE/09_decision.R" --out "$OUT"
   step 10 report again; $R -e "rmarkdown::render('$HERE/10_report.Rmd', params = list(out = normalizePath('$OUT')), output_dir = normalizePath('$OUT'))"
 fi

@@ -6,9 +6,9 @@ settings in `config/mtb_drift.yaml`. Run order, outputs and timings are in secti
 Quick start on highmem1:
 
 ```bash
-bash scripts/mtb_drift/00_setup_env.sh cytometry_env ~/bfvenv
+bash scripts/mtb_drift/00_setup_env.sh cytometry_env bayesflow_env
 screen -S mtb_drift
-bash scripts/mtb_drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift cytometry_env ~/bfvenv
+bash scripts/mtb_drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift cytometry_env bayesflow_env
 ```
 
 Before the first full run, list the FlowJo gate tree and set `neg_population`, `parent_populations`

@@ -163,16 +163,16 @@ Ranked from most to least suited to this dataset. Several are cheap and run as d
 Implemented under `scripts/mtb_drift/` (thin CLIs) and `src/harmonization/drift/` (modules). Base-R modules are covered by `test_data/test_mtb_drift.R`; `test_data/mtb_drift_synthetic.R` generates step 4/5 tables with known effects so steps 6 to 9 can be exercised without CytoML.
 
 ```bash
-bash scripts/mtb_drift/00_setup_env.sh cytometry_env ~/bfvenv      # once
+bash scripts/mtb_drift/00_setup_env.sh cytometry_env bayesflow_env      # once
 screen -S mtb_drift
-bash scripts/mtb_drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift cytometry_env ~/bfvenv
+bash scripts/mtb_drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift cytometry_env bayesflow_env
 ```
 
 `run_all.sh` expects `fcs/` and `wsp/` under the data root (override with `FCS_DIR` and `WSP_DIR`), writes `run_all.log` into the results folder, and honours `SKIP_BF=1`, `CORES`, `WORKERS`, `BF_EPOCHS`, `BF_SIMS`, `BF_CELLS`.
 
 | Step | Script | Output | Needs | Approx. time |
 |---|---|---|---|---|
-| 0 | `00_setup_env.sh` | brms, cmdstanr, yaml into the conda env; CPU BayesFlow venv | conda, internet | 1 h |
+| 0 | `00_setup_env.sh` | brms, cmdstanr, yaml into the conda env; CPU BayesFlow conda env (Python 3.12) | conda, internet | 1 h |
 | 1 | `01_extract_metadata.R` | `tubes.csv`, `bridge_report.csv` | base R | seconds (verified here on the 328 files) |
 | 2 | `02_panel_reconcile.R` | `panel_map.csv`, `panel_signatures.csv`, `panel_gaps.csv` | base R, yaml | seconds (verified here) |
 | 3 | `03_tube_qc.R` | `qc.csv`, `excluded_tubes.csv` | flowCore, PeacoQC or flowAI | 30 min |
