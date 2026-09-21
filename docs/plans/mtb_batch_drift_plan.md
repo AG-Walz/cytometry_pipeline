@@ -12,7 +12,7 @@ The filename field called `batch` is prior BCG vaccination status (1 = first vac
 
 ## 2. What the data look like
 
-Source: `/mnt/volume/data/MTB_FACS/fcs_overview.xlsx` joined with the FCS TEXT segments (`$DATE`, `$CYT`, `CREATOR`, `$PAR`).
+Source: `fcs_overview.xlsx` (from `scripts/fcs_overview.py`) joined with the FCS TEXT segments (`$DATE`, `$CYT`, `CREATOR`, `$PAR`). The folder is `/mnt/volume/data/MTB_FACS/` on the development box and `/mnt/volume/patrick/UMAP/` on highmem1, so every script takes the data root as a parameter and defaults to nothing.
 
 | Item | Value |
 |---|---|
@@ -163,7 +163,7 @@ Ranked from most to least suited to this dataset. Several are cheap and run as d
 | Step | Script to write | Input | Output | Approx. time |
 |---|---|---|---|---|
 | 0 | `env/mtb_drift.yml` | | conda env with flowCore, flowWorkspace, CytoML, openCyto, brms, cmdstanr, lme4, transport, Python with bayesflow (CPU), numpy, pandas | 1 h |
-| 1 | `scripts/mtb_drift/01_extract_metadata.R` | FCS folder, overview csv | tube table with date, instrument, Diva version, parameter set, operator | minutes |
+| 1 | `scripts/mtb_drift/01_extract_metadata.R` | FCS folder (`--data-root`), overview csv | tube table with date, instrument, Diva version, parameter set, operator | minutes |
 | 2 | `02_panel_reconcile.R` | FCS | common marker map across the 12/13/14 parameter variants, using existing `panel_comparison.R` | minutes |
 | 3 | `03_tube_qc.R` | FCS | flowAI/PeacoQC flags, excluded tubes list | 30 min |
 | 4 | `04_neg_summaries.R` | negs, workspaces | layer A table, EMD matrix, gate coordinates | 30 min |

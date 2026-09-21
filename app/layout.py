@@ -8,7 +8,7 @@ means a component can never be addressed before it exists.
 from __future__ import annotations
 
 import dash_mantine_components as dmc
-from dash import dcc, html
+from dash import dash_table, dcc, html
 
 from app import config
 from app.components.filebrowser import browser_field
@@ -339,16 +339,21 @@ def _step_gates(state: dict) -> list:
         dmc.Space(h=16),
         dmc.Divider(label="Sample annotations", labelPosition="center"),
         dmc.Space(h=10),
-        browser_field(
-            "meta",
-            "Metadata CSV",
-            "A sample_id column plus one column per annotation "
-            "(patient, timepoint, …). Optional.",
-            mode="file",
-            extensions=config.METADATA_EXTENSIONS,
-            placeholder="/path/to/cohort.csv",
-            value=state["sample_metadata"],
+        # Uploaded rather than browsed: the file is stored as a comma CSV under
+        # the app cache and its path lands in the hidden input below, which
+        # keeps the id the form, the session file and the R argv already use.
+        dcc.Upload(
+            id="up-meta",
+            accept=".csv,.tsv,.txt,.xlsx",
+            children=dmc.Button("Upload metadata (CSV or XLSX)",
+                                variant="default", fullWidth=True),
         ),
+        dmc.Text("First column: FCS file name. Every other column becomes an "
+                 "annotation. Optional.", size="xs", c="dimmed", mt=4),
+        dmc.TextInput(id={"comp": "fb-input", "bid": "meta"},
+                      value=state["sample_metadata"], style={"display": "none"}),
+        dmc.Space(h=6),
+        html.Div(id="meta-check"),
         dmc.Space(h=10),
         dmc.TextInput(
             id="in-pattern",
@@ -724,7 +729,27 @@ def _right_column(state: dict) -> dmc.Paper:
                         [
                             dmc.TabsTab("Log", value="log"),
                             dmc.TabsTab("Results", value="results"),
+                            dmc.TabsTab("Metadata", value="metadata"),
                         ]
+                    ),
+                    dmc.TabsPanel(
+                        [
+                            dmc.Space(h=12),
+                            dmc.Text("No metadata uploaded.", id="meta-title",
+                                     size="sm", c="dimmed"),
+                            dmc.Space(h=8),
+                            dash_table.DataTable(
+                                id="meta-table",
+                                fixed_rows={"headers": True},
+                                page_action="none",
+                                style_table={"overflowX": "auto", "overflowY": "auto",
+                                             "height": "calc(100vh - 240px)"},
+                                style_cell={"textAlign": "left", "fontSize": "12px",
+                                            "minWidth": "110px", "maxWidth": "300px",
+                                            "whiteSpace": "normal"},
+                            ),
+                        ],
+                        value="metadata",
                     ),
                     dmc.TabsPanel(
                         [
