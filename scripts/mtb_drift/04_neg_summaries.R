@@ -15,6 +15,7 @@ pm <- read.csv(file.path(a$out, "panel_map.csv"), stringsAsFactors = FALSE)
 excl <- if (file.exists(file.path(a$out, "excluded_tubes.csv")))
   read.csv(file.path(a$out, "excluded_tubes.csv"))$filename else character(0)
 wsps <- list.files(a$wsp_dir, "\\.wsp$", full.names = TRUE, recursive = TRUE, ignore.case = TRUE)
+sigs <- read.csv(file.path(a$out, "panel_signatures.csv"), stringsAsFactors = FALSE)
 if (!length(wsps)) stop("no .wsp under ", a$wsp_dir)
 
 summ <- list(); emds <- list(); gates <- list(); pops_seen <- character(0)
@@ -22,7 +23,7 @@ fluor <- setdiff(c(cfg$technical_markers, cfg$cytokine_markers), c("FSC_A", "SSC
 
 for (w in wsps) {
   cat("\nWorkspace", basename(w), "\n")
-  gsl <- tryCatch(load_workspace_gatingsets(w, a$fcs_dir), error = function(e) {
+  gsl <- tryCatch(load_workspace_gatingsets(w, a$fcs_dir, signatures = sigs), error = function(e) {
     cat("  FAILED:", conditionMessage(e), "\n"); list() })
   for (gs in gsl) for (s in flowWorkspace::sampleNames(gs)) {
     gh <- gs[[s]]

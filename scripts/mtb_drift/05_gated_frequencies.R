@@ -13,11 +13,12 @@ tt <- read.csv(file.path(a$out, "tubes.csv"), stringsAsFactors = FALSE)
 excl <- if (file.exists(file.path(a$out, "excluded_tubes.csv")))
   read.csv(file.path(a$out, "excluded_tubes.csv"))$filename else character(0)
 wsps <- list.files(a$wsp_dir, "\\.wsp$", full.names = TRUE, recursive = TRUE, ignore.case = TRUE)
+sigs <- read.csv(file.path(a$out, "panel_signatures.csv"), stringsAsFactors = FALSE)
 
 counts <- list()
 for (w in wsps) {
   cat("\nWorkspace", basename(w), "\n")
-  gsl <- tryCatch(load_workspace_gatingsets(w, a$fcs_dir), error = function(e) {
+  gsl <- tryCatch(load_workspace_gatingsets(w, a$fcs_dir, signatures = sigs), error = function(e) {
     cat("  FAILED:", conditionMessage(e), "\n"); list() })
   for (gs in gsl) counts[[length(counts) + 1L]] <- gatingset_counts(gs)
 }
@@ -37,6 +38,17 @@ for (pp in names(cfg$parent_populations)) {
                                           stringsAsFactors = FALSE)
 }
 fq <- do.call(rbind, rows)
+# FlowJo gate names differ between workspaces (IFNy, INFy, TNF ...); map them onto the canonical
+# cytokine names of the config so one response spans all patients
+canon_gate <- function(g) {
+  out <- g
+  for (cy in cfg$cytokine_markers) for (pat in cfg$markers[[cy]]) {
+    if (grepl("^\\^", pat)) next   # channel-name patterns do not apply to gate names
+    out[grepl(pat, g, ignore.case = TRUE, perl = TRUE) & out == g] <- cy
+  }
+  out
+}
+if (!is.null(fq)) { fq$gate_flowjo <- fq$gate; fq$gate <- canon_gate(fq$gate) }
 if (is.null(fq) || !nrow(fq)) stop("no cytokine gates found under ", paste(cfg$parent_populations, collapse = "/"),
                                    "; inspect all_gate_counts.csv and adjust config parent_populations / cytokine_gate_regex")
 fq <- merge(fq, tt[, c("filename", "patient", "prior_vacc", "week", "cocktail", "is_neg", "acq_day",

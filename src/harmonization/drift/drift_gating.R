@@ -7,10 +7,13 @@
 # =============================================================================
 
 #' Build GatingSets for one workspace. Tries the whole sample group first; if
-#' CytoML refuses (mixed channel sets, e.g. a patient acquired on both
-#' cytometers), falls back to one GatingSet per sample. Returns a list of
-#' GatingSets, names are workspace label plus part index.
-load_workspace_gatingsets <- function(wsp_path, fcs_dir, group = NULL) {
+#' CytoML refuses because the samples do not share one channel set (a patient
+#' acquired on both cytometers, or with and without FSC-W), the group is split
+#' into channel-homogeneous parts and each part is built with `subset` = the
+#' sample names of that part, which is the form this CytoML accepts.
+#' `signatures` is the step-2 table (filename, panel_signature); files not in it
+#' are read with flowCore::read.FCSheader. Returns a named list of GatingSets.
+load_workspace_gatingsets <- function(wsp_path, fcs_dir, group = NULL, signatures = NULL) {
   ws <- CytoML::open_flowjo_xml(wsp_path)
   groups <- CytoML::fj_ws_get_sample_groups(ws)
   if (is.null(group)) {
@@ -19,19 +22,36 @@ load_workspace_gatingsets <- function(wsp_path, fcs_dir, group = NULL) {
   }
   label <- sub("\\.wsp$", "", basename(wsp_path), ignore.case = TRUE)
   out <- list()
-  whole <- tryCatch(
-    CytoML::flowjo_to_gatingset(ws, name = group, path = fcs_dir),
-    error = function(e) e)
+  whole <- tryCatch(CytoML::flowjo_to_gatingset(ws, name = group, path = fcs_dir), error = function(e) e)
   if (!inherits(whole, "error")) { out[[label]] <- whole; return(out) }
-  cat(sprintf("  %s: whole-group build failed (%s); building per sample\n",
-              label, conditionMessage(whole)))
-  n <- sum(groups$groupName == group)
-  for (i in seq_len(n)) {
+  if (!grepl("channel inconsistency", conditionMessage(whole), ignore.case = TRUE)) stop(whole)
+
+  gid <- unique(groups$groupID[groups$groupName == group])[1]
+  samples <- CytoML::fj_ws_get_samples(ws, group_id = gid)
+  names_ws <- as.character(samples$name)
+  sig <- vapply(names_ws, function(nm) {
+    fn <- basename(nm)
+    hit <- if (!is.null(signatures)) signatures$panel_signature[signatures$filename == fn] else character(0)
+    if (length(hit)) return(paste(sort(strsplit(hit[1], ";", fixed = TRUE)[[1]]), collapse = "|"))
+    f <- list.files(fcs_dir, pattern = paste0("^", gsub("([.|()\\^{}+$*?\\[\\]\\\\])", "\\\\\\1", fn), "$"),
+                    recursive = TRUE, full.names = TRUE)
+    if (!length(f)) return(NA_character_)
+    kw <- tryCatch(flowCore::read.FCSheader(f[1])[[1]], error = function(e) NULL)
+    if (is.null(kw)) return(NA_character_)
+    n <- as.integer(kw[["$PAR"]])
+    paste(sort(vapply(seq_len(n), function(k) kw[[paste0("$P", k, "N")]], character(1))), collapse = "|")
+  }, character(1))
+  known <- !is.na(sig)
+  parts <- if (any(known)) split(names_ws[known], sig[known]) else list(names_ws)
+  parts <- parts[order(-lengths(parts))]
+  if (any(!known)) parts[[1]] <- c(parts[[1]], names_ws[!known])
+  cat(sprintf("  %s: %d channel sets, building %d part(s)\n", label, length(parts), length(parts)))
+  for (i in seq_along(parts)) {
     part <- tryCatch(
-      CytoML::flowjo_to_gatingset(ws, name = group, subset = i, path = fcs_dir),
-      error = function(e) { cat(sprintf("    sample %d skipped: %s\n", i,
+      CytoML::flowjo_to_gatingset(ws, name = group, subset = parts[[i]], path = fcs_dir),
+      error = function(e) { cat(sprintf("    part %d (%d samples) failed: %s\n", i, length(parts[[i]]),
                                         conditionMessage(e))); NULL })
-    if (!is.null(part)) out[[sprintf("%s_part%02d", label, i)]] <- part
+    if (!is.null(part)) out[[sprintf("%s_part%d", label, i)]] <- part
   }
   out
 }

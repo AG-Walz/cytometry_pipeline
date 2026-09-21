@@ -27,15 +27,16 @@ bimodal_markers: ["CD4", "CD8"]
 # arcsinh cofactor applied to compensated fluorescence (not to scatter).
 arcsinh_cofactor: 150
 
+# FlowJo gating tree (listed 2026-09-21): /Lymphocytes/Single Cells/Live cells/{CD4,CD8}/{CD107a,IFNy|INFy,IL-2,TNF}
 # FlowJo population from which neg summaries are taken. Matched as a suffix of the full gate path,
 # so "Single Cells/Live" matches "/Lymphocytes/Single Cells/Live". Set after listing the tree
 # with `scripts/mtb_drift/04_neg_summaries.R --list_populations`.
-neg_population: "Live"
+neg_population: "Live cells"
 # Parent populations for frequencies, and the regex that identifies a cytokine-positive child gate.
 parent_populations:
   CD4: "CD4"
   CD8: "CD8"
-cytokine_gate_regex: "IFN|IL-?2|TNF|CD107"
+cytokine_gate_regex: "IFN|INF|IL-?2|TNF|CD107"
 
 # Decision rule (section 3 of the plan).
 positivity:
