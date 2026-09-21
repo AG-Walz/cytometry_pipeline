@@ -2,7 +2,7 @@
 
 # MTB ICS cohort: detecting acquisition drift and instrument shift
 
-Status: plan, not yet implemented. Agreed on 2026-09-21 after a structured interview. Scripts come in a later session and run CPU-only in a screen on highmem1/2.
+Status: agreed on 2026-09-21 after a structured interview; scripts implemented the same day (section 9). Everything runs CPU-only in a screen on highmem1.
 
 ## 1. Question
 
@@ -160,26 +160,40 @@ Ranked from most to least suited to this dataset. Several are cheap and run as d
 
 ## 9. Run order on highmem (CPU, screen session)
 
-| Step | Script to write | Input | Output | Approx. time |
-|---|---|---|---|---|
-| 0 | `env/mtb_drift.yml` | | conda env with flowCore, flowWorkspace, CytoML, openCyto, brms, cmdstanr, lme4, transport, Python with bayesflow (CPU), numpy, pandas | 1 h |
-| 1 | `scripts/mtb_drift/01_extract_metadata.R` | FCS folder (`--data-root`), overview csv | tube table with date, instrument, Diva version, parameter set, operator | minutes |
-| 2 | `02_panel_reconcile.R` | FCS | common marker map across the 12/13/14 parameter variants, using existing `panel_comparison.R` | minutes |
-| 3 | `03_tube_qc.R` | FCS | flowAI/PeacoQC flags, excluded tubes list | 30 min |
-| 4 | `04_neg_summaries.R` | negs, workspaces | layer A table, EMD matrix, gate coordinates | 30 min |
-| 5 | `05_gated_frequencies.R` | workspaces | layer B counts table | 30 min |
-| 6 | `06_yardstick_brms.R`, `06_yardstick_stan.R`, `06_lme4.R` | tables | posteriors, variance components, plots | 1 to 2 h |
-| 7 | `07_bayesflow_v1.py` | layer A design | trained estimator, SBC, recovery, real posteriors | 3 to 6 h |
-| 8 | `08_bayesflow_v2.py` | FCS subsample | trained estimator, SBC, PPC, real posteriors | overnight |
-| 9 | `09_decision.R` | all posteriors, config thresholds | decision table per marker and contrast, positivity flips, correction recommendation | minutes |
-| 10 | `10_report.Rmd` | everything | HTML report with the alternatives table filled with actual numbers | minutes |
+Implemented under `scripts/mtb_drift/` (thin CLIs) and `src/harmonization/drift/` (modules). Base-R modules are covered by `test_data/test_mtb_drift.R`; `test_data/mtb_drift_synthetic.R` generates step 4/5 tables with known effects so steps 6 to 9 can be exercised without CytoML.
 
-Steps 1 to 6 give a complete, defensible answer on their own. Steps 7 and 8 are the BayesFlow experiment and can run afterwards without blocking the decision.
+```bash
+bash scripts/mtb_drift/00_setup_env.sh cytometry_env ~/bfvenv      # once
+screen -S mtb_drift
+bash scripts/mtb_drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift cytometry_env ~/bfvenv
+```
+
+`run_all.sh` expects `fcs/` and `wsp/` under the data root (override with `FCS_DIR` and `WSP_DIR`), writes `run_all.log` into the results folder, and honours `SKIP_BF=1`, `CORES`, `WORKERS`, `BF_EPOCHS`, `BF_SIMS`, `BF_CELLS`.
+
+| Step | Script | Output | Needs | Approx. time |
+|---|---|---|---|---|
+| 0 | `00_setup_env.sh` | brms, cmdstanr, yaml into the conda env; CPU BayesFlow venv | conda, internet | 1 h |
+| 1 | `01_extract_metadata.R` | `tubes.csv`, `bridge_report.csv` | base R | seconds (verified here on the 328 files) |
+| 2 | `02_panel_reconcile.R` | `panel_map.csv`, `panel_signatures.csv`, `panel_gaps.csv` | base R, yaml | seconds (verified here) |
+| 3 | `03_tube_qc.R` | `qc.csv`, `excluded_tubes.csv` | flowCore, PeacoQC or flowAI | 30 min |
+| 4 | `04_neg_summaries.R --all_tubes` | `neg_summaries.csv`, `neg_emd.csv`, `gate_bounds.csv`, `neg_cells/*.csv.gz` | CytoML, flowWorkspace | 30 min. Run once with `--list_populations` first and set `neg_population` in the config |
+| 5 | `05_gated_frequencies.R` | `all_gate_counts.csv`, `gated_frequencies.csv` | CytoML, flowWorkspace | 30 min |
+| 6a | `06_yardstick_brms.R` | `effects_brms.csv`, `fits_brms_summary.csv`, `fits_brms/` | brms | 1 to 2 h |
+| 6b | `06_yardstick_stan.R` | `effects_stan.csv` | cmdstanr, `stan/*.stan` | 1 h |
+| 6c | `06_lme4.R` | `lme4_variance_components.csv` | lme4 | minutes |
+| 7 | `07_bayesflow_v1.py` | `effects_bayesflow_v1.csv`, `bf_v1_recovery.csv`, `bf_v1_sbc.csv`, `bf_v1_timing.json` | BayesFlow venv | hours (see timing note) |
+| 8 | `08_bayesflow_v2.py` | `effects_bayesflow_v2.csv`, `bf_v2_recovery.csv`, `bf_v2_sbc.csv`, `bf_v2_ppc.csv`, `bf_v2_timing.json` | BayesFlow venv, `neg_cells/` | overnight |
+| 9 | `09_decision.R` | `decisions.csv`, `gate_drift.csv`, `fitter_agreement.csv`, BayesFlow pass/fail printed | base R | minutes |
+| 10 | `10_report.Rmd` | `report.html` | rmarkdown, ggplot2 | minutes |
+
+Steps 1 to 6 and 9 to 10 give a complete, defensible answer on their own. Steps 7 and 8 run afterwards and step 9 is repeated so the report includes them.
+
+Verification status on 2026-09-21: steps 1 and 2 ran on the real data here; steps 7, 8 and 9 ran end to end on synthetic tables in smoke mode; steps 3 to 6 and 10 are syntax-checked only because this box has no CytoML, brms or Stan, so their first real run is on highmem.
 
 ## 10. Open items and assumptions
 
 - Cofactor and compensation: use the SPILL matrix in each file. Confirm the Symphony files carry a valid SPILL and that the Diva 9 export did not already apply it.
 - Patient 16 carries both vaccination labels across tubes. Confirm the correct label before layer B fitting.
-- The 13-parameter Symphony tubes (2 files) need checking for an extra or renamed channel.
+- The 13-parameter Symphony tubes (2 files) carry an extra `SP SSC-A` channel; it maps to nothing and is ignored. 172 files have no `$PnS` marker names at all, so channels are mapped by fluorochrome name, which is constant across the study (config `markers`).
 - Positivity thresholds 0.05 percent and 3 times background are the working assumption. Adjust in the config if the lab uses another rule.
 - No GPU anywhere. Variant 2 is sized for CPU. If training exceeds one night, reduce cells per tube to 1000 and simulations to 50k before changing the model.

@@ -1,0 +1,77 @@
+---
+title: "MTB ICS cohort: acquisition drift and instrument shift"
+output: html_document
+params:
+  out: "results"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(ggplot2)
+out <- params$out
+rd <- function(f) if (file.exists(file.path(out, f))) read.csv(file.path(out, f), stringsAsFactors = FALSE) else NULL
+tt <- rd("tubes.csv"); dec <- rd("decisions.csv"); eff_files <- list.files(out, "^effects_.*csv$", full.names = TRUE)
+eff <- do.call(rbind, lapply(eff_files, read.csv))
+```
+
+Plan: `docs/plans/mtb_batch_drift_plan.md`. The file-name field `batch` is prior vaccination status and is a protected covariate throughout.
+
+## Design
+
+```{r}
+knitr::kable(as.data.frame.matrix(table(tt$acq_day, tt$instrument)), caption = "Tubes per acquisition day and instrument")
+knitr::kable(rd("bridge_report.csv"), caption = "Patients bridging days and instruments")
+```
+
+## Decisions
+
+```{r}
+knitr::kable(dec[dec$term == "instrument", ], digits = 3, caption = "Instrument contrast, every response")
+knitr::kable(dec[dec$term == "day" & grepl("^detected", dec$verdict), ], digits = 3, caption = "Acquisition days with an effect above replicate noise")
+```
+
+## Day effects, all fitters
+
+```{r, fig.width=10, fig.height=6}
+if (!is.null(eff) && nrow(eff)) {
+  s <- aggregate(value ~ model + layer + response + term + level, eff, function(x) c(m = mean(x), lo = quantile(x, .025), hi = quantile(x, .975)))
+  s <- do.call(data.frame, s)
+  d <- s[s$term == "day" & s$layer == "A" & grepl(":median$", s$response), ]
+  if (nrow(d)) print(ggplot(d, aes(level, value.m, colour = model)) + geom_pointrange(aes(ymin = value.lo, ymax = value.hi), position = position_dodge(.5)) +
+    facet_wrap(~response, scales = "free_y") + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = .5)) + labs(x = "acquisition day", y = "effect on neg-tube median (arcsinh units)"))
+}
+```
+
+## Neg-tube distributions: EMD to reference
+
+```{r, fig.width=10, fig.height=5}
+e <- rd("neg_emd.csv")
+if (!is.null(e)) { e <- merge(e, tt, by = "filename"); print(ggplot(e, aes(acq_day, emd, colour = instrument)) + geom_point() + facet_wrap(~marker, scales = "free_y") + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = .5))) }
+```
+
+## Gate-position drift (were shifts hand-corrected by the analyst?)
+
+```{r}
+g <- rd("gate_drift.csv"); if (!is.null(g)) knitr::kable(g, digits = 3) else cat("gate_bounds.csv empty: no rectangle/polygon gates found for the parent populations")
+```
+
+## Frequentist cross-check
+
+```{r}
+knitr::kable(rd("lme4_variance_components.csv"), digits = 4)
+```
+
+## Fitter agreement and BayesFlow acceptance
+
+```{r}
+fa <- rd("fitter_agreement.csv"); if (!is.null(fa)) knitr::kable(aggregate(agree ~ model_b + layer + term, fa, function(x) sprintf("%d/%d", sum(x), length(x))))
+for (v in c("v1", "v2")) { r <- rd(sprintf("bf_%s_recovery.csv", v)); if (!is.null(r)) print(knitr::kable(merge(r, rd(sprintf("bf_%s_sbc.csv", v))), digits = 3, caption = paste("BayesFlow", v))) }
+p <- rd("bf_v2_ppc.csv"); if (!is.null(p)) cat(sprintf("BayesFlow v2 posterior predictive: %.2f of real neg medians inside the 90%% band\n", mean(tolower(p$inside_90) == "true")))
+tm <- list.files(out, "bf_v._timing.json", full.names = TRUE); for (f in tm) cat(basename(f), ":", readLines(f), "\n")
+```
+
+## QC and exclusions
+
+```{r}
+knitr::kable(rd("excluded_tubes.csv"))
+```

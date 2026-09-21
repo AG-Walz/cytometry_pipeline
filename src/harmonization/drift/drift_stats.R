@@ -22,7 +22,7 @@ emd_1d <- function(a, b, n_grid = 512L) {
 
 #' Position of the density minimum between the two highest peaks.
 #' Returns NA when the marker is not bimodal in this tube.
-bimodal_valley <- function(x, bw = "nrd0", n = 512L, min_peak_frac = 0.05) {
+bimodal_valley <- function(x, bw = "nrd0", n = 512L, min_peak_frac = 0.10, max_valley_frac = 0.8) {
   x <- x[is.finite(x)]
   if (length(x) < 200L) return(NA_real_)
   d <- density(x, bw = bw, n = n)
@@ -32,7 +32,11 @@ bimodal_valley <- function(x, bw = "nrd0", n = 512L, min_peak_frac = 0.05) {
   if (length(peaks) < 2L) return(NA_real_)
   top2 <- sort(peaks[order(y[peaks], decreasing = TRUE)][1:2])
   seg <- top2[1]:top2[2]
-  d$x[seg[which.min(y[seg])]]
+  v <- seg[which.min(y[seg])]
+  # a real valley is clearly lower than the smaller of the two peaks; density
+  # wiggles on a unimodal marker are not
+  if (y[v] > max_valley_frac * min(y[top2])) return(NA_real_)
+  d$x[v]
 }
 
 #' Summary row for one marker vector of one tube.
@@ -56,8 +60,9 @@ positivity_call <- function(pct, neg_pct, min_subtracted_pct = 0.05,
                             min_fold_over_neg = 3) {
   sub <- pct - neg_pct
   fold <- ifelse(neg_pct > 0, pct / neg_pct, Inf)
+  tol <- 1e-9   # 0.06 - 0.01 is 0.04999... in floating point
   data.frame(subtracted_pct = sub, fold_over_neg = fold,
-             positive = (sub >= min_subtracted_pct) & (fold >= min_fold_over_neg))
+             positive = (sub >= min_subtracted_pct - tol) & (fold >= min_fold_over_neg - tol))
 }
 
 #' Replicate noise: SD of a summary across the cocktail tubes of one
