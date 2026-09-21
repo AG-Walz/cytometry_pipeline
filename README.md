@@ -134,6 +134,7 @@ Rscript pipelines/pipeline_X_name.R --config config/pipeline_X_config.R
 | [File Formats](docs/file-formats.md) | Input and output file format specifications |
 | [Standalone Scripts](docs/standalone-scripts.md) | Using individual scripts outside pipelines |
 | [UMAP from a FlowJo Population](docs/scripts/umap-from-flowjo.md) | Extract a gated population from a `.wsp` + FCS, build a shared UMAP, colour by sample, FlowJo subgate, and every marker (conjoint + per file) |
+| [Cytokine combinations per patient](docs/scripts/cytokine-combinations.md) | Stacked bars of the Boolean cytokine combinations under CD4/CD8 per FCS file, by timepoint and cocktail, one figure per patient |
 | [FlowJo → UMAP Dash app](app/README.md) | Browser front-end for that script: file/gate pickers, live log, results gallery |
 | [R_shared API Reference](docs/r-shared-reference.md) | Shared utility library (8 modules, 50+ functions) |
 | [Composability Guide](docs/composability-guide.md) | Cross-pipeline data flow, format contracts, example workflows |

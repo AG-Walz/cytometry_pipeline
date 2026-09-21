@@ -31,6 +31,7 @@ If you are **looking for a specific utility function** (CSV I/O, memory manageme
 | [File Formats](file-formats.md) | Input and output format specifications for all pipelines (FCS, CSV, WSP, plots) |
 | [Standalone Scripts](standalone-scripts.md) | Using individual module functions outside of pipelines, with signatures and examples |
 | [UMAP from a FlowJo Population](scripts/umap-from-flowjo.md) | Extract a gated population from a `.wsp` + FCS, build a shared UMAP, and colour it by every marker (conjoint + per file) |
+| [Cytokine combinations per patient](scripts/cytokine-combinations.md) | One stacked bar per FCS file: Boolean cytokine combinations under CD4/CD8 as % of parent, by timepoint and cocktail, one figure per patient plus a neg-subtracted one |
 | [Sync FCS Embedded Names](scripts/sync-fcs-names.md) | Rewrite each FCS file's `$FIL` keyword to match its file name on disk, so a renamed cohort stops colliding in FlowJo. Base R only, event data never decoded |
 | [FlowJo → UMAP Dash app](../app/README.md) | Browser front-end for that script: file and gate pickers, live log, results gallery |
 | [R_shared API Reference](r-shared-reference.md) | Complete function reference for all 8 shared utility modules (io, gui, memory, cluster, plot, flowframe, fcs, stats) |
@@ -105,6 +106,7 @@ cytometry/
 │   ├── methods/                 Per-method deep-dive pages (peer-reviewed refs)
 │   ├── scripts/                  Standalone helper-script guides
 │   │   ├── umap-from-flowjo.md   FlowJo population -> shared UMAP by marker
+│   │   ├── cytokine-combinations.md  Cytokine combinations per patient over time
 │   │   └── sync-fcs-names.md     Make $FIL match the file name on disk
 ├── app/                      Dash front-end for umap_from_flowjo.R
 │   └── README.md                 Running it, the four steps, layout
