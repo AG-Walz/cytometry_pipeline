@@ -64,13 +64,15 @@ def main():
         inference_network=bf.networks.CouplingFlow(depth=6),
         summary_network=bf.networks.SetTransformer(summary_dim=32, embed_dims=(64, 64), num_seeds=4),
         initial_learning_rate=5e-4, checkpoint_filepath=outdir, checkpoint_name="v1")
-    train = simulator.sample(a.num_sims); T.mark("simulate")
-    workflow.fit_offline(train, epochs=a.epochs, batch_size=a.batch_size,
-                         validation_data=max(256, a.num_sims // 20)); T.mark("train")
+    if not maybe_restore(workflow, a.restore, os.path.join(outdir, "v1.keras")):
+        train = simulator.sample(a.num_sims); T.mark("simulate")
+        workflow.fit_offline(train, epochs=a.epochs, batch_size=a.batch_size,
+                             validation_data=max(256, a.num_sims // 20))
+    T.mark("train")
 
     # --- calibration and recovery on held-out simulations ---------------------------------
     test = simulator.sample(a.n_sbc)
-    post = workflow.sample(conditions=test, num_samples=a.posterior_samples)
+    post = sample_chunked(workflow, test, a.posterior_samples, a.chunk)
     names = ["b_instr"] + [f"c_d[{d}]" for d in days]
     post_arr = np.concatenate([post["b_instr"].reshape(a.n_sbc, a.posterior_samples, 1),
                                post["tau_d"].reshape(a.n_sbc, a.posterior_samples, 1) *

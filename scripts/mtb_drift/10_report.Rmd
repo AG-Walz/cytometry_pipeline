@@ -32,13 +32,24 @@ knitr::kable(dec[dec$term == "day" & grepl("^detected", dec$verdict), ], digits 
 
 ## Day effects, all fitters
 
-```{r, fig.width=10, fig.height=6}
+```{r, fig.width=11, fig.height=7}
 if (!is.null(eff) && nrow(eff)) {
-  s <- aggregate(value ~ model + layer + response + term + level, eff, function(x) c(m = mean(x), lo = quantile(x, .025), hi = quantile(x, .975)))
-  s <- do.call(data.frame, s)
-  d <- s[s$term == "day" & s$layer == "A" & grepl(":median$", s$response), ]
-  if (nrow(d)) print(ggplot(d, aes(level, value.m, colour = model)) + geom_pointrange(aes(ymin = value.lo, ymax = value.hi), position = position_dodge(.5)) +
-    facet_wrap(~response, scales = "free_y") + theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = .5)) + labs(x = "acquisition day", y = "effect on neg-tube median (arcsinh units)"))
+  key <- c("model", "layer", "response", "term", "level")
+  d <- eff[eff$term == "day" & eff$layer == "A" & grepl(":median$", eff$response), ]
+  if (nrow(d)) {
+    sp <- split(d$value, d[key], drop = TRUE)
+    s <- do.call(rbind, lapply(names(sp), function(k) {
+      v <- sp[[k]]; parts <- strsplit(k, ".", fixed = TRUE)[[1]]
+      data.frame(model = parts[1], response = parts[3], level = parts[5], m = mean(v),
+                 lo = unname(quantile(v, .025)), hi = unname(quantile(v, .975)))
+    }))
+    print(ggplot(s, aes(level, m, colour = model)) +
+      geom_pointrange(aes(ymin = lo, ymax = hi), position = position_dodge(.6), size = .3) +
+      geom_hline(yintercept = 0, linetype = 2) +
+      facet_wrap(~response, scales = "free_y") + theme_bw() +
+      theme(axis.text.x = element_text(angle = 90, vjust = .5, size = 7)) +
+      labs(x = "acquisition day", y = "effect on neg-tube median (arcsinh units; scatter: raw units)"))
+  }
 }
 ```
 

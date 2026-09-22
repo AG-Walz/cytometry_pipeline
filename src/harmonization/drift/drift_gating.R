@@ -26,9 +26,14 @@ load_workspace_gatingsets <- function(wsp_path, fcs_dir, group = NULL, signature
   if (!inherits(whole, "error")) { out[[label]] <- whole; return(out) }
   if (!grepl("channel inconsistency", conditionMessage(whole), ignore.case = TRUE)) stop(whole)
 
-  gid <- unique(groups$groupID[groups$groupName == group])[1]
-  samples <- CytoML::fj_ws_get_samples(ws, group_id = gid)
-  names_ws <- as.character(samples$name)
+  # sample names of the group: join the group table (groupName, sampleID) to the
+  # full sample table (sampleID, name); group_id numbering differs between CytoML
+  # versions, the sampleID join does not
+  all_samples <- CytoML::fj_ws_get_samples(ws)
+  ids <- groups$sampleID[groups$groupName == group]
+  names_ws <- as.character(all_samples$name[all_samples$sampleID %in% ids])
+  if (!length(names_ws)) names_ws <- as.character(all_samples$name)
+  if (!length(names_ws)) stop(label, ": workspace lists no samples")
   sig <- vapply(names_ws, function(nm) {
     fn <- basename(nm)
     hit <- if (!is.null(signatures)) signatures$panel_signature[signatures$filename == fn] else character(0)
@@ -47,8 +52,11 @@ load_workspace_gatingsets <- function(wsp_path, fcs_dir, group = NULL, signature
   if (any(!known)) parts[[1]] <- c(parts[[1]], names_ws[!known])
   cat(sprintf("  %s: %d channel sets, building %d part(s)\n", label, length(parts), length(parts)))
   for (i in seq_along(parts)) {
+    # do.call splices the VALUE in: flowjo_to_gatingset() runs substitute(subset)
+    # and would otherwise see the symbol `parts[[i]]`, which it cannot evaluate
     part <- tryCatch(
-      CytoML::flowjo_to_gatingset(ws, name = group, subset = parts[[i]], path = fcs_dir),
+      do.call(CytoML::flowjo_to_gatingset,
+              list(ws, name = group, subset = parts[[i]], path = fcs_dir)),
       error = function(e) { cat(sprintf("    part %d (%d samples) failed: %s\n", i, length(parts[[i]]),
                                         conditionMessage(e))); NULL })
     if (!is.null(part)) out[[sprintf("%s_part%d", label, i)]] <- part
@@ -81,9 +89,12 @@ population_matrix <- function(gh, node, channel_map, n_max = 20000L, seed = 1L) 
   cf <- flowWorkspace::gh_pop_get_data(gh, y = node, inverse.transform = TRUE)
   m <- flowCore::exprs(cf)
   if (nrow(m) > n_max) { set.seed(seed); m <- m[sample.int(nrow(m), n_max), , drop = FALSE] }
-  keep <- channel_map[channel_map %in% colnames(m)]
-  out <- m[, keep, drop = FALSE]
-  colnames(out) <- names(keep)
+  # FlowJo-derived cytoframes name compensated channels "Comp-<channel>"
+  bare <- sub("^Comp-", "", colnames(m))
+  idx <- match(channel_map, bare)
+  keep <- !is.na(idx)
+  out <- m[, idx[keep], drop = FALSE]
+  colnames(out) <- names(channel_map)[keep]
   out
 }
 
@@ -101,8 +112,8 @@ gate_bounds <- function(gh, node) {
   } else if (methods::is(g, "ellipsoidGate")) {
     r <- sqrt(diag(g@cov)) * sqrt(g@distance); lo <- g@mean - r; hi <- g@mean + r
   } else return(NULL)
-  back <- function(v, d) if (!is.null(inv[[d]])) inv[[d]](v) else v
-  data.frame(node = node, dimension = dims,
+  back <- function(v, d) if (!is.finite(v)) NA_real_ else if (!is.null(inv[[d]])) inv[[d]](v) else v
+  data.frame(node = node, dimension = sub("^Comp-", "", dims),
              lower = vapply(seq_along(dims), function(i) back(unname(lo[i]), dims[i]), numeric(1)),
              upper = vapply(seq_along(dims), function(i) back(unname(hi[i]), dims[i]), numeric(1)),
              gate_type = class(g)[1], stringsAsFactors = FALSE)

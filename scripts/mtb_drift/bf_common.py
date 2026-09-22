@@ -60,7 +60,34 @@ def base_parser(desc):
     p.add_argument("--n_sbc", type=int, default=300, help="held-out simulations for calibration/recovery")
     p.add_argument("--seed", type=int, default=20260921)
     p.add_argument("--smoke", action="store_true", help="tiny run to check the pipeline end to end")
+    p.add_argument("--restore", action="store_true", help="skip training, load the saved approximator from the checkpoint")
+    p.add_argument("--chunk", type=int, default=25, help="test sets per posterior-sampling call (memory bound)")
     return p
+
+
+def sample_chunked(workflow, conditions, num_samples, chunk):
+    """workflow.sample over a dict of arrays in slices of `chunk` along axis 0, to bound memory.
+    Pushing hundreds of test sets through a cell-level summary network at once needs tens of GB."""
+    n = next(iter(conditions.values())).shape[0]
+    parts = []
+    for i in range(0, n, chunk):
+        parts.append(workflow.sample(conditions={k: v[i:i + chunk] for k, v in conditions.items()},
+                                     num_samples=num_samples))
+    return {k: np.concatenate([p[k] for p in parts], axis=0) for k in parts[0]}
+
+
+def maybe_restore(workflow, restore, path, custom_objects=None):
+    """Load the saved approximator instead of training. Returns True when restored.
+    `custom_objects` names any custom keras classes the saved model uses."""
+    if not restore:
+        return False
+    import keras
+    try:
+        workflow.approximator = keras.saving.load_model(path, custom_objects=custom_objects)
+    except Exception:
+        workflow.load_approximator()
+    print("restored approximator from", path)
+    return True
 
 
 def recovery_table(posterior, truth, names):

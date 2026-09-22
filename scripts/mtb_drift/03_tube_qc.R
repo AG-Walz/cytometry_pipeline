@@ -1,11 +1,15 @@
 #!/usr/bin/env Rscript
 # Step 3: within-tube flow-stability QC (PeacoQC, flowAI fallback). Writes qc.csv and
-# excluded_tubes.csv (fraction of events removed above --max_removed).
-#   Rscript scripts/mtb_drift/03_tube_qc.R --out DIR [--max_removed 0.3] [--workers 8]
+# excluded_tubes.csv. A tube is excluded when it has fewer than --min_events events, when QC
+# fails, or when PeacoQC flags more than --max_removed of its events. The QC flags are NOT applied
+# to the data (frequencies come from the FlowJo gates on the full file); they only decide exclusion,
+# so the default threshold is deliberately lenient: PeacoQC flags 30 to 50 percent of events on some
+# perfectly gateable tubes here, and excluding a neg tube costs a whole patient-week.
+#   Rscript scripts/mtb_drift/03_tube_qc.R --out DIR [--max_removed 0.6] [--min_events 1000] [--workers 8]
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
-usage <- "03_tube_qc.R --out DIR [--config FILE] [--max_removed 0.3] [--workers 8]"
+usage <- "03_tube_qc.R --out DIR [--config FILE] [--max_removed 0.6] [--min_events 1000] [--workers 8]"
 a <- parse_args(list(out = "", config = file.path(REPO, "config", "mtb_drift.yaml"),
-                     max_removed = 0.3, workers = 8), usage = usage)
+                     max_removed = 0.6, min_events = 1000, workers = 8), usage = usage)
 cfg <- read_drift_config(a$config)
 need_packages(c("flowCore"))
 use_peacoqc <- requireNamespace("PeacoQC", quietly = TRUE)
@@ -44,7 +48,12 @@ qc_one <- function(i) {
 rows <- if (a$workers > 1 && requireNamespace("parallel", quietly = TRUE))
   parallel::mclapply(seq_len(nrow(tt)), qc_one, mc.cores = a$workers) else lapply(seq_len(nrow(tt)), qc_one)
 qc <- do.call(rbind, rows)
+qc$flag <- ifelse(qc$n_events < a$min_events, "too few events",
+           ifelse(is.na(qc$frac_removed), "QC failed",
+           ifelse(qc$frac_removed > a$max_removed, "unstable acquisition",
+           ifelse(qc$frac_removed > 0.3, "check: >30% flagged by PeacoQC", ""))))
+excl <- qc[qc$flag %in% c("too few events", "QC failed", "unstable acquisition"), ]
 write_table(qc, file.path(a$out, "qc.csv"))
-excl <- qc[is.na(qc$frac_removed) | qc$frac_removed > a$max_removed, ]
 write_table(excl, file.path(a$out, "excluded_tubes.csv"))
-cat(sprintf("\n%d of %d tubes excluded (frac_removed > %.2f or QC failure)\n", nrow(excl), nrow(qc), a$max_removed))
+cat(sprintf("\n%d of %d tubes excluded; %d more flagged for a look:\n", nrow(excl), nrow(qc), sum(startsWith(qc$flag, "check"))))
+print(qc[nzchar(qc$flag), c("filename", "n_events", "frac_removed", "flag")], row.names = FALSE)

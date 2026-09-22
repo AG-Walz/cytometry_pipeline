@@ -43,8 +43,10 @@ bimodal_valley <- function(x, bw = "nrd0", n = 512L, min_peak_frac = 0.10, max_v
 marker_summary <- function(x, probs = c(0.10, 0.50, 0.90), valley = FALSE) {
   x <- x[is.finite(x)]
   q <- quantile(x, probs, names = FALSE)
+  # valley / frac_pos are always present (NA for unimodal markers) so rows rbind
   out <- data.frame(n = length(x), median = median(x), mad = mad(x),
                     q10 = q[1], q90 = q[3], spread = q[3] - q[1],
+                    valley = NA_real_, frac_pos = NA_real_,
                     stringsAsFactors = FALSE)
   if (valley) {
     v <- bimodal_valley(x)

@@ -62,8 +62,8 @@ if (grepl("B", a$layer)) {
                        (1 | acq_day) + (1 | cocktail), data = d, family = brms::beta_binomial(),
                      prior = c(brms::prior(normal(-5, 2.5), class = "Intercept"), brms::prior(normal(0, 1), class = "b"),
                                brms::prior(normal(0, 1), class = "sd")),
-                     chains = a$chains, iter = a$iter, cores = a$cores, refresh = 0, silent = 2,
-                     control = list(adapt_delta = 0.95))
+                     chains = a$chains, iter = max(a$iter, 4000), cores = a$cores, refresh = 0, silent = 2,
+                     control = list(adapt_delta = 0.99, max_treedepth = 12))   # beta-binomial with patient slopes needs it
     eff[[length(eff) + 1L]] <- extract_effects(fit, "B", resp, d)
     s <- as.data.frame(brms::VarCorr(fit)$acq_day$sd); sp <- as.data.frame(brms::VarCorr(fit)$patient$sd)
     fits_summary[[length(fits_summary) + 1L]] <- data.frame(layer = "B", response = resp, n = nrow(d),
@@ -73,5 +73,10 @@ if (grepl("B", a$layer)) {
     saveRDS(fit, file.path(ensure_dir(file.path(a$out, "fits_brms")), paste0("B_", gsub("[^A-Za-z0-9]", "_", resp), ".rds")))
   }
 }
-write_table(do.call(rbind, eff), file.path(a$out, "effects_brms.csv"))
-write_table(do.call(rbind, fits_summary), file.path(a$out, "fits_brms_summary.csv"))
+# one effects file per layer so a layer can be refitted alone without losing the other
+for (ly in unique(vapply(eff, function(e) e$layer[1], character(1))))
+  write_table(do.call(rbind, eff[vapply(eff, function(e) e$layer[1] == ly, logical(1))]),
+              file.path(a$out, sprintf("effects_brms_%s.csv", ly)))
+fs_path <- file.path(a$out, "fits_brms_summary.csv"); fs_new <- do.call(rbind, fits_summary)
+if (file.exists(fs_path)) { old <- read.csv(fs_path); old <- old[!old$layer %in% fs_new$layer, ]; fs_new <- rbind(old, fs_new) }
+write_table(fs_new, fs_path)

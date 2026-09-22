@@ -4,6 +4,7 @@
 #   screen -S mtb_drift
 #   bash scripts/mtb_drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift [r_conda_env] [bayesflow_conda_env]
 # DATA_ROOT must contain fcs/ and wsp/ (or set FCS_DIR and WSP_DIR). Set SKIP_BF=1 to skip 7-8.
+# Without screen: nohup bash scripts/mtb_drift/run_all.sh ... > /dev/null 2>&1 &   (progress in $OUT/run_all.log)
 set -euo pipefail
 DATA_ROOT="${1:?data root}"; OUT="${2:?results dir}"; ENV="${3:-cytometry_env}"; BFENV="${4:-bayesflow_env}"
 FCS_DIR="${FCS_DIR:-$DATA_ROOT/fcs}"; WSP_DIR="${WSP_DIR:-$DATA_ROOT/wsp}"
@@ -20,11 +21,14 @@ step 6a brms;           $R "$HERE/06_yardstick_brms.R" --out "$OUT" --cores "${C
 step 6b stan;           $R "$HERE/06_yardstick_stan.R" --out "$OUT" --cores "${CORES:-4}"
 step 6c lme4;           $R "$HERE/06_lme4.R" --out "$OUT"
 step 9 decision;        $R "$HERE/09_decision.R" --out "$OUT"
-step 10 report;         $R -e "rmarkdown::render('$HERE/10_report.Rmd', params = list(out = normalizePath('$OUT')), output_dir = normalizePath('$OUT'))"
+step 10 report;         $R -e "rmarkdown::render('$HERE/10_report.Rmd', params = list(out = normalizePath('$OUT')), output_file = 'report.html', output_dir = normalizePath('$OUT'))"
 if [ -z "${SKIP_BF:-}" ]; then
-  step 7 bayesflow v1;  $PY "$HERE/07_bayesflow_v1.py" --out "$OUT" --epochs "${BF_EPOCHS:-50}" --num_sims "${BF_SIMS:-50000}"
-  step 8 bayesflow v2;  $PY "$HERE/08_bayesflow_v2.py" --out "$OUT" --epochs "${BF_EPOCHS:-40}" --n_cells "${BF_CELLS:-1000}"
+  # Budgets are the ones that ran on the dev box (v1: 2 h 20 min; v2 training: 3 h 15 min, both on 28 CPU cores
+  # while sharing them with other jobs). Posterior sampling is chunked to keep v2 under a few GB of RAM.
+  step 7 bayesflow v1;  $PY "$HERE/07_bayesflow_v1.py" --out "$OUT" --epochs "${BF_EPOCHS:-30}" --num_sims "${BF_SIMS:-30000}" --batch_size 128
+  step 8 bayesflow v2;  $PY "$HERE/08_bayesflow_v2.py" --out "$OUT" --epochs "${BF2_EPOCHS:-15}" --batches_per_epoch 100 --batch_size 8 \
+                          --n_cells "${BF_CELLS:-800}" --chunk 4 --n_sbc 100 --posterior_samples 1000
   step 9 decision again, with BayesFlow; $R "$HERE/09_decision.R" --out "$OUT"
-  step 10 report again; $R -e "rmarkdown::render('$HERE/10_report.Rmd', params = list(out = normalizePath('$OUT')), output_dir = normalizePath('$OUT'))"
+  step 10 report again; $R -e "rmarkdown::render('$HERE/10_report.Rmd', params = list(out = normalizePath('$OUT')), output_file = 'report.html', output_dir = normalizePath('$OUT'))"
 fi
 step done

@@ -17,8 +17,11 @@ run <- function(model, data) {
   fit <- model$sample(data = data, chains = a$chains, parallel_chains = a$cores,
                       iter_warmup = a$iter / 2, iter_sampling = a$iter / 2, refresh = 0,
                       adapt_delta = 0.95, show_messages = FALSE)
-  list(b_instr = fit$draws("b_instr", format = "matrix")[, 1],
-       c_d = fit$draws("c_d", format = "matrix"), fit = fit)
+  # strip the posterior::draws_matrix class: a subset of it keeps the class and
+  # data.frame() then names the column after the parameter, breaking rbind
+  plain <- function(d) { m <- matrix(as.numeric(d), nrow = nrow(d)); colnames(m) <- colnames(d); m }
+  list(b_instr = as.numeric(fit$draws("b_instr", format = "matrix")),
+       c_d = plain(fit$draws("c_d", format = "matrix")), fit = fit)
 }
 day_matrix <- function(cd, levels) { colnames(cd) <- levels; cd }
 
@@ -56,4 +59,6 @@ if (grepl("B", a$layer)) {
                                             if (length(other)) other[1] else NA)
   }
 }
-write_table(do.call(rbind, eff), file.path(a$out, "effects_stan.csv"))
+for (ly in unique(vapply(eff, function(e) e$layer[1], character(1))))
+  write_table(do.call(rbind, eff[vapply(eff, function(e) e$layer[1] == ly, logical(1))]),
+              file.path(a$out, sprintf("effects_stan_%s.csv", ly)))

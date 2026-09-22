@@ -29,6 +29,7 @@ from keras import ops
 import bayesflow as bf
 
 
+@keras.saving.register_keras_serializable(package="mtb_drift")
 class CellsInTubes(bf.networks.SummaryNetwork):
     """x: (batch, n_tubes, n_cells, K + n_codes). Cells are pooled per tube by a DeepSet,
     the tube embedding is joined with the tube codes, and a SetTransformer pools the tubes."""
@@ -38,6 +39,11 @@ class CellsInTubes(bf.networks.SummaryNetwork):
         self.n_markers = n_markers
         self.cells = bf.networks.DeepSet(summary_dim=cell_dim, embed_dim=32, mlp_widths=(64,), depth=1)
         self.tubes = bf.networks.SetTransformer(summary_dim=summary_dim, embed_dims=(64, 64), num_seeds=4)
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update(n_markers=self.n_markers, summary_dim=self.tubes.summary_dim, cell_dim=self.cells.summary_dim)
+        return cfg
 
     def build(self, input_shape):
         b, n, c, f = input_shape
@@ -113,12 +119,13 @@ def main():
         inference_network=bf.networks.CouplingFlow(depth=6),
         summary_network=CellsInTubes(n_markers=K, summary_dim=48),
         initial_learning_rate=5e-4, checkpoint_filepath=outdir, checkpoint_name="v2")
-    workflow.fit_online(epochs=a.epochs, num_batches_per_epoch=a.batches_per_epoch, batch_size=a.batch_size)
+    if not maybe_restore(workflow, a.restore, os.path.join(outdir, "v2.keras"), custom_objects={"CellsInTubes": CellsInTubes}):
+        workflow.fit_online(epochs=a.epochs, num_batches_per_epoch=a.batches_per_epoch, batch_size=a.batch_size)
     T.mark("train")
 
     # --- calibration and recovery -----------------------------------------------------------
     test = simulator.sample(a.n_sbc)
-    post = workflow.sample(conditions=test, num_samples=a.posterior_samples)
+    post = sample_chunked(workflow, test, a.posterior_samples, a.chunk)
     names = [f"b_instr[{m}]" for m in markers] + [f"c_d[{d}]" for d in days]
     post_arr = np.concatenate([post["b_instr"].reshape(a.n_sbc, a.posterior_samples, K),
                                post["tau_d"].reshape(a.n_sbc, a.posterior_samples, 1) *
