@@ -106,19 +106,27 @@ parse_mtb_sample <- function(names) {
 # 2. Boolean combinations  (pure)
 # =============================================================================
 
+# Label of every one of the 2^k combinations of `markers`, indexed by the
+# bit code of the combination plus one (marker i is bit i - 1).
+.combo_lookup <- function(markers) {
+  k <- length(markers)
+  vapply(0:(2^k - 1), function(code) {
+    pos <- as.logical(bitwAnd(code, 2^(seq_len(k) - 1)))
+    if (!any(pos)) "none" else paste0(markers[pos], "+", collapse = " ")
+  }, character(1))
+}
+
+# Number of positive markers in each label ("none" -> 0).
+n_positive <- function(labels) {
+  ifelse(labels == "none", 0L, lengths(strsplit(labels, " ")))
+}
+
 # All 2^k combinations of `markers`, in a fixed order: by number of positive
 # markers, then by marker order. The order is what keeps colours stable across
 # patients and what the legend follows.
 combination_levels <- function(markers) {
-  k <- length(markers)
-  codes <- 0:(2^k - 1)
-  labs <- vapply(codes, function(code) {
-    pos <- as.logical(bitwAnd(code, 2^(seq_len(k) - 1)))
-    if (!any(pos)) "none" else paste0(markers[pos], "+", collapse = " ")
-  }, character(1))
-  npos <- vapply(codes, function(code) sum(as.logical(bitwAnd(code, 2^(seq_len(k) - 1)))),
-                 integer(1))
-  labs[order(npos, codes)]
+  labs <- .combo_lookup(markers)
+  labs[order(n_positive(labs), seq_along(labs))]
 }
 
 # Per-cell combination label from an n x k logical membership matrix.
@@ -126,10 +134,7 @@ combination_labels <- function(mem, markers) {
   mem <- matrix(as.logical(mem), ncol = length(markers))
   mem[is.na(mem)] <- FALSE
   k <- length(markers)
-  lookup <- vapply(0:(2^k - 1), function(code) {
-    pos <- as.logical(bitwAnd(code, 2^(seq_len(k) - 1)))
-    if (!any(pos)) "none" else paste0(markers[pos], "+", collapse = " ")
-  }, character(1))
+  lookup <- .combo_lookup(markers)
   code <- as.integer(mem %*% 2^(seq_len(k) - 1))
   factor(lookup[code + 1L], levels = combination_levels(markers))
 }
@@ -249,8 +254,6 @@ load_workspaces <- function(wsp, fcs_dir, group = "All Samples") {
   gs_list
 }
 
-# One sample, one parent gate: counts of every cytokine combination among the
-# parent's cells. `marker_paths` may contain NA (gate absent -> all negative).
 sample_combination_table <- function(gh, parent_path, marker_paths, markers) {
   viable <- flowWorkspace::gh_pop_get_indices(gh, parent_path)
   mem <- get_subpop_membership(gh, viable, unname(marker_paths))
@@ -259,8 +262,6 @@ sample_combination_table <- function(gh, parent_path, marker_paths, markers) {
   out
 }
 
-# The long table behind every plot: one row per workspace x sample x parent x
-# combination, with the sample's patient/timepoint/cocktail alongside.
 cytokine_combination_table <- function(gs_list, parents = c("CD4", "CD8"),
                                        markers = c("CD107a", "IFNy", "IL-2", "TNF")) {
   rows <- list()
@@ -302,7 +303,7 @@ cytokine_combination_table <- function(gs_list, parents = c("CD4", "CD8"),
 # how many cytokines are positive (one hue family per count), so
 # polyfunctional cells stand out and the 16 legend entries read as four groups.
 combination_palette <- function(levels) {
-  npos <- ifelse(levels == "none", 0L, lengths(strsplit(levels, " ")))
+  npos <- n_positive(levels)
   families <- list(
     grDevices::colorRampPalette(c("#9ecae1", "#08519c")),   # 1 positive: blues
     grDevices::colorRampPalette(c("#a1d99b", "#006d2c")),   # 2: greens
@@ -326,8 +327,7 @@ combination_palette <- function(levels) {
 # full stack shows how small the response is.
 plot_patient_combinations <- function(tbl, patient, output_dir,
                                       formats = list(png = TRUE),
-                                      subtract = FALSE, drop_none = FALSE,
-                                      png_dpi = 200) {
+                                      subtract = FALSE, drop_none = FALSE) {
   require(ggplot2)
   d <- tbl[!is.na(tbl$patient) & tbl$patient == patient, , drop = FALSE]
   if (subtract) d <- subtract_background(d)
@@ -371,17 +371,16 @@ plot_patient_combinations <- function(tbl, patient, output_dir,
   width <- max(8, 2.2 * length(cocktails) + 3.5)
   height <- 3.2 * length(unique(d$parent)) + 1.5
   saved <- save_plot_formats(p, base, width = width, height = height,
-                             formats = formats, png_dpi = png_dpi)
+                             formats = formats)
   cat("  wrote ", base, " [", paste(saved, collapse = ", "), "]\n", sep = "")
   invisible(p)
 }
 
-# The level order for the labels actually present, recovered from the labels
-# themselves (so a table read back from CSV plots the same way).
+# Level order recovered from the labels alone, so a table read back from CSV
+# plots the same way.
 combination_levels_from <- function(labels) {
   labels <- unique(as.character(labels))
-  npos <- ifelse(labels == "none", 0L, lengths(strsplit(labels, " ")))
-  labels[order(npos, labels)]
+  labels[order(n_positive(labels), labels)]
 }
 
 write_combination_table <- function(tbl, output_dir) {

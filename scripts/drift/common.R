@@ -1,17 +1,14 @@
-# =============================================================================
-# scripts/mtb_drift/common.R — shared bootstrap for the drift CLIs
-# =============================================================================
+# scripts/drift/common.R — shared bootstrap for the drift CLIs
 # Sourced by every NN_*.R in this folder. Locates the repo, sources the drift
 # modules, parses `--key value` arguments without optparse (so steps 01/02 run
-# on a plain R install), and reads config/mtb_drift.yaml.
-# =============================================================================
+# on a plain R install), and reads the cohort config given with --config.
 
 drift_repo_root <- function() {
   env <- Sys.getenv("CYTOMETRY_REPO", "")
   if (nzchar(env) && dir.exists(file.path(env, "src"))) return(normalizePath(env))
   args <- commandArgs(trailingOnly = FALSE)
   f <- sub("^--file=", "", grep("^--file=", args, value = TRUE))
-  cands <- c(if (length(f)) normalizePath(file.path(dirname(f), "..", "..")), getwd())
+  cands <- c(if (length(f)) normalizePath(file.path(dirname(f), c("..", "../.."))), getwd())
   for (c in cands) if (dir.exists(file.path(c, "src", "harmonization", "drift"))) return(c)
   stop("cannot locate the repository root; set CYTOMETRY_REPO", call. = FALSE)
 }
@@ -37,14 +34,31 @@ parse_args <- function(spec, args = commandArgs(trailingOnly = TRUE), usage = ""
     out[[key]] <- if (is.numeric(spec[[key]])) as.numeric(val) else val
     i <- i + 2L
   }
-  for (k in names(spec)) if (is.null(out[[k]]) || (is.character(out[[k]]) && !nzchar(out[[k]]) && !is.logical(spec[[k]])))
-    if (identical(spec[[k]], "")) stop("--", k, " is required\n", usage, call. = FALSE)
+  for (k in names(spec)) if (identical(spec[[k]], "") && !nzchar(out[[k]]))
+    stop("--", k, " is required\n", usage, call. = FALSE)
   out
 }
 
-read_drift_config <- function(path = file.path(REPO, "config", "mtb_drift.yaml")) {
+read_drift_config <- function(path) {
   if (!requireNamespace("yaml", quietly = TRUE)) stop("package 'yaml' is required", call. = FALSE)
-  yaml::read_yaml(path)
+  if (!file.exists(path)) stop("config file not found: ", path, call. = FALSE)
+  cfg <- yaml::read_yaml(path)
+  for (k in c("tubes", "instrument_labels", "markers", "reference_instrument"))
+    if (is.null(cfg[[k]])) stop("config lacks the `", k, "` block; see config/drift_mtb.yaml", call. = FALSE)
+  cfg
+}
+
+#' File names excluded by step 3, or none when it has not run.
+excluded_tubes <- function(out) {
+  f <- file.path(out, "excluded_tubes.csv")
+  if (file.exists(f)) read.csv(f)$filename else character(0)
+}
+
+#' Every FlowJo workspace under `wsp_dir`.
+list_workspaces <- function(wsp_dir) {
+  wsps <- list.files(wsp_dir, "\\.wsp$", full.names = TRUE, recursive = TRUE, ignore.case = TRUE)
+  if (!length(wsps)) stop("no .wsp under ", wsp_dir, call. = FALSE)
+  wsps
 }
 
 ensure_dir <- function(d) { dir.create(d, recursive = TRUE, showWarnings = FALSE); d }
@@ -58,5 +72,5 @@ write_table <- function(df, path) {
 need_packages <- function(pkgs) {
   miss <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
   if (length(miss)) stop("missing R packages: ", paste(miss, collapse = ", "),
-                         ". Run scripts/mtb_drift/00_setup_env.sh", call. = FALSE)
+                         ". Run scripts/drift/00_setup_env.sh", call. = FALSE)
 }

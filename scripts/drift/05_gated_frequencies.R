@@ -1,27 +1,20 @@
 #!/usr/bin/env Rscript
 # Step 5, layer B: counts of cytokine-positive gates within CD4 and CD8 from the FlowJo gates,
 # background subtraction against the matched neg tube (same patient-week), positivity calls.
-#   Rscript scripts/mtb_drift/05_gated_frequencies.R --wsp_dir DIR --fcs_dir DIR --out DIR
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
-usage <- "05_gated_frequencies.R --wsp_dir DIR --fcs_dir DIR --out DIR [--config FILE]"
+usage <- "05_gated_frequencies.R --wsp_dir DIR --fcs_dir DIR --out DIR --config FILE"
 a <- parse_args(list(wsp_dir = "", fcs_dir = "", out = "",
-                     config = file.path(REPO, "config", "mtb_drift.yaml")), usage = usage)
+                     config = ""), usage = usage)
 cfg <- read_drift_config(a$config)
 need_packages(c("CytoML", "flowWorkspace"))
 
 tt <- read.csv(file.path(a$out, "tubes.csv"), stringsAsFactors = FALSE)
-excl <- if (file.exists(file.path(a$out, "excluded_tubes.csv")))
-  read.csv(file.path(a$out, "excluded_tubes.csv"))$filename else character(0)
-wsps <- list.files(a$wsp_dir, "\\.wsp$", full.names = TRUE, recursive = TRUE, ignore.case = TRUE)
+excl <- excluded_tubes(a$out)
+wsps <- list_workspaces(a$wsp_dir)
 sigs <- read.csv(file.path(a$out, "panel_signatures.csv"), stringsAsFactors = FALSE)
 
 counts <- list()
-for (w in wsps) {
-  cat("\nWorkspace", basename(w), "\n")
-  gsl <- tryCatch(load_workspace_gatingsets(w, a$fcs_dir, signatures = sigs), error = function(e) {
-    cat("  FAILED:", conditionMessage(e), "\n"); list() })
-  for (gs in gsl) counts[[length(counts) + 1L]] <- gatingset_counts(gs)
-}
+for (w in wsps) for (gs in open_workspace(w, a$fcs_dir, sigs)) counts[[length(counts) + 1L]] <- gatingset_counts(gs)
 ct <- do.call(rbind, counts)
 ct <- ct[!ct$filename %in% excl, ]
 write_table(ct, file.path(a$out, "all_gate_counts.csv"))

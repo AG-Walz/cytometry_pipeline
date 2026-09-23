@@ -123,3 +123,7 @@ work/
 # analysis that produced them, not in the repository.
 results/
 scratch_params/
+
+# cmdstanr executables, rebuilt on demand by scripts/drift/06_yardstick_stan.R
+scripts/drift/stan/*
+!scripts/drift/stan/*.stan

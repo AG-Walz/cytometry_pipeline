@@ -66,30 +66,15 @@ if (is.null(opt$from_table) && (is.null(opt$wsp) || is.null(opt$fcs_dir))) {
 # Locate the repo 'src' dir, set the shared_dir/src_dir globals (CLI convention),
 # and source the shared utilities + analysis module in dependency order.
 # -----------------------------------------------------------------------------
-find_script_path <- function() {
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) == 1) {
-    return(normalizePath(sub("^--file=", "", file_arg), mustWork = FALSE))
-  }
-  NA_character_
+# find_script_path, resolve_src_dir, split_csv, parse_formats: shared by the CLI
+# wrappers and kept next to this script, so located from Rscript's --file=.
+script_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+if (length(script_file) == 1) {
+  cli_dir <- dirname(sub("^--file=", "", script_file))
+} else {
+  cli_dir <- file.path(getwd(), "scripts")
 }
-
-resolve_src_dir <- function(user_src) {
-  if (!is.null(user_src)) {
-    sd <- normalizePath(user_src, mustWork = FALSE)
-    if (!dir.exists(sd)) stop("--src_dir does not exist: ", sd)
-    return(sd)
-  }
-  sp <- find_script_path()
-  if (!is.na(sp)) {
-    cand <- file.path(dirname(dirname(sp)), "src")
-    if (dir.exists(cand)) return(normalizePath(cand))
-  }
-  cand <- file.path(getwd(), "src")
-  if (dir.exists(cand)) return(normalizePath(cand))
-  stop("Could not locate the 'src' directory. Pass --src_dir explicitly.")
-}
+source(file.path(cli_dir, "_cli_common.R"))
 
 src_dir    <<- resolve_src_dir(opt$src_dir)
 shared_dir <<- file.path(src_dir, "R_shared")
@@ -107,17 +92,6 @@ source(file.path(src_dir, "harmonization", "panel_homogenization.R"))
 source(file.path(src_dir, "harmonization", "panel_comparison.R"))
 source(file.path(src_dir, "visualization", "umap_from_flowjo.R"))
 source(file.path(src_dir, "analysis", "cytokine_combinations.R"))
-
-split_csv <- function(s) {
-  if (is.null(s)) return(NULL)
-  v <- trimws(strsplit(s, ",")[[1]])
-  v[nzchar(v)]
-}
-
-parse_formats <- function(s) {
-  parts <- split_csv(s)
-  list(pdf = "pdf" %in% parts, png = "png" %in% parts, svg = "svg" %in% parts)
-}
 
 cytokine_combinations(
   wsp            = opt$wsp,

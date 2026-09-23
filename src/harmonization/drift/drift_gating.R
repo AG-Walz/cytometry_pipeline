@@ -1,10 +1,10 @@
-# =============================================================================
 # src/harmonization/drift/drift_gating.R — FlowJo workspaces to per-tube data
-# =============================================================================
 # Needs CytoML, flowWorkspace, flowCore (highmem only). Every function takes a
 # GatingHierarchy or GatingSet and returns plain data frames so that the base-R
 # modules never see Bioconductor objects.
-# =============================================================================
+
+#' Escape a literal string for use inside a regular expression.
+regex_escape <- function(x) gsub("([.|()\\^{}+$*?\\[\\]\\\\])", "\\\\\\1", x)
 
 #' Build GatingSets for one workspace. Tries the whole sample group first; if
 #' CytoML refuses because the samples do not share one channel set (a patient
@@ -13,13 +13,11 @@
 #' sample names of that part, which is the form this CytoML accepts.
 #' `signatures` is the step-2 table (filename, panel_signature); files not in it
 #' are read with flowCore::read.FCSheader. Returns a named list of GatingSets.
-load_workspace_gatingsets <- function(wsp_path, fcs_dir, group = NULL, signatures = NULL) {
+load_workspace_gatingsets <- function(wsp_path, fcs_dir, signatures = NULL) {
   ws <- CytoML::open_flowjo_xml(wsp_path)
   groups <- CytoML::fj_ws_get_sample_groups(ws)
-  if (is.null(group)) {
-    g <- setdiff(unique(groups$groupName), "Compensation")
-    group <- if ("All Samples" %in% g) "All Samples" else g[1]
-  }
+  g <- setdiff(unique(groups$groupName), "Compensation")
+  group <- if ("All Samples" %in% g) "All Samples" else g[1]
   label <- sub("\\.wsp$", "", basename(wsp_path), ignore.case = TRUE)
   out <- list()
   whole <- tryCatch(CytoML::flowjo_to_gatingset(ws, name = group, path = fcs_dir), error = function(e) e)
@@ -38,8 +36,7 @@ load_workspace_gatingsets <- function(wsp_path, fcs_dir, group = NULL, signature
     fn <- basename(nm)
     hit <- if (!is.null(signatures)) signatures$panel_signature[signatures$filename == fn] else character(0)
     if (length(hit)) return(paste(sort(strsplit(hit[1], ";", fixed = TRUE)[[1]]), collapse = "|"))
-    f <- list.files(fcs_dir, pattern = paste0("^", gsub("([.|()\\^{}+$*?\\[\\]\\\\])", "\\\\\\1", fn), "$"),
-                    recursive = TRUE, full.names = TRUE)
+    f <- list.files(fcs_dir, pattern = paste0("^", regex_escape(fn), "$"), recursive = TRUE, full.names = TRUE)
     if (!length(f)) return(NA_character_)
     kw <- tryCatch(flowCore::read.FCSheader(f[1])[[1]], error = function(e) NULL)
     if (is.null(kw)) return(NA_character_)
@@ -64,6 +61,14 @@ load_workspace_gatingsets <- function(wsp_path, fcs_dir, group = NULL, signature
   out
 }
 
+#' GatingSets of one workspace for the step 4/5 loops: announces the workspace
+#' and turns a load failure into a message and an empty list.
+open_workspace <- function(wsp_path, fcs_dir, signatures) {
+  cat("\nWorkspace", basename(wsp_path), "\n")
+  tryCatch(load_workspace_gatingsets(wsp_path, fcs_dir, signatures = signatures),
+           error = function(e) { cat("  FAILED:", conditionMessage(e), "\n"); list() })
+}
+
 #' The FCS file name a GatingHierarchy was built from.
 gh_filename <- function(gh) {
   kw <- flowWorkspace::keyword(gh)
@@ -76,8 +81,7 @@ gh_filename <- function(gh) {
 #' Full path of the first node whose path ends with `suffix` (case-insensitive).
 find_population <- function(gh, suffix) {
   paths <- flowWorkspace::gh_get_pop_paths(gh, path = "full")
-  hit <- paths[grepl(paste0("(^|/)", gsub("([.|()\\^{}+$*?\\[\\]\\\\])", "\\\\\\1", suffix), "$"),
-                     paths, ignore.case = TRUE)]
+  hit <- paths[grepl(paste0("(^|/)", regex_escape(suffix), "$"), paths, ignore.case = TRUE)]
   if (!length(hit)) return(NA_character_)
   hit[which.min(nchar(hit))]
 }

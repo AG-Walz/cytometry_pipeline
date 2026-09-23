@@ -2,7 +2,7 @@
 """Step 8: BayesFlow variant 2 - single-cell distribution simulator, hierarchical summary network.
 
 Generative model per simulated experiment, on the REAL neg-tube design (patients, days,
-instruments) and the technical markers of config/mtb_drift.yaml, all on the arcsinh scale:
+instruments) and the technical markers of the cohort config, all on the arcsinh scale:
 
   per marker k and patient p: mixture location(s) mu_pk (bimodal markers: two components with
   patient-specific positive fraction), component SDs s_k
@@ -19,7 +19,7 @@ effect for marker k) and c_d per day (comparable to the layer A 'median' day eff
 the marker loading). Writes effects_bayesflow_v2.csv, bf_v2_recovery.csv, bf_v2_sbc.csv,
 bf_v2_ppc.csv (posterior predictive check on the real neg medians) and bf_v2_timing.json.
 
-    python scripts/mtb_drift/08_bayesflow_v2.py --out results [--n_cells 1000 --epochs 40]
+    python scripts/drift/08_bayesflow_v2.py --out results --config config/drift_mtb.yaml [--n_cells 1000 --epochs 40]
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,7 +29,7 @@ from keras import ops
 import bayesflow as bf
 
 
-@keras.saving.register_keras_serializable(package="mtb_drift")
+@keras.saving.register_keras_serializable(package="drift")
 class CellsInTubes(bf.networks.SummaryNetwork):
     """x: (batch, n_tubes, n_cells, K + n_codes). Cells are pooled per tube by a DeepSet,
     the tube embedding is joined with the tube codes, and a SetTransformer pools the tubes."""
@@ -68,20 +68,13 @@ def main():
     a = p.parse_args()
     if a.smoke:
         a.epochs, a.batches_per_epoch, a.n_sbc, a.posterior_samples, a.n_cells, a.batch_size = 1, 4, 8, 100, 200, 4
-    rng = np.random.default_rng(a.seed); keras.utils.set_random_seed(a.seed)
-    cfg = read_config()
-    negs = read_design(a.out)
+    s = setup(a, "v2")
+    rng, cfg, negs, P, D, N, pat, day, instr = s.rng, s.cfg, s.negs, s.P, s.D, s.N, s.pat, s.day, s.instr
+    days, instr_level, outdir, T = s.days, s.instr_level, s.outdir, s.T
     markers = [m for m in cfg["technical_markers"] if m not in ("FSC_A", "SSC_A")]  # fluorescence only
     bimodal = [m in cfg["bimodal_markers"] for m in markers]
-    K, N = len(markers), len(negs)
-    P, D = negs.patient_i.max() + 1, negs.day_i.max() + 1
-    pat, day, instr = negs.patient_i.values, negs.day_i.values, negs.instr.values
-    days = day_levels(negs)
-    other = [i for i in negs.instrument.unique() if i != cfg["reference_instrument"]]
-    instr_level = other[0] if other else "none"
+    K = len(markers)
     codes = np.stack([pat / max(P - 1, 1), day / max(D - 1, 1), instr], axis=1).astype("float32")  # (N, 3)
-    outdir = os.path.join(a.out, "bf_v2"); os.makedirs(outdir, exist_ok=True)
-    T = Timer()
     print(f"design: {N} tubes, {P} patients, {D} days, K={K} markers {markers}, {a.n_cells} cells/tube")
 
     # --- simulator -------------------------------------------------------------------------
@@ -95,7 +88,7 @@ def main():
         mu_hi = rng.normal(3.5, 0.4, (P, K)); mu_lo = mu_hi - rng.uniform(2.0, 3.0, (P, K))
         frac = rng.beta(4, 5, (P, K)); sd = rng.uniform(0.3, 0.5, K)
         shift = (tau_d * c_d[day])[:, None] * lam[None, :] + instr[:, None] * b_instr[None, :]   # (N, K)
-        gain = np.where(instr > 0, np.exp(log_g_instr), 1.0)[:, None]                            # (N, 1)
+        gain = np.where(instr > 0, np.exp(log_g_instr), 1.0)[:, None]
         cells = np.empty((N, a.n_cells, K), dtype="float32")
         for k in range(K):
             if bimodal[k]:
@@ -123,17 +116,8 @@ def main():
         workflow.fit_online(epochs=a.epochs, num_batches_per_epoch=a.batches_per_epoch, batch_size=a.batch_size)
     T.mark("train")
 
-    # --- calibration and recovery -----------------------------------------------------------
-    test = simulator.sample(a.n_sbc)
-    post = sample_chunked(workflow, test, a.posterior_samples, a.chunk)
     names = [f"b_instr[{m}]" for m in markers] + [f"c_d[{d}]" for d in days]
-    post_arr = np.concatenate([post["b_instr"].reshape(a.n_sbc, a.posterior_samples, K),
-                               post["tau_d"].reshape(a.n_sbc, a.posterior_samples, 1) *
-                               post["c_d"].reshape(a.n_sbc, a.posterior_samples, D)], axis=-1)
-    truth = np.concatenate([test["b_instr"].reshape(-1, K), test["tau_d"].reshape(-1, 1) * test["c_d"].reshape(-1, D)], axis=1)
-    rec = recovery_table(post_arr, truth, names); rec.to_csv(os.path.join(a.out, "bf_v2_recovery.csv"), index=False)
-    pd.DataFrame(dict(parameter=names, sbc_p=sbc_uniformity(sbc_ranks(post_arr, truth), a.posterior_samples))).to_csv(
-        os.path.join(a.out, "bf_v2_sbc.csv"), index=False)
+    rec, _ = validate(workflow, simulator, a, names, K, D, "v2")
     T.mark("validate")
 
     # --- real neg cells ------------------------------------------------------------------------

@@ -5,10 +5,9 @@
 # to the data (frequencies come from the FlowJo gates on the full file); they only decide exclusion,
 # so the default threshold is deliberately lenient: PeacoQC flags 30 to 50 percent of events on some
 # perfectly gateable tubes here, and excluding a neg tube costs a whole patient-week.
-#   Rscript scripts/mtb_drift/03_tube_qc.R --out DIR [--max_removed 0.6] [--min_events 1000] [--workers 8]
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
-usage <- "03_tube_qc.R --out DIR [--config FILE] [--max_removed 0.6] [--min_events 1000] [--workers 8]"
-a <- parse_args(list(out = "", config = file.path(REPO, "config", "mtb_drift.yaml"),
+usage <- "03_tube_qc.R --out DIR --config FILE [--max_removed 0.6] [--min_events 1000] [--workers 8]"
+a <- parse_args(list(out = "", config = "",
                      max_removed = 0.6, min_events = 1000, workers = 8), usage = usage)
 cfg <- read_drift_config(a$config)
 need_packages(c("flowCore"))

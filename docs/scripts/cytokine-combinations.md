@@ -14,48 +14,24 @@ The script is a thin CLI wrapper around `cytokine_combinations()` in
 
 ## What it does
 
-1. Discovers the workspaces under `--wsp`, pairs each with its FCS files by
-   file name under `--fcs_dir` and builds one `GatingSet` per workspace, using
-   the same loader as the [FlowJo UMAP](umap-from-flowjo.md).
-2. For every sample and every parent gate (`--parents`, default `CD4,CD8`) it
-   reads which cells fall in each cytokine gate beneath the parent
-   (`--markers`, default `CD107a,IFNy,IL-2,TNF`) and counts the 2^k Boolean
-   combinations: `none`, `IFNy+`, `IFNy+ IL-2+`, ... `CD107a+ IFNy+ IL-2+ TNF+`.
-3. Parses patient, batch, vaccination number, week and cocktail from the sample
-   name (`MTB<patient>_<batch>_V<vaccine>W<week>_<cocktail>`).
-4. Writes the long table and, per patient, three figures.
+Workspaces are loaded with the same loader as the [FlowJo UMAP](umap-from-flowjo.md).
+For every sample and parent gate the cells are classified into the 2^k Boolean
+combinations of the cytokine gates, patient and timepoint are parsed from the
+sample name, and the long table plus three figures per patient are written.
 
 ## Usage
 
 ```bash
 conda activate cytometry_env
-# One patient
 Rscript scripts/cytokine_combinations.R \
   --wsp /mnt/volume/data/MTB_FACS/wsp/MTB059_1.wsp \
   --fcs_dir /mnt/volume/data/MTB_FACS/fcs \
   --output_dir /mnt/volume/data/MTB_FACS
-
-# Whole cohort, plots for two patients
-Rscript scripts/cytokine_combinations.R --wsp /mnt/volume/data/MTB_FACS/wsp \
-  --fcs_dir /mnt/volume/data/MTB_FACS/fcs --output_dir results/combos \
-  --patients MTB059,MTB074
-
-# Re-plot from an earlier table (no CytoML needed, only ggplot2)
-Rscript scripts/cytokine_combinations.R \
-  --from_table results/combos/cytokine_combinations.csv --output_dir results/combos
 ```
 
-| Option | Default | Meaning |
-|---|---|---|
-| `--wsp` | | A `.wsp` file or a folder searched recursively |
-| `--fcs_dir` | | Folder searched recursively for the FCS files |
-| `--output_dir` | `results/cytokine_combinations` | Where PNGs and the CSV go |
-| `--patients` | all | Comma-separated patients to plot (`MTB059,MTB074`) |
-| `--parents` | `CD4,CD8` | Parent gates, one facet row each |
-| `--markers` | `CD107a,IFNy,IL-2,TNF` | Cytokine gates under each parent |
-| `--group` | `All Samples` | FlowJo sample group to load |
-| `--output_formats` | `png` | `png`, `pdf`, `svg` |
-| `--from_table` | | Re-plot from a `cytokine_combinations.csv` |
+`Rscript scripts/cytokine_combinations.R --help` lists every option, including
+`--patients`, `--parents`, `--markers` and `--from_table` for re-plotting from
+an earlier CSV without CytoML.
 
 ## Output
 

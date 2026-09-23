@@ -1,11 +1,8 @@
-# =============================================================================
 # src/harmonization/drift/drift_stats.R — pure statistics helpers, base R
-# =============================================================================
 # Distribution summaries for neg tubes (layer A), 1-D Earth Mover's Distance,
 # bimodal valley finder, background subtraction and the positivity rule
 # (layer B), and the decision logic that combines model posteriors with the
 # rule. No cytometry packages, so every function here is unit-tested locally.
-# =============================================================================
 
 #' arcsinh with cofactor; scatter is left linear by the caller.
 asinh_cof <- function(x, cofactor) asinh(x / cofactor)

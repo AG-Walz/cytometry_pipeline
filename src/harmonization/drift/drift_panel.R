@@ -1,10 +1,7 @@
-# =============================================================================
 # src/harmonization/drift/drift_panel.R — reconcile 12/13/14-parameter panels
-# =============================================================================
 # Base R. Maps every file's $PnN/$PnS pairs onto the canonical marker names in
-# config/mtb_drift.yaml so all later steps address channels by marker. Files
+# config/drift_mtb.yaml so all later steps address channels by marker. Files
 # whose panel lacks a required marker are flagged rather than dropped here.
-# =============================================================================
 
 #' Parameter table of one file from its keywords: index, channel ($PnN), marker ($PnS).
 fcs_parameter_table <- function(kw) {
@@ -34,7 +31,7 @@ assign_canonical <- function(ptab, marker_patterns) {
     if (sum(hit) > 1L) {
       # prefer an area channel, then the first
       a <- hit & grepl("-A$", ptab$channel)
-      hit <- if (any(a)) a & !duplicated(a) & a else hit & !duplicated(hit) & hit
+      if (any(a)) hit <- a
       hit[which(hit)[-1]] <- FALSE
     }
     ptab$canonical[hit] <- canon

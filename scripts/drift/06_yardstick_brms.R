@@ -2,10 +2,9 @@
 # Step 6a: Bayesian hierarchical yardstick with brms. Fits every layer A statistic and every
 # layer B response; writes posterior draws of the day and instrument effects in the shared
 # long format (effects_brms.csv) plus per-model summaries.
-#   Rscript scripts/mtb_drift/06_yardstick_brms.R --out DIR [--chains 4] [--iter 2000] [--cores 4]
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
-usage <- "06_yardstick_brms.R --out DIR [--config FILE] [--chains 4] [--iter 2000] [--cores 4] [--layer A|B|AB]"
-a <- parse_args(list(out = "", config = file.path(REPO, "config", "mtb_drift.yaml"),
+usage <- "06_yardstick_brms.R --out DIR --config FILE [--chains 4] [--iter 2000] [--cores 4] [--layer A|B|AB]"
+a <- parse_args(list(out = "", config = "",
                      chains = 4, iter = 2000, cores = 4, layer = "AB"), usage = usage)
 cfg <- read_drift_config(a$config)
 need_packages(c("brms"))
@@ -14,6 +13,8 @@ options(mc.cores = a$cores, brms.backend = backend)
 tt <- read.csv(file.path(a$out, "tubes.csv"), stringsAsFactors = FALSE)
 ref <- cfg$reference_instrument
 eff <- list(); fits_summary <- list()
+save_fit <- function(fit, layer, response)
+  saveRDS(fit, file.path(ensure_dir(file.path(a$out, "fits_brms")), paste0(layer, "_", gsub("[^A-Za-z0-9]", "_", response), ".rds")))
 
 extract_effects <- function(fit, layer, response, frame) {
   dr <- as.data.frame(fit)
@@ -27,10 +28,7 @@ extract_effects <- function(fit, layer, response, frame) {
 }
 
 if (grepl("A", a$layer)) {
-  fa <- layer_a_frame(read.csv(file.path(a$out, "neg_summaries.csv")),
-                      read.csv(file.path(a$out, "neg_emd.csv")), tt, cfg$technical_markers)
-  fa <- fa[fa$is_neg, ]
-  fa$instrument <- relevel(fa$instrument, ref = ref)
+  fa <- read_layer_a(a$out, cfg, tt, ref); fa <- fa[fa$is_neg, ]
   for (key in unique(paste(fa$marker, fa$statistic, sep = ":"))) {
     d <- fa[paste(fa$marker, fa$statistic, sep = ":") == key, ]
     d$y <- as.numeric(scale(d$value))          # standardised so priors are comparable across statistics
@@ -43,18 +41,13 @@ if (grepl("A", a$layer)) {
                      control = list(adapt_delta = 0.95))
     e <- extract_effects(fit, "A", key, d); e$value <- e$value * sc   # back to the data scale
     eff[[length(eff) + 1L]] <- e
-    s <- as.data.frame(brms::VarCorr(fit)$acq_day$sd); sp <- as.data.frame(brms::VarCorr(fit)$patient$sd)
-    fits_summary[[length(fits_summary) + 1L]] <- data.frame(layer = "A", response = key, n = nrow(d),
-      tau_day = s$Estimate * sc, tau_patient = sp$Estimate * sc, sigma = summary(fit)$spec_pars["sigma", "Estimate"] * sc,
-      max_rhat = max(brms::rhat(fit), na.rm = TRUE), n_divergent = brms::nuts_params(fit) |>
-        subset(Parameter == "divergent__") |> (\(x) sum(x$Value))(), stringsAsFactors = FALSE)
-    saveRDS(fit, file.path(ensure_dir(file.path(a$out, "fits_brms")), paste0("A_", gsub("[^A-Za-z0-9]", "_", key), ".rds")))
+    fits_summary[[length(fits_summary) + 1L]] <- brms_fit_row(fit, "A", key, nrow(d), scale = sc)
+    save_fit(fit, "A", key)
   }
 }
 
 if (grepl("B", a$layer)) {
-  fb <- layer_b_frame(read.csv(file.path(a$out, "gated_frequencies.csv")))
-  fb$instrument <- relevel(fb$instrument, ref = ref)
+  fb <- read_layer_b(a$out, ref)
   for (resp in unique(fb$response)) {
     d <- fb[fb$response == resp, ]
     cat("\n[B]", resp, "n =", nrow(d), "\n")
@@ -65,12 +58,8 @@ if (grepl("B", a$layer)) {
                      chains = a$chains, iter = max(a$iter, 4000), cores = a$cores, refresh = 0, silent = 2,
                      control = list(adapt_delta = 0.99, max_treedepth = 12))   # beta-binomial with patient slopes needs it
     eff[[length(eff) + 1L]] <- extract_effects(fit, "B", resp, d)
-    s <- as.data.frame(brms::VarCorr(fit)$acq_day$sd); sp <- as.data.frame(brms::VarCorr(fit)$patient$sd)
-    fits_summary[[length(fits_summary) + 1L]] <- data.frame(layer = "B", response = resp, n = nrow(d),
-      tau_day = s$Estimate, tau_patient = sp$Estimate[1], sigma = NA,
-      max_rhat = max(brms::rhat(fit), na.rm = TRUE), n_divergent = brms::nuts_params(fit) |>
-        subset(Parameter == "divergent__") |> (\(x) sum(x$Value))(), stringsAsFactors = FALSE)
-    saveRDS(fit, file.path(ensure_dir(file.path(a$out, "fits_brms")), paste0("B_", gsub("[^A-Za-z0-9]", "_", resp), ".rds")))
+    fits_summary[[length(fits_summary) + 1L]] <- brms_fit_row(fit, "B", resp, nrow(d))
+    save_fit(fit, "B", resp)
   }
 }
 # one effects file per layer so a layer can be refitted alone without losing the other

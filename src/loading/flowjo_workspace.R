@@ -437,42 +437,6 @@ gate_display_label <- function(path) {
 }
 
 # -----------------------------------------------------------------------------
-# Every file name a workspace refers to, from the XML alone.
-#
-# The union of two things, because CytoML will match on either:
-#   * each <DataSet uri>'s base name — the file FlowJo opened when gating;
-#   * each sample's NAME — the editable label, which greedy_match compares
-#     against the $FIL keyword stored inside the file.
-#
-# xml2 only: no CytoML, no GatingSet, no FCS reads. That is what lets the FCS
-# name-sync tool consult it before deciding whether a rewrite is safe, without
-# dragging the cytometry stack into a keyword editor.
-#
-# Returns a character vector, lower-cased and de-duplicated, or an empty one for
-# any workspace that will not parse — a check is a nicety and must never be the
-# reason a tool refuses to run.
-# -----------------------------------------------------------------------------
-wsp_referenced_names <- function(wsp_paths) {
-  if (!requireNamespace("xml2", quietly = TRUE)) return(character(0))
-  out <- unlist(lapply(wsp_paths, function(p) {
-    tryCatch({
-      doc <- xml2::read_xml(p)
-      uris <- xml2::xml_attr(xml2::xml_find_all(doc, "//DataSet"), "uri")
-      uris <- uris[!is.na(uris)]
-      base <- if (length(uris))
-        path_basename(vapply(uris, utils::URLdecode, character(1),
-                             USE.NAMES = FALSE)) else character(0)
-      # Sample labels live on the <SampleNode> under each <Sample>; the
-      # top-level node is the sample, deeper ones are gates.
-      nodes <- xml2::xml_attr(
-        xml2::xml_find_all(doc, "//Sample/SampleNode"), "name")
-      c(base, nodes[!is.na(nodes)])
-    }, error = function(e) character(0))
-  }), use.names = FALSE)
-  unique(tolower(out[nzchar(out)]))
-}
-
-# -----------------------------------------------------------------------------
 # Resolve --group against one workspace. `group` is a character string holding
 # EITHER an integer index (the original meaning, unchanged) OR a group name.
 #

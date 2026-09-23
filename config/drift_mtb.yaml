@@ -1,5 +1,25 @@
-# Configuration for the MTB acquisition-drift analysis (docs/plans/mtb_batch_drift_plan.md).
-# Every script under scripts/mtb_drift/ reads this file; paths are given on the command line.
+# Cohort configuration for the acquisition-drift analysis (docs/plans/mtb_batch_drift_plan.md):
+# the MTB ICS cohort. Every script under scripts/drift/ takes this file as --config; data and
+# result paths are given on the command line. Copy and edit it for another cohort.
+
+cohort: "MTB ICS cohort"
+
+# Where the biological metadata of each tube comes from. Step 1 first looks for a sample sheet
+# (--sample_sheet, CSV with a `filename` column plus the fields below) and otherwise parses the
+# file name with this regex. Named groups become columns of tubes.csv. Later steps need
+# `patient`, `cocktail` and `is_neg`; layer B additionally needs `prior_vacc` and `week`.
+# The MTB field called "batch" is PRIOR VACCINATION STATUS (2 = previously vaccinated), never a batch.
+tubes:
+  filename_regex: "^MTB(?<patient>\\d+)_(?<prior_vacc>\\d+)_V(?<vaccine>\\d+)W(?<week>\\d+)_(?<cocktail>.+)$"
+  integer_fields: [patient, prior_vacc, vaccine, week]
+  # A tube whose `cocktail` matches this regex is the unstimulated (neg) tube; its cocktail is set to "neg".
+  neg_regex: "neg$"
+
+# Instrument label from the FCS $CYT keyword: the first key found in $CYT (case-insensitive) gives
+# the label; unmatched $CYT strings are kept with non-alphanumerics removed.
+instrument_labels:
+  Symphony: "FACSymphonyA1"
+  Canto: "FACSCantoII"
 
 # Canonical marker names, matched case-insensitively against $PnS (marker) and $PnN (channel).
 # The first regex that hits wins. Scatter and time are kept by channel name.
@@ -30,7 +50,7 @@ arcsinh_cofactor: 150
 # FlowJo gating tree (listed 2026-09-21): /Lymphocytes/Single Cells/Live cells/{CD4,CD8}/{CD107a,IFNy|INFy,IL-2,TNF}
 # FlowJo population from which neg summaries are taken. Matched as a suffix of the full gate path,
 # so "Single Cells/Live" matches "/Lymphocytes/Single Cells/Live". Set after listing the tree
-# with `scripts/mtb_drift/04_neg_summaries.R --list_populations`.
+# with `scripts/drift/04_neg_summaries.R --list_populations`.
 neg_population: "Live cells"
 # Parent populations for frequencies, and the regex that identifies a cytokine-positive child gate.
 parent_populations:

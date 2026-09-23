@@ -31,6 +31,3 @@ model {
   sigma ~ normal(0, 1);
   y ~ normal(alpha + a_p[patient] + c_d[day] + b_instr * instr, sigma);
 }
-generated quantities {
-  real drift_to_biology = tau_d / tau_p;
-}

@@ -4,30 +4,26 @@
 #   rule 1: P(|effect| > replicate SD) >= replicate_noise_prob  -> "detected"
 #   rule 2: removing the effect flips positivity calls (layer B)  -> "correct"
 # Also compares every fitter (brms, stan, bayesflow_v1, bayesflow_v2) against brms.
-#   Rscript scripts/mtb_drift/09_decision.R --out DIR [--primary brms]
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
-usage <- "09_decision.R --out DIR [--config FILE] [--primary brms]"
-a <- parse_args(list(out = "", config = file.path(REPO, "config", "mtb_drift.yaml"), primary = "brms"), usage = usage)
+usage <- "09_decision.R --out DIR --config FILE [--primary brms]"
+a <- parse_args(list(out = "", config = "", primary = "brms"), usage = usage)
 cfg <- read_drift_config(a$config)
 tt <- read.csv(file.path(a$out, "tubes.csv"), stringsAsFactors = FALSE)
 
-eff_files <- list.files(a$out, "^effects_.*\\.csv$", full.names = TRUE)
-if (!length(eff_files)) stop("no effects_*.csv in ", a$out, "; run step 6 first")
-eff <- do.call(rbind, lapply(eff_files, read.csv, stringsAsFactors = FALSE))
+eff <- read_effects(a$out)
+if (is.null(eff)) stop("no effects_*.csv in ", a$out, "; run step 6 first")
 models <- unique(eff$model)
 cat("posteriors found from:", paste(models, collapse = ", "), "\n")
 if (!a$primary %in% models) stop("primary model ", a$primary, " has no effects file")
 prim <- eff[eff$model == a$primary, ]
 
-# --- replicate noise -----------------------------------------------------------------------
-fa_all <- layer_a_frame(read.csv(file.path(a$out, "neg_summaries.csv")), read.csv(file.path(a$out, "neg_emd.csv")),
-                        tt, cfg$technical_markers)
-rep_a <- layer_a_replicate_sd(fa_all)                       # NA when step 4 ran on negs only
-fb <- layer_b_frame(read.csv(file.path(a$out, "gated_frequencies.csv")))
+# replicate noise
+rep_a <- layer_a_replicate_sd(read_layer_a(a$out, cfg, tt))   # NA when step 4 ran on negs only
+fb <- read_layer_b(a$out)
 rep_b <- do.call(rbind, lapply(split(fb, fb$response), function(d) data.frame(
   response = d$response[1], replicate_sd = replicate_sd(qlogis(pmin(pmax(d$pct / 100, 1e-6), 1 - 1e-6)), d$patient_day))))
 
-# --- decisions -----------------------------------------------------------------------------
+# decisions
 rows <- list()
 for (key in unique(paste(prim$layer, prim$response, prim$term, prim$level, sep = "|"))) {
   d <- prim[paste(prim$layer, prim$response, prim$term, prim$level, sep = "|") == key, ]
@@ -53,14 +49,14 @@ decisions <- do.call(rbind, rows)
 decisions <- decisions[order(decisions$layer, decisions$term, -abs(decisions$effect_mean)), ]
 write_table(decisions, file.path(a$out, "decisions.csv"))
 
-# --- headline -----------------------------------------------------------------------------
+# headline
 cat("\n=== Instrument contrast ===\n")
 print(decisions[decisions$term == "instrument", c("layer", "response", "effect_mean", "ci_low", "ci_high", "p_exceeds_noise", "positivity_flips", "verdict")], row.names = FALSE)
 cat("\n=== Days detected above replicate noise ===\n")
 dd <- decisions[decisions$term == "day" & grepl("^detected", decisions$verdict), ]
 if (nrow(dd)) print(dd[, c("layer", "response", "level", "n_tubes", "effect_mean", "positivity_flips", "verdict")], row.names = FALSE) else cat("none\n")
 
-# --- gate drift diagnostic (rank 3): do CD4/CD8 gate bounds move with day or instrument? --
+# gate drift diagnostic (rank 3): do CD4/CD8 gate bounds move with day or instrument?
 gb_path <- file.path(a$out, "gate_bounds.csv")
 if (file.exists(gb_path) && file.size(gb_path) > 5) {
   gb <- merge(read.csv(gb_path), tt[, c("filename", "patient", "acq_day", "instrument")], by = "filename")
@@ -82,12 +78,12 @@ if (file.exists(gb_path) && file.size(gb_path) > 5) {
   write_table(gd, file.path(a$out, "gate_drift.csv"))
 }
 
-# --- fitter agreement ---------------------------------------------------------------------
+# fitter agreement
 cmp <- do.call(rbind, lapply(setdiff(models, a$primary), function(m) compare_effects(eff, a$primary, m)))
 if (!is.null(cmp)) {
   write_table(cmp, file.path(a$out, "fitter_agreement.csv"))
   cat("\n=== Agreement with", a$primary, "(posterior mean inside its 95% interval) ===\n")
-  print(aggregate(agree ~ model_b + layer + term, cmp, function(x) sprintf("%d/%d", sum(x), length(x))), row.names = FALSE)
+  print(agreement_table(cmp), row.names = FALSE)
 }
 # BayesFlow acceptance checks (plan section 6.3). With one neg tube per patient-day most day
 # effects are only weakly identified by ANY method, so recovery R2 is reported but not gated on;

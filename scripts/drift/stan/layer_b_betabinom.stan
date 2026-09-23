@@ -28,7 +28,6 @@ transformed parameters {
   vector[C] s_c = tau_c * z_c;
 }
 model {
-  vector[N] eta;
   alpha ~ normal(-5, 2.5);
   b_instr ~ normal(0, 1);
   b_vacc ~ normal(0, 1);
@@ -36,14 +35,9 @@ model {
   z_p ~ std_normal(); z_w ~ std_normal(); z_d ~ std_normal(); z_c ~ std_normal();
   tau_p ~ normal(0, 1); tau_w ~ normal(0, 1); tau_d ~ normal(0, 1); tau_c ~ normal(0, 1);
   phi ~ gamma(2, 0.02);
-  for (n in 1:N)
-    eta[n] = alpha + a_p[patient[n]] + w_p[patient[n]] * week_c[n] + c_d[day[n]]
-             + s_c[cocktail[n]] + b_instr * instr[n] + b_vacc * prior_vacc[n];
   for (n in 1:N) {
-    real m = inv_logit(eta[n]);
+    real m = inv_logit(alpha + a_p[patient[n]] + w_p[patient[n]] * week_c[n] + c_d[day[n]]
+                       + s_c[cocktail[n]] + b_instr * instr[n] + b_vacc * prior_vacc[n]);
     k[n] ~ beta_binomial(n_parent[n], m * phi, (1 - m) * phi);
   }
-}
-generated quantities {
-  real drift_to_biology = tau_d / tau_p;
 }

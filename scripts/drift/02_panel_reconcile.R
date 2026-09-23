@@ -1,9 +1,8 @@
 #!/usr/bin/env Rscript
 # Step 2: map every file's channels to canonical markers; flag missing markers.
-#   Rscript scripts/mtb_drift/02_panel_reconcile.R --out <results_dir>   (needs tubes.csv from step 1)
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
-usage <- "02_panel_reconcile.R --out DIR [--config FILE]"
-a <- parse_args(list(out = "", config = file.path(REPO, "config", "mtb_drift.yaml")), usage = usage)
+usage <- "02_panel_reconcile.R --out DIR --config FILE"
+a <- parse_args(list(out = "", config = ""), usage = usage)
 cfg <- read_drift_config(a$config)
 
 tt <- read.csv(file.path(a$out, "tubes.csv"), stringsAsFactors = FALSE)

@@ -1,8 +1,9 @@
 ---
-title: "MTB ICS cohort: acquisition drift and instrument shift"
+title: "`r params$cohort`: acquisition drift and instrument shift"
 output: html_document
 params:
   out: "results"
+  cohort: "cohort"
 ---
 
 ```{r setup, include=FALSE}
@@ -10,11 +11,11 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 library(ggplot2)
 out <- params$out
 rd <- function(f) if (file.exists(file.path(out, f))) read.csv(file.path(out, f), stringsAsFactors = FALSE) else NULL
-tt <- rd("tubes.csv"); dec <- rd("decisions.csv"); eff_files <- list.files(out, "^effects_.*csv$", full.names = TRUE)
-eff <- do.call(rbind, lapply(eff_files, read.csv))
+source(file.path(dirname(knitr::current_input(dir = TRUE)), "..", "..", "src", "harmonization", "drift", "drift_models.R"))
+tt <- rd("tubes.csv"); dec <- rd("decisions.csv"); eff <- read_effects(out)
 ```
 
-Plan: `docs/plans/mtb_batch_drift_plan.md`. The file-name field `batch` is prior vaccination status and is a protected covariate throughout.
+Plan: `docs/plans/mtb_batch_drift_plan.md`. Prior vaccination status (`prior_vacc`) and week are protected covariates throughout.
 
 ## Design
 
@@ -75,7 +76,7 @@ knitr::kable(rd("lme4_variance_components.csv"), digits = 4)
 ## Fitter agreement and BayesFlow acceptance
 
 ```{r}
-fa <- rd("fitter_agreement.csv"); if (!is.null(fa)) knitr::kable(aggregate(agree ~ model_b + layer + term, fa, function(x) sprintf("%d/%d", sum(x), length(x))))
+fa <- rd("fitter_agreement.csv"); if (!is.null(fa)) knitr::kable(agreement_table(fa))
 for (v in c("v1", "v2")) { r <- rd(sprintf("bf_%s_recovery.csv", v)); if (!is.null(r)) print(knitr::kable(merge(r, rd(sprintf("bf_%s_sbc.csv", v))), digits = 3, caption = paste("BayesFlow", v))) }
 p <- rd("bf_v2_ppc.csv"); if (!is.null(p)) cat(sprintf("BayesFlow v2 posterior predictive: %.2f of real neg medians inside the 90%% band\n", mean(tolower(p$inside_90) == "true")))
 tm <- list.files(out, "bf_v._timing.json", full.names = TRUE); for (f in tm) cat(basename(f), ":", readLines(f), "\n")

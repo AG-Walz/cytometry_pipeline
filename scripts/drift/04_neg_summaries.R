@@ -1,31 +1,25 @@
 #!/usr/bin/env Rscript
 # Step 4, layer A: per-neg-tube marker summaries on the compensated arcsinh scale, EMD to the
 # reference distribution, and CD4/CD8 gate bounds read from the workspaces.
-#   Rscript scripts/mtb_drift/04_neg_summaries.R --wsp_dir DIR --fcs_dir DIR --out DIR [--list_populations]
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
-usage <- "04_neg_summaries.R --wsp_dir DIR --fcs_dir DIR --out DIR [--config FILE] [--list_populations] [--all_tubes]"
+usage <- "04_neg_summaries.R --wsp_dir DIR --fcs_dir DIR --out DIR --config FILE [--list_populations] [--all_tubes]"
 a <- parse_args(list(wsp_dir = "", fcs_dir = "", out = "",
-                     config = file.path(REPO, "config", "mtb_drift.yaml"),
+                     config = "",
                      list_populations = FALSE, all_tubes = FALSE), usage = usage)
 cfg <- read_drift_config(a$config)
 need_packages(c("CytoML", "flowWorkspace", "flowCore"))
 
 tt <- read.csv(file.path(a$out, "tubes.csv"), stringsAsFactors = FALSE)
 pm <- read.csv(file.path(a$out, "panel_map.csv"), stringsAsFactors = FALSE)
-excl <- if (file.exists(file.path(a$out, "excluded_tubes.csv")))
-  read.csv(file.path(a$out, "excluded_tubes.csv"))$filename else character(0)
-wsps <- list.files(a$wsp_dir, "\\.wsp$", full.names = TRUE, recursive = TRUE, ignore.case = TRUE)
+excl <- excluded_tubes(a$out)
+wsps <- list_workspaces(a$wsp_dir)
 sigs <- read.csv(file.path(a$out, "panel_signatures.csv"), stringsAsFactors = FALSE)
-if (!length(wsps)) stop("no .wsp under ", a$wsp_dir)
 
 summ <- list(); emds <- list(); gates <- list(); pops_seen <- character(0)
 fluor <- setdiff(c(cfg$technical_markers, cfg$cytokine_markers), c("FSC_A", "SSC_A"))
 
 for (w in wsps) {
-  cat("\nWorkspace", basename(w), "\n")
-  gsl <- tryCatch(load_workspace_gatingsets(w, a$fcs_dir, signatures = sigs), error = function(e) {
-    cat("  FAILED:", conditionMessage(e), "\n"); list() })
-  for (gs in gsl) for (s in flowWorkspace::sampleNames(gs)) {
+  for (gs in open_workspace(w, a$fcs_dir, sigs)) for (s in flowWorkspace::sampleNames(gs)) {
     gh <- gs[[s]]
     fn <- gh_filename(gh)
     row <- tt[tt$filename == fn, ]
@@ -39,7 +33,6 @@ for (w in wsps) {
     channel_map <- setNames(cm$channel, cm$canonical)
     m <- population_matrix(gh, node, channel_map, n_max = cfg$n_cells_summary, seed = cfg$seed)
     for (mk in intersect(fluor, colnames(m))) m[, mk] <- asinh_cof(m[, mk], cfg$arcsinh_cofactor)
-    # summaries
     for (mk in colnames(m)) {
       s1 <- marker_summary(m[, mk], probs = unlist(cfg$quantiles), valley = mk %in% cfg$bimodal_markers)
       summ[[length(summ) + 1L]] <- cbind(filename = fn, marker = mk, s1, stringsAsFactors = FALSE)
@@ -73,8 +66,8 @@ gates_df <- if (length(gates)) do.call(rbind, gates) else data.frame()
 write_table(summary_df, file.path(a$out, "neg_summaries.csv"))
 write_table(gates_df, file.path(a$out, "gate_bounds.csv"))
 
-# EMD of every neg tube to the reference: pooled reference-instrument negs of the same
-# patient (excluding itself) when available, else pooled reference-instrument negs overall.
+# EMD of every neg tube to pooled reference-instrument negs: those of the same patient
+# (excluding itself) when available, else all of them.
 cells <- list.files(file.path(a$out, "neg_cells"), "\\.csv\\.gz$", full.names = TRUE)
 names(cells) <- sub("\\.csv\\.gz$", "", basename(cells))
 mats <- lapply(cells, function(f) as.matrix(read.csv(gzfile(f), check.names = FALSE)))
