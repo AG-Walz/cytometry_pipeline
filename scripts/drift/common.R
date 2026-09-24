@@ -45,7 +45,17 @@ read_drift_config <- function(path) {
   cfg <- yaml::read_yaml(path)
   for (k in c("tubes", "instrument_labels", "markers", "reference_instrument"))
     if (is.null(cfg[[k]])) stop("config lacks the `", k, "` block; see config/drift_mtb.yaml", call. = FALSE)
+  # configs written before the design block get the MTB layout without protected covariates
+  if (is.null(cfg$design)) cfg$design <- default_design()
+  else cfg$design <- modifyList(default_design(), cfg$design)
   cfg
+}
+
+#' Every column named in cfg$design must exist in tubes.csv (`tubes`).
+check_design <- function(cfg, tubes) {
+  miss <- setdiff(design_columns(cfg), names(tubes))
+  if (length(miss)) stop("design columns missing from tubes.csv: ", paste(miss, collapse = ", "), call. = FALSE)
+  invisible(TRUE)
 }
 
 #' File names excluded by step 3, or none when it has not run.

@@ -37,7 +37,30 @@ markers:
   TNFa:     ["TNF", "^Pacific Blue-A$"]
   CD107a:   ["CD107", "^FITC-A$"]
 
-# Markers whose distribution in an unstimulated (neg) tube should not depend on vaccination.
+# Study design (plan section 4). Model formulas are assembled from these fields by
+# design_formula() in src/harmonization/drift/drift_models.R, so a new cohort edits this block and
+# never the R code. Every name is a column of tubes.csv.
+design:
+  unit: patient                     # repeated-measures unit: random intercept in every model
+  technical: [acq_day, instrument]  # acq_day: random intercept; instrument: fixed factor against reference_instrument
+  protected_fixed: [prior_vacc]     # biology that must never be absorbed into a technical term (factor)
+  time: week                        # per-unit slope, centred and in years; background and endpoint classes only
+  stimulation: cocktail             # random intercept; endpoint class only
+
+# Response classes (one model builder, the class picks covariates and family):
+#   technical  (layer A):  neg tubes, technical_markers; assumed free of biology, which
+#                          06_lme4.R tests by refitting with the protected covariates (assumption_check.csv)
+#   background (layer BG): neg tubes, cytokine gate counts (beta-binomial) and cytokine median
+#                          intensity (gaussian); full design, biology allowed
+#   endpoint   (layer B):  stimulated tubes minus matched control; full design
+
+# Control (neg) matching for background subtraction: exact match on match_keys first, then the
+# fallbacks in order. The level used is recorded per row in gated_frequencies.csv (neg_match).
+controls:
+  match_keys: [patient, week]
+  fallbacks: [same_patient_day, same_patient_reference_instrument, pooled_reference_instrument]
+
+# Markers whose distribution in an unstimulated (neg) tube should not depend on the biology.
 technical_markers: ["FSC_A", "SSC_A", "LiveDead", "CD4", "CD8"]
 # Cytokine channels: analysed as background level in negs, as response in cocktail tubes.
 cytokine_markers: ["IFNg", "IL2", "TNFa", "CD107a"]
