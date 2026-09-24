@@ -59,7 +59,9 @@ design_formula <- function(cfg, class = c("technical", "background_counts", "bac
   if (class != "technical") {
     fixed <- c(fixed, unlist(ds$protected_fixed))
     if (!is.null(ds$time)) {
-      if (class == "background_intensity") fixed <- c(fixed, "week_c") else unit_re <- sprintf("(1 + week_c | %s)", ds$unit)
+      # population week slope as a fixed term; the count classes also get a per-unit slope around it
+      fixed <- c(fixed, "week_c")
+      if (counts) unit_re <- sprintf("(1 + week_c | %s)", ds$unit)
     }
   }
   terms <- c(fixed, unit_re, sprintf("(1 | %s)", setdiff(tech, "instrument")))
@@ -84,14 +86,14 @@ fixed_terms_table <- function(frame, vars) {
 }
 
 #' Fixed design terms of one class, as they appear in the model formula:
-#' the instrument factor, the protected covariates and, for the intensity
-#' class, week_c. Order matches design_formula().
+#' the instrument factor, the protected covariates and week_c. Order matches
+#' design_formula().
 design_fixed_vars <- function(cfg, class) {
   ds <- cfg$design
   vars <- intersect("instrument", unlist(ds$technical))
   if (class != "technical") {
     vars <- c(vars, unlist(ds$protected_fixed))
-    if (class == "background_intensity" && !is.null(ds$time)) vars <- c(vars, "week_c")
+    if (!is.null(ds$time)) vars <- c(vars, "week_c")
   }
   vars
 }

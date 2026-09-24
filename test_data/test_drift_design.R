@@ -46,17 +46,17 @@ cat("design_formula\n")
 check("technical / brms", fstr(design_formula(cfg, "technical", "brms")) == "y ~ 1 + instrument + (1 | patient) + (1 | acq_day)")
 check("technical / lme4 with lhs", fstr(design_formula(cfg, "technical", "lme4", "value")) == "value ~ 1 + instrument + (1 | patient) + (1 | acq_day)")
 check("background_counts / brms", fstr(design_formula(cfg, "background_counts", "brms")) ==
-      "count | trials(parent_count) ~ 1 + instrument + prior_vacc + (1 + week_c | patient) + (1 | acq_day)")
+      "count | trials(parent_count) ~ 1 + instrument + prior_vacc + week_c + (1 + week_c | patient) + (1 | acq_day)")
 check("background_counts / lme4", fstr(design_formula(cfg, "background_counts", "lme4")) ==
-      "cbind(count, parent_count - count) ~ 1 + instrument + prior_vacc + (1 + week_c | patient) + (1 | acq_day) + (1 | filename)")
+      "cbind(count, parent_count - count) ~ 1 + instrument + prior_vacc + week_c + (1 + week_c | patient) + (1 | acq_day) + (1 | filename)")
 check("background_intensity / brms", fstr(design_formula(cfg, "background_intensity", "brms")) ==
       "y ~ 1 + instrument + prior_vacc + week_c + (1 | patient) + (1 | acq_day)")
 check("background_intensity / lme4", fstr(design_formula(cfg, "background_intensity", "lme4", "value")) ==
       "value ~ 1 + instrument + prior_vacc + week_c + (1 | patient) + (1 | acq_day)")
 check("endpoint / brms", fstr(design_formula(cfg, "endpoint", "brms")) ==
-      "count | trials(parent_count) ~ 1 + instrument + prior_vacc + (1 + week_c | patient) + (1 | acq_day) + (1 | cocktail)")
+      "count | trials(parent_count) ~ 1 + instrument + prior_vacc + week_c + (1 + week_c | patient) + (1 | acq_day) + (1 | cocktail)")
 check("endpoint / lme4", fstr(design_formula(cfg, "endpoint", "lme4")) ==
-      "cbind(count, parent_count - count) ~ 1 + instrument + prior_vacc + (1 + week_c | patient) + (1 | acq_day) + (1 | cocktail) + (1 | filename)")
+      "cbind(count, parent_count - count) ~ 1 + instrument + prior_vacc + week_c + (1 + week_c | patient) + (1 | acq_day) + (1 | cocktail) + (1 | filename)")
 check("default design: endpoint without biology", fstr(design_formula(cfg_min, "endpoint", "brms")) ==
       "count | trials(parent_count) ~ 1 + instrument + (1 | patient) + (1 | acq_day) + (1 | cocktail)")
 cfg2 <- cfg; cfg2$design$protected_fixed <- c("prior_vacc", "sex"); cfg2$design$technical <- c("acq_day", "run", "instrument")
@@ -65,7 +65,7 @@ check("several protected and technical terms", fstr(design_formula(cfg2, "backgr
 check("unknown class refused", inherits(try(design_formula(cfg, "nonsense"), silent = TRUE), "try-error"))
 check("design_fixed_vars per class", identical(design_fixed_vars(cfg, "technical"), "instrument") &&
       identical(design_fixed_vars(cfg, "background_intensity"), c("instrument", "prior_vacc", "week_c")) &&
-      identical(design_fixed_vars(cfg, "endpoint"), c("instrument", "prior_vacc")))
+      identical(design_fixed_vars(cfg, "endpoint"), c("instrument", "prior_vacc", "week_c")))
 ft <- fixed_terms_table(fr, c("instrument", "prior_vacc", "week_c"))
 check("fixed_terms_table: K-1 instrument rows, factor levels, numeric term",
       identical(ft$coef, c("instrumentAurora", "instrumentSymph", "prior_vacc2", "week_c")) &&

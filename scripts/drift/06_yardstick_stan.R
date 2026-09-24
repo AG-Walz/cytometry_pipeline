@@ -22,6 +22,7 @@ eff <- list(); covs <- list()
 # columns back to term and level. Unused factor levels are dropped first so K is exact.
 design_matrix <- function(d, class) {
   vars <- design_fixed_vars(cfg, class)
+  if (class %in% c("background_counts", "endpoint")) vars <- setdiff(vars, "week_c")   # mu_week in design_betabinom.stan
   for (v in vars) if (is.factor(d[[v]])) d[[v]] <- droplevels(d[[v]])
   ft <- fixed_terms_table(d, vars)
   X <- if (length(vars)) model.matrix(as.formula(paste("~", paste(vars, collapse = " + "))), d)[, -1, drop = FALSE]
