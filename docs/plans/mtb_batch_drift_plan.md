@@ -226,6 +226,17 @@ BayesFlow, both variants fail the acceptance gate and the decision rests on the 
 
 What was learnt about BayesFlow here: it delivers calibrated posteriors and, in v2, a real single-cell view of the instrument shift, but with one neg tube per patient-day no method identifies day effects well, and the simulator quality, not the inference engine, is the limiting factor. It is not the right primary tool for this cohort. It would earn its place as a per-file QC scorer for future acquisitions once the v2 simulator reproduces the real neg distributions.
 
+### Results of the development-box rerun (2026-09-24)
+
+Full outputs: `/mnt/volume/data/MTB_FACS/results_mtb_drift_2026-09-24/` (`report.html`, `decisions.csv`, `run_all.log`). Steps 6a to 10 on the Sep 21 step 1 to 4 outputs and the rematched step 5 table; brms with 4 chains on 8 cores took 1 h 30 min, Stan 12 min.
+
+- Convergence: layer A 19 fits, layer BG 12 fits, no divergent transitions, R-hat at or below 1.02. Layer B: CD4 TNFa reached R-hat 1.10 and CD8 IFNg had 19 divergent transitions with the new per-patient week slope; rerun those two with more iterations before quoting their day effects.
+- Agreement brms against Stan: 423 of 423 layer A, 272 of 272 layer BG, 182 of 184 layer B day effects.
+- Layer A: one verdict changed against Sep 21 (CD4 EMD on 2023-11-16, posterior probability 0.960 against the 0.95 threshold); posterior means moved by at most 0.12 posterior SDs, which is Monte Carlo noise.
+- Layer B: no instrument effect detected. Nine day effects pass rule 1 (four on Sep 21), driven by the empirical-logit replicate SD described in section 11.3; one flips two calls (CD4 IFNg on 2024-03-07), the rest flip none. Two Sep 21 detections (CD4 TNFa on 2024-03-07 and 2025-02-19) dropped below the threshold with the new formula.
+- Layer BG, new: no instrument shift in the neg cytokine frequencies. TNFa (+0.70) and CD107a (-0.48, arcsinh) intensities shift on the Symphony. One background day event is detected and relevant: CD8 IFNg background on 2023-07-05, +3.3 logit units, whose removal flips 15 positivity calls. Thirty of 92 neg cytokine intensity day effects exceed replicate noise, in line with the technical markers.
+- Decision unchanged: no instrument correction; day and instrument stay as covariates in the response model. New: the 2023-07-05 acquisition should be flagged in any per-call reporting of CD8 IFNg, and the two CD4 IFNg calls on 2024-03-07 are fragile.
+
 ## 10. Open items and assumptions
 
 - Cofactor and compensation: use the SPILL matrix in each file. Confirm the Symphony files carry a valid SPILL and that the Diva 9 export did not already apply it.
@@ -264,7 +275,11 @@ The `controls` block names the exact match keys and an ordered list of fallbacks
 
 `scripts/harmonize_marker_names.R` (module `src/metadata_qc/harmonize_marker_names.R`, base R) takes a census of `$PnN` and `$PnS` across a folder, plans canonical names from an alias map or the `markers` block of a cohort config, and writes them into the files with the keyword writer used by the FCS name sync tool: dry run by default, ledger and revert, event data untouched. Run before step 1, so the `markers` block only needs canonical names and step 2 becomes a check.
 
-### 11.6 Also changed
+### 11.6 Report figures
+
+The report (`10_report.Rmd`) explains the decisions visually with one consistent scheme: instruments are identities (reference first, blue then orange), verdicts are statuses (detected effects in colour, the rest grey, with a shape as second encoding), signed effects use a blue-grey-red diverging scale. Every effect is drawn in units of the same-day replicate SD of its response, so scatter, arcsinh and logit responses share one axis and the rule 1 threshold is the same dashed line everywhere. Figures: acquisition map (patient by day, coloured by instrument); instrument forest plot per layer on a pseudo-log axis; day-effect heatmap with a dot for rule 1 and the flip count for rule 2; flipped calls per day; neg cytokine frequency and intensity over time; protected covariate forest; assumption check; technical marker medians and EMD over time; gate positions per tube; day-to-patient variance ratio; fitter agreement in posterior-SD units.
+
+### 11.7 Also changed
 
 - The synthetic generator injects a background shift (instrument on CD8 TNFa, one day on CD4 IFNg) and a protected covariate effect, and writes them into `synthetic_truth.csv` with a layer column, so recovery tests cover the new class.
 - The BayesFlow scripts take K non-reference instruments; for the MTB cohort (K = 1) their outputs are unchanged.
