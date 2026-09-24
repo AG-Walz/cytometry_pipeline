@@ -8,7 +8,7 @@ Status: agreed on 2026-09-21 after a structured interview; scripts implemented t
 
 Over 2.5 years of acquisition, do the MTB intracellular cytokine staining (ICS) tubes carry non-biological variation attributable to acquisition day or to the cytometer, is it large enough to change a positivity call, and if so which correction is justified?
 
-The filename field called `batch` is prior BCG vaccination status (1 = first vaccination in the study, 2 = previously vaccinated). It is a biological covariate. It must be protected in every model and must never be passed to a correction method as a batch label.
+The filename field called `batch` is prior peptide vaccination status (1 = not peptide-vaccinated before the study, 2 = already peptide-vaccinated before the study). It is not BCG status and not time since vaccination. It is a biological covariate. It must be protected in every model and must never be passed to a correction method as a batch label.
 
 ## 2. What the data look like
 
@@ -178,13 +178,13 @@ bash scripts/drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift config/
 | 2 | `02_panel_reconcile.R` | `panel_map.csv`, `panel_signatures.csv`, `panel_gaps.csv` | base R, yaml | seconds (verified here) |
 | 3 | `03_tube_qc.R` | `qc.csv`, `excluded_tubes.csv` | flowCore, PeacoQC or flowAI | 30 min |
 | 4 | `04_neg_summaries.R --all_tubes` | `neg_summaries.csv`, `neg_emd.csv`, `gate_bounds.csv`, `neg_cells/*.csv.gz` | CytoML, flowWorkspace | 30 min. Run once with `--list_populations` first and set `neg_population` in the config |
-| 5 | `05_gated_frequencies.R` | `all_gate_counts.csv`, `gated_frequencies.csv` | CytoML, flowWorkspace | 30 min |
-| 6a | `06_yardstick_brms.R` | `effects_brms.csv`, `fits_brms_summary.csv`, `fits_brms/` | brms | 1 to 2 h |
-| 6b | `06_yardstick_stan.R` | `effects_stan.csv` | cmdstanr, `stan/*.stan` | 1 h |
-| 6c | `06_lme4.R` | `lme4_variance_components.csv` | lme4 | minutes |
+| 5 | `05_gated_frequencies.R` | `all_gate_counts.csv`, `gated_frequencies.csv` (with `neg_match` columns) | CytoML, flowWorkspace | 30 min |
+| 6a | `06_yardstick_brms.R` | `effects_brms_{A,BG,B}.csv`, `covariates_brms.csv`, `fits_brms_summary.csv`, `fits_brms/` | brms | 2 to 3 h |
+| 6b | `06_yardstick_stan.R` | `effects_stan_{A,BG,B}.csv`, `covariates_stan.csv` | cmdstanr, `stan/design_*.stan` | 1 h |
+| 6c | `06_lme4.R` | `lme4_variance_components.csv`, `assumption_check.csv` | lme4 | minutes |
 | 7 | `07_bayesflow_v1.py` | `effects_bayesflow_v1.csv`, `bf_v1_recovery.csv`, `bf_v1_sbc.csv`, `bf_v1_timing.json` | BayesFlow venv | hours (see timing note) |
 | 8 | `08_bayesflow_v2.py` | `effects_bayesflow_v2.csv`, `bf_v2_recovery.csv`, `bf_v2_sbc.csv`, `bf_v2_ppc.csv`, `bf_v2_timing.json` | BayesFlow venv, `neg_cells/` | overnight |
-| 9 | `09_decision.R` | `decisions.csv`, `gate_drift.csv`, `fitter_agreement.csv`, BayesFlow pass/fail printed | base R | minutes |
+| 9 | `09_decision.R` | `decisions.csv` (layers A, BG, B), `controls_summary.csv`, `gate_drift.csv`, `fitter_agreement.csv`, BayesFlow pass/fail printed | base R | under a minute |
 | 10 | `10_report.Rmd` | `report.html` | rmarkdown, ggplot2 | minutes |
 
 Steps 1 to 6 and 9 to 10 give a complete, defensible answer on their own. Steps 7 and 8 run afterwards and step 9 is repeated so the report includes them.
@@ -233,3 +233,39 @@ What was learnt about BayesFlow here: it delivers calibrated posteriors and, in 
 - The 13-parameter Symphony tubes (2 files) carry an extra `SP SSC-A` channel; it maps to nothing and is ignored. 172 files have no `$PnS` marker names at all, so channels are mapped by fluorochrome name, which is constant across the study (config `markers`).
 - Positivity thresholds 0.05 percent and 3 times background are the working assumption. Adjust in the config if the lab uses another rule.
 - No GPU anywhere. Variant 2 is sized for CPU. If training exceeds one night, reduce cells per tube to 1000 and simulations to 50k before changing the model.
+
+## 11. Generalisation of the workflow (2026-09-24)
+
+Motivation: the unstimulated tubes also contain cytokine-positive cells. The background enters every positivity call twice, through the subtraction and through the fold-over-neg rule, yet the first implementation used it only as a subtraction term and never asked whether the background itself drifted. On 2024-03-07 and 2025-02-19 the CD4 IFNg background in negs was seven to ten times its typical value, and CD8 TNFa background doubled on the Symphony. The background is also partly biological: prior peptide vaccination (the file-name field misnamed `batch`) can raise spontaneous cytokine production, so it cannot be treated like a lineage marker. Five changes make this explicit and remove the remaining cohort-specific code.
+
+### 11.1 The study design lives in the config
+
+The `design` block of the cohort YAML names the repeated-measures unit, the technical terms, the protected biological covariates, the time variable and the stimulation variable. `design_formula()` in `src/harmonization/drift/drift_models.R` assembles every brms, Stan and lme4 formula from it, and the instrument enters as a factor with K minus 1 contrasts against `reference_instrument`, so cohorts with three cytometers or different covariates edit the YAML and never the R code. A config without the block gets the previous defaults.
+
+### 11.2 Three response classes
+
+| Class | Layer code | Tubes | Responses | Biology in the model | Family |
+|---|---|---|---|---|---|
+| technical | A | neg | `technical_markers`: median, spread, EMD, valley, frac_pos | none, by assumption | gaussian |
+| background | BG | neg | cytokine gate counts within each parent; cytokine median intensity | protected covariates, time slope per unit | beta-binomial; gaussian |
+| endpoint | B | stimulated | cytokine gate counts within each parent | protected covariates, time slope per unit, stimulation | beta-binomial |
+
+The technical assumption is now tested rather than asserted: `06_lme4.R` refits every layer A response with the protected covariates and time added and writes `assumption_check.csv` (estimate, standard error, likelihood-ratio p value per covariate). Posterior summaries of the protected covariates are written to `covariates_brms.csv` and reported, never treated as drift.
+
+### 11.3 Background shifts reach the decision rule
+
+Layer BG effects go through rule 1 with a replicate SD taken from patient-days that carry more than one neg tube. For count responses (layers B and BG) the replicate SD is now computed on the empirical logit with a half-count correction, `logit((k + 0.5) / (n + 1))`, instead of a logit clipped at 1e-6. Neg gates often hold zero events, and the clipped value of about minus 14 had inflated the layer B replicate SDs to 1 to 2 logit units, so rule 1 was nearly impossible to pass; with the correction they are 0.5 to 1.0 and 13 instead of 4 layer B day effects pass rule 1 (see the 2026-09-24 results). Rule 2 is mirrored: for a day or instrument effect on the background, only the matched neg frequency of the affected stimulated tubes is shifted back and the positivity calls are recounted. A high-background day therefore shows up with a concrete cost in calls instead of being absorbed silently. The report gains a background section, the covariate table, the assumption check and the control-matching summary.
+
+### 11.4 Control matching is a policy
+
+The `controls` block names the exact match keys and an ordered list of fallbacks (same patient and day, the patient's pooled reference-instrument negs, all reference-instrument negs). A neg whose parent gate is empty counts as missing. The level used is recorded per row (`neg_match`, `neg_filename`, `neg_acq_day`, `neg_instrument`) and summarised in `controls_summary.csv`. In the MTB cohort this recovers the three tubes of patient 61 week 40 (neg excluded by QC) and the CD8 gate of patient 23 week 208 (empty CD8 gate in the workspace), which previously had no background.
+
+### 11.5 Marker names are harmonised once, upstream
+
+`scripts/harmonize_marker_names.R` (module `src/metadata_qc/harmonize_marker_names.R`, base R) takes a census of `$PnN` and `$PnS` across a folder, plans canonical names from an alias map or the `markers` block of a cohort config, and writes them into the files with the keyword writer used by the FCS name sync tool: dry run by default, ledger and revert, event data untouched. Run before step 1, so the `markers` block only needs canonical names and step 2 becomes a check.
+
+### 11.6 Also changed
+
+- The synthetic generator injects a background shift (instrument on CD8 TNFa, one day on CD4 IFNg) and a protected covariate effect, and writes them into `synthetic_truth.csv` with a layer column, so recovery tests cover the new class.
+- The BayesFlow scripts take K non-reference instruments; for the MTB cohort (K = 1) their outputs are unchanged.
+- New tests: `test_data/test_drift_design.R`, `test_data/test_drift_controls.R`, `test_data/test_harmonize_marker_names.R`.
