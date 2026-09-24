@@ -7,15 +7,17 @@ instruments) and the technical markers of the cohort config, all on the arcsinh 
   per marker k and patient p: mixture location(s) mu_pk (bimodal markers: two components with
   patient-specific positive fraction), component SDs s_k
   day drift:        c_d ~ N(0, tau_d) shared across markers, marker loading lam_k (lam_1 = 1)
-  instrument shift: b_instr_k ~ N(0, 1) per marker, additive; spread gain g_instr ~ logN(0, 0.2)
+  instrument shift: b_instr_kj ~ N(0, 1) per marker k and non-reference instrument j (KI of them),
+                    additive; spread gain g_instr ~ logN(0, 0.2) shared by all non-reference tubes
   cells:            n_cells per tube, drawn from the shifted mixture, plus 2 percent uniform debris
 
-Observable: (n_tubes, n_cells, K + 3) - cell values and compact tube codes (patient, day, instr).
+Observable: (n_tubes, n_cells, K + 2 + KI) - cell values and compact tube codes (patient, day,
+KI instrument dummies).
 Summary network: DeepSet over cells -> tube embedding, concatenated with tube codes,
 SetTransformer over tubes -> summary. Trained ONLINE (simulate on the fly), CPU.
 
-Inferred and reported: b_instr_k per marker (comparable to the layer A 'median' instrument
-effect for marker k) and c_d per day (comparable to the layer A 'median' day effects, scaled by
+Inferred and reported: b_instr_kj per marker and instrument (comparable to the layer A 'median'
+instrument effect for marker k) and c_d per day (comparable to the layer A 'median' day effects, scaled by
 the marker loading). Writes effects_bayesflow_v2.csv, bf_v2_recovery.csv, bf_v2_sbc.csv,
 bf_v2_ppc.csv (posterior predictive check on the real neg medians) and bf_v2_timing.json.
 
@@ -70,25 +72,33 @@ def main():
         a.epochs, a.batches_per_epoch, a.n_sbc, a.posterior_samples, a.n_cells, a.batch_size = 1, 4, 8, 100, 200, 4
     s = setup(a, "v2")
     rng, cfg, negs, P, D, N, pat, day, instr = s.rng, s.cfg, s.negs, s.P, s.D, s.N, s.pat, s.day, s.instr
-    days, instr_level, outdir, T = s.days, s.instr_level, s.outdir, s.T
+    days, instr_levels, KI, outdir, T = s.days, s.instr_levels, s.K_instr, s.outdir, s.T
     markers = [m for m in cfg["technical_markers"] if m not in ("FSC_A", "SSC_A")]  # fluorescence only
     bimodal = [m in cfg["bimodal_markers"] for m in markers]
     K = len(markers)
-    codes = np.stack([pat / max(P - 1, 1), day / max(D - 1, 1), instr], axis=1).astype("float32")  # (N, 3)
+    codes = np.concatenate([np.stack([pat / max(P - 1, 1), day / max(D - 1, 1)], axis=1), instr],
+                           axis=1).astype("float32")  # (N, 2 + KI)
+    NC = codes.shape[1]
     print(f"design: {N} tubes, {P} patients, {D} days, K={K} markers {markers}, {a.n_cells} cells/tube")
 
     # --- simulator -------------------------------------------------------------------------
+    # b_instr is drawn flat, marker-major (K * KI), so the adapter can concatenate it; it is
+    # reshaped to (K, KI) where used. Absent when KI = 0.
     def prior():
-        return dict(b_instr=rng.normal(0, 1, K), tau_d=abs(rng.normal(0, 0.5)), c_d=rng.normal(0, 1, D),
-                    lam=np.concatenate([[1.0], rng.normal(1, 0.3, K - 1)]),
-                    log_g_instr=rng.normal(0, 0.2))
+        out = dict(b_instr=rng.normal(0, 1, K * KI)) if KI else {}
+        out.update(tau_d=abs(rng.normal(0, 0.5)), c_d=rng.normal(0, 1, D),
+                   lam=np.concatenate([[1.0], rng.normal(1, 0.3, K - 1)]),
+                   log_g_instr=rng.normal(0, 0.2))
+        return out
 
-    def likelihood(b_instr, tau_d, c_d, lam, log_g_instr):
+    def likelihood(tau_d, c_d, lam, log_g_instr, b_instr=None):
         # patient biology: component means, positive fractions, component SDs
         mu_hi = rng.normal(3.5, 0.4, (P, K)); mu_lo = mu_hi - rng.uniform(2.0, 3.0, (P, K))
         frac = rng.beta(4, 5, (P, K)); sd = rng.uniform(0.3, 0.5, K)
-        shift = (tau_d * c_d[day])[:, None] * lam[None, :] + instr[:, None] * b_instr[None, :]   # (N, K)
-        gain = np.where(instr > 0, np.exp(log_g_instr), 1.0)[:, None]
+        shift = (tau_d * c_d[day])[:, None] * lam[None, :]                                        # (N, K)
+        if KI:
+            shift = shift + instr @ b_instr.reshape(K, KI).T
+        gain = np.where(instr.any(axis=1), np.exp(log_g_instr), 1.0)[:, None]
         cells = np.empty((N, a.n_cells, K), dtype="float32")
         for k in range(K):
             if bimodal[k]:
@@ -99,13 +109,14 @@ def main():
             cells[:, :, k] = loc + shift[:, k][:, None] + rng.normal(0, 1, (N, a.n_cells)) * sd[k] * gain
         debris = rng.random((N, a.n_cells)) < 0.02
         cells[debris] = rng.uniform(-1, 6, (debris.sum(), K)).astype("float32")
-        obs = np.concatenate([cells, np.broadcast_to(codes[:, None, :], (N, a.n_cells, 3))], axis=-1)
+        obs = np.concatenate([cells, np.broadcast_to(codes[:, None, :], (N, a.n_cells, NC))], axis=-1)
         return dict(obs=obs.astype("float32"))
 
     simulator = bf.make_simulator([prior, likelihood])
     adapter = (bf.Adapter().convert_dtype("float64", "float32")
                .constrain("tau_d", lower=0)
-               .concatenate(["b_instr", "tau_d", "c_d", "lam", "log_g_instr"], into="inference_variables")
+               .concatenate((["b_instr"] if KI else []) + ["tau_d", "c_d", "lam", "log_g_instr"],
+                            into="inference_variables")
                .rename("obs", "summary_variables"))
     workflow = bf.BasicWorkflow(
         simulator=simulator, adapter=adapter,
@@ -116,8 +127,9 @@ def main():
         workflow.fit_online(epochs=a.epochs, num_batches_per_epoch=a.batches_per_epoch, batch_size=a.batch_size)
     T.mark("train")
 
-    names = [f"b_instr[{m}]" for m in markers] + [f"c_d[{d}]" for d in days]
-    rec, _ = validate(workflow, simulator, a, names, K, D, "v2")
+    # marker-major, matching the flat b_instr; 'b_instr[<marker>]' when KI = 1 (existing file format)
+    names = [n for m in markers for n in instr_names(instr_levels, f"b_instr[{m}]")] + [f"c_d[{d}]" for d in days]
+    rec, _ = validate(workflow, simulator, a, names, K * KI, D, "v2")
     T.mark("validate")
 
     # --- real neg cells ------------------------------------------------------------------------
@@ -128,21 +140,22 @@ def main():
         m = m[np.isfinite(m).all(axis=1)]
         idx = rng.choice(len(m), a.n_cells, replace=len(m) < a.n_cells)
         real[i] = m[idx]
-    obs = np.concatenate([real, np.broadcast_to(codes[:, None, :], (N, a.n_cells, 3))], axis=-1)[None]
+    obs = np.concatenate([real, np.broadcast_to(codes[:, None, :], (N, a.n_cells, NC))], axis=-1)[None]
     ps = workflow.sample(conditions=dict(obs=obs), num_samples=a.posterior_samples)
-    b = ps["b_instr"].reshape(-1, K); cd = ps["tau_d"].reshape(-1, 1) * ps["c_d"].reshape(-1, D)
+    cd = ps["tau_d"].reshape(-1, 1) * ps["c_d"].reshape(-1, D)
+    b = ps["b_instr"].reshape(-1, K, KI) if KI else np.zeros((len(cd), K, 0))   # (draws, markers, instruments)
     lam = ps["lam"].reshape(-1, K)
     eff = []
     for k, mk in enumerate(markers):   # day effect on marker k = lam_k * c_d, so it matches the per-marker yardstick
-        eff.append(effects_long("bayesflow_v2", "A", f"{mk}:median", b[:, k], cd * lam[:, [k]], days, instr_level))
+        eff.append(effects_long("bayesflow_v2", "A", f"{mk}:median", b[:, k, :], cd * lam[:, [k]], days, instr_levels))
     eff = pd.concat(eff, ignore_index=True); eff.to_csv(os.path.join(a.out, "effects_bayesflow_v2.csv"), index=False)
 
     # posterior predictive: simulate from 100 posterior draws, compare real per-tube medians
     real_med = np.median(real, axis=1)                                      # (N, K)
     sims = []
     for j in rng.choice(a.posterior_samples, min(100, a.posterior_samples), replace=False):
-        s = likelihood(b[j], float(ps["tau_d"].reshape(-1)[j]), ps["c_d"].reshape(-1, D)[j], lam[j],
-                       float(ps["log_g_instr"].reshape(-1)[j]))["obs"][..., :K]
+        s = likelihood(float(ps["tau_d"].reshape(-1)[j]), ps["c_d"].reshape(-1, D)[j], lam[j],
+                       float(ps["log_g_instr"].reshape(-1)[j]), b_instr=b[j].ravel() if KI else None)["obs"][..., :K]
         sims.append(np.median(s, axis=1))
     sims = np.stack(sims)                                                    # (S, N, K)
     lo, hi = np.quantile(sims, [0.05, 0.95], axis=0)

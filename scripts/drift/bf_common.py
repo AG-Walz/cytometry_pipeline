@@ -30,9 +30,14 @@ def base_parser(desc):
 
 def setup(a, tag):
     """Seeds, the cohort config and the real design (one row per neg tube with integer codes for
-    patient, day and instrument), plus the output folder bf_<tag>/ and a timer."""
-    import keras, yaml
-    rng = np.random.default_rng(a.seed); keras.utils.set_random_seed(a.seed)
+    patient and day, and K instrument dummies against cfg reference_instrument, one per
+    non-reference instrument in order of appearance), plus the output folder bf_<tag>/ and a timer."""
+    import yaml
+    rng = np.random.default_rng(a.seed)
+    try:  # keras is only needed for seeding here; lets the design be built without it
+        import keras; keras.utils.set_random_seed(a.seed)
+    except ImportError:
+        pass
     with open(a.config) as fh:
         cfg = yaml.safe_load(fh)
     tubes = pd.read_csv(os.path.join(a.out, "tubes.csv"))
@@ -42,20 +47,34 @@ def setup(a, tag):
     negs = negs.sort_values(["patient", "acq_day"]).reset_index(drop=True)
     negs["patient_i"] = pd.factorize(negs.patient)[0]
     negs["day_i"] = pd.factorize(negs.acq_day)[0]
-    negs["instr"] = (negs.instrument != cfg["reference_instrument"]).astype(float)
     other = [i for i in negs.instrument.unique() if i != cfg["reference_instrument"]]
+    instr = np.stack([(negs.instrument == lv).values.astype(float) for lv in other], axis=1) \
+        if other else np.zeros((len(negs), 0))  # (N, K); K = 0 for a single-instrument cohort
     outdir = os.path.join(a.out, f"bf_{tag}"); os.makedirs(outdir, exist_ok=True)
     return SimpleNamespace(rng=rng, cfg=cfg, negs=negs, N=len(negs), P=negs.patient_i.max() + 1,
                            D=negs.day_i.max() + 1, pat=negs.patient_i.values, day=negs.day_i.values,
-                           instr=negs.instr.values, days=list(pd.unique(negs.acq_day)),
+                           instr=instr, K_instr=len(other), instr_levels=other, days=list(pd.unique(negs.acq_day)),
                            instr_level=other[0] if other else "none", outdir=outdir, T=Timer())
 
 
-def effects_long(model, layer, response, instr_draws, day_draws, day_names, instr_level):
-    """Same columns as R effects_long(): model, layer, response, term, level, draw, value."""
-    rows = [pd.DataFrame(dict(model=model, layer=layer, response=response, term="instrument",
-                              level=instr_level, draw=np.arange(1, len(instr_draws) + 1),
-                              value=instr_draws))]
+def instr_names(instr_levels, prefix="b_instr"):
+    """Parameter names for the recovery/sbc tables: plain 'b_instr' when there is one non-reference
+    instrument (the existing file format), 'b_instr[<name>]' per level otherwise."""
+    return [prefix] if len(instr_levels) == 1 else [f"{prefix}[{lv}]" for lv in instr_levels]
+
+
+def effects_long(model, layer, response, instr_draws, day_draws, day_names, instr_levels):
+    """Same columns as R effects_long(): model, layer, response, term, level, draw, value.
+    instr_draws is (draws,) or (draws, K) with one block of instrument rows per entry of
+    instr_levels (a name or a list of names); K = 0 gives day rows only."""
+    if isinstance(instr_levels, str):
+        instr_levels = [instr_levels]
+    instr_draws = np.asarray(instr_draws).reshape(len(instr_draws), -1)
+    rows = []
+    for j, lv in enumerate(instr_levels):
+        rows.append(pd.DataFrame(dict(model=model, layer=layer, response=response, term="instrument",
+                                      level=lv, draw=np.arange(1, instr_draws.shape[0] + 1),
+                                      value=instr_draws[:, j])))
     for j, name in enumerate(day_names):
         rows.append(pd.DataFrame(dict(model=model, layer=layer, response=response, term="day",
                                       level=name, draw=np.arange(1, day_draws.shape[0] + 1),
@@ -90,16 +109,16 @@ def maybe_restore(workflow, restore, path, custom_objects=None):
 
 def validate(workflow, simulator, a, names, k_instr, D, tag):
     """Recovery and simulation-based calibration on held-out simulations. The checked parameters
-    are the reported ones: b_instr (k_instr columns) and the day effects tau_d * c_d.
+    are the reported ones: b_instr (k_instr columns; none when k_instr = 0) and the day effects tau_d * c_d.
     Writes bf_<tag>_recovery.csv and bf_<tag>_sbc.csv; returns the recovery table and the test set."""
     from scipy.stats import chisquare
     test = simulator.sample(a.n_sbc)
     post = sample_chunked(workflow, test, a.posterior_samples, a.chunk)
     S = (a.n_sbc, a.posterior_samples)
-    posterior = np.concatenate([post["b_instr"].reshape(*S, k_instr),
-                                post["tau_d"].reshape(*S, 1) * post["c_d"].reshape(*S, D)], axis=-1)
-    truth = np.concatenate([test["b_instr"].reshape(-1, k_instr),
-                            test["tau_d"].reshape(-1, 1) * test["c_d"].reshape(-1, D)], axis=1)
+    posterior = np.concatenate(([post["b_instr"].reshape(*S, k_instr)] if k_instr else []) +
+                               [post["tau_d"].reshape(*S, 1) * post["c_d"].reshape(*S, D)], axis=-1)
+    truth = np.concatenate(([test["b_instr"].reshape(-1, k_instr)] if k_instr else []) +
+                           [test["tau_d"].reshape(-1, 1) * test["c_d"].reshape(-1, D)], axis=1)
     mean = posterior.mean(axis=1)
     ranks = (posterior < truth[:, None, :]).sum(axis=1)  # uniform over test sets if calibrated
     rec, sbc = [], []
