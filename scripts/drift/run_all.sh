@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Run the whole drift analysis. Steps 1-6 and 9-10 give the complete yardstick answer; 7-8 are the
-# BayesFlow experiment and run last. Intended for a screen session on highmem1:
+# Run the whole drift analysis. Steps 1-6 and 9-10 give the complete yardstick answer for the three
+# response classes (technical A, background BG, endpoint B); 7-8 are the BayesFlow experiment and run
+# last. Intended for a screen session on highmem1:
 #   screen -S mtb_drift
 #   bash scripts/drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift config/drift_mtb.yaml [r_conda_env] [bayesflow_conda_env]
 # DATA_ROOT must contain fcs/ and wsp/ (or set FCS_DIR and WSP_DIR). Set SAMPLE_SHEET to a CSV when the
@@ -14,7 +15,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; R="conda run --no-capture-output -n $ENV 
 mkdir -p "$OUT"; exec > >(tee -a "$OUT/run_all.log") 2>&1
 step() { echo; echo "===== $(date '+%F %T') $* ====="; }
 decide() { step 9 decision "$@"; $R "$HERE/09_decision.R" --out "$OUT" --config "$CFG"; }
-report() { step 10 report "$@"; $R -e "rmarkdown::render('$HERE/10_report.Rmd', params = list(out = normalizePath('$OUT'), cohort = '$COHORT'), output_file = 'report.html', output_dir = normalizePath('$OUT'))"; }
+report() { step 10 report "$@"; $R -e "rmarkdown::render('$HERE/10_report.Rmd', params = list(out = normalizePath('$OUT'), cohort = '$COHORT', config = '$CFG'), output_file = 'report.html', output_dir = normalizePath('$OUT'))"; }
 
 step 1 metadata;        $R "$HERE/01_extract_metadata.R" --fcs_dir "$FCS_DIR" --out "$OUT" --config "$CFG" ${SAMPLE_SHEET:+--sample_sheet "$SAMPLE_SHEET"}
 step 2 panel;           $R "$HERE/02_panel_reconcile.R" --out "$OUT" --config "$CFG"

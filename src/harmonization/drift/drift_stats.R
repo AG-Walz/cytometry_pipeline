@@ -1,8 +1,9 @@
 # src/harmonization/drift/drift_stats.R — pure statistics helpers, base R
 # Distribution summaries for neg tubes (layer A), 1-D Earth Mover's Distance,
 # bimodal valley finder, background subtraction and the positivity rule
-# (layer B), and the decision logic that combines model posteriors with the
-# rule. No cytometry packages, so every function here is unit-tested locally.
+# (layer B), control matching, background flips and the decision logic that
+# combines model posteriors with the rule. No cytometry packages, so every
+# function here is unit-tested locally.
 
 #' arcsinh with cofactor; scatter is left linear by the caller.
 asinh_cof <- function(x, cofactor) asinh(x / cofactor)
@@ -89,4 +90,56 @@ drift_decision <- function(draws, rep_sd, flips, prob_threshold = 0.95) {
              replicate_sd = rep_sd, p_exceeds_noise = p_exceeds,
              positivity_flips = flips, verdict = verdict,
              stringsAsFactors = FALSE)
+}
+
+#' Control (neg) matching as a policy. For every stimulated row of `fq` (the
+#' step 5 table before subtraction) the neg of the same parent and gate is
+#' found by exact match on `controls$match_keys`, then by the fallbacks in
+#' `controls$fallbacks` in order: same_patient_day, same_patient_reference_instrument,
+#' pooled_reference_instrument. A neg with an empty parent gate counts as
+#' missing. Several candidates are pooled by summing count and parent_count.
+#' Adds neg_count, neg_parent_count, neg_pct, neg_match ("exact", the fallback
+#' name or "none"), neg_filename (comma-joined when pooled), neg_acq_day and
+#' neg_instrument (NA when pooled across days / instruments). Neg rows get NA.
+match_controls <- function(fq, controls, reference_instrument) {
+  keys <- unlist(controls$match_keys); fallbacks <- unlist(controls$fallbacks)
+  known <- c("same_patient_day", "same_patient_reference_instrument", "pooled_reference_instrument")
+  if (length(bad <- setdiff(fallbacks, known))) stop("unknown control fallback: ", paste(bad, collapse = ", "))
+  one <- function(x) if (length(unique(x)) == 1L) x[1] else NA
+  neg <- fq[fq$is_neg & !is.na(fq$parent_count) & fq$parent_count > 0, ]
+  res <- data.frame(neg_count = rep(NA_real_, nrow(fq)), neg_parent_count = NA_real_, neg_pct = NA_real_,
+                    neg_match = NA_character_, neg_filename = NA_character_, neg_acq_day = NA_character_,
+                    neg_instrument = NA_character_, stringsAsFactors = FALSE)
+  key <- function(d) do.call(paste, c(d[keys], sep = "|"))
+  for (i in which(!fq$is_neg)) {
+    r <- fq[i, ]
+    cand <- neg[neg$parent == r$parent & neg$gate == r$gate, ]
+    hit <- cand[key(cand) == key(r), ]; label <- "exact"
+    if (!nrow(hit)) for (fb in fallbacks) {
+      hit <- switch(fb,
+        same_patient_day = cand[cand$patient == r$patient & cand$acq_day == r$acq_day, ],
+        same_patient_reference_instrument = cand[cand$patient == r$patient & cand$instrument == reference_instrument, ],
+        pooled_reference_instrument = cand[cand$instrument == reference_instrument, ])
+      if (nrow(hit)) { label <- fb; break }
+    }
+    if (!nrow(hit)) { res$neg_match[i] <- "none"; next }
+    res$neg_count[i] <- sum(hit$count); res$neg_parent_count[i] <- sum(hit$parent_count)
+    res$neg_pct[i] <- 100 * res$neg_count[i] / res$neg_parent_count[i]
+    res$neg_match[i] <- label; res$neg_filename[i] <- paste(hit$filename, collapse = ",")
+    res$neg_acq_day[i] <- one(hit$acq_day); res$neg_instrument[i] <- one(hit$instrument)
+  }
+  cbind(fq, res)
+}
+
+#' Positivity calls that change when a background (neg) effect on the logit
+#' scale is removed from the matched negs. `fb` is a layer B frame for ONE
+#' response; `which_neg` marks the rows whose matched neg carries the effect
+#' (its neg_acq_day or neg_instrument is the affected level). Only neg_pct is
+#' shifted, the stimulated frequency stays as measured.
+count_background_flips <- function(fb, effect, which_neg, min_subtracted_pct = 0.05, min_fold_over_neg = 3) {
+  before <- positivity_call(fb$pct, fb$neg_pct, min_subtracted_pct, min_fold_over_neg)$positive
+  pn <- pmin(pmax(fb$neg_pct / 100, 1e-6), 1 - 1e-6)
+  adjn <- pn; adjn[which_neg] <- plogis(qlogis(pn[which_neg]) - effect)
+  after <- positivity_call(fb$pct, 100 * adjn, min_subtracted_pct, min_fold_over_neg)$positive
+  sum(before != after, na.rm = TRUE)
 }

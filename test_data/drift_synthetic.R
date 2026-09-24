@@ -1,30 +1,32 @@
 #!/usr/bin/env Rscript
 # test_data/drift_synthetic.R — synthetic step-4/5 outputs with KNOWN effects
 # Reads a real tubes.csv (step 1) and writes neg_summaries.csv, neg_emd.csv and
-# gated_frequencies.csv into the same folder, generated from the layer A / B
-# models with an injected instrument shift and day drift. Lets steps 6 to 9 be
-# exercised, and their recovered effects compared with the truth in
-# synthetic_truth.csv, without CytoML. Base R only.
+# gated_frequencies.csv into the same folder, generated from the layer A / BG / B
+# models with an injected instrument shift, day drift and background shifts.
+# Lets steps 6 to 9 be exercised, and their recovered effects compared with the
+# truth in synthetic_truth.csv, without CytoML. Base R only.
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "..", "scripts", "drift", "common.R"))
-usage <- "drift_synthetic.R --out DIR --config FILE [--instr_shift 0.4] [--tau_day 0.15] [--seed 1]"
-a <- parse_args(list(out = "", config = "", instr_shift = 0.4, tau_day = 0.15, seed = 1), usage = usage)
+usage <- "drift_synthetic.R --out DIR --config FILE [--instr_shift 0.4] [--tau_day 0.15] [--bg_shift 0.8] [--seed 1]"
+a <- parse_args(list(out = "", config = "", instr_shift = 0.4, tau_day = 0.15, bg_shift = 0.8, seed = 1), usage = usage)
 cfg <- read_drift_config(a$config)
 out <- a$out; ref <- cfg$reference_instrument
-instr_shift <- a$instr_shift; tau_day <- a$tau_day; set.seed(a$seed)
+instr_shift <- a$instr_shift; tau_day <- a$tau_day; bg_shift <- a$bg_shift; set.seed(a$seed)
 
 tt <- read.csv(file.path(out, "tubes.csv"), stringsAsFactors = FALSE)
 other <- setdiff(unique(tt$instrument), ref)[1]   # the instrument the shift is injected on
 days <- sort(unique(tt$acq_day)); pats <- sort(unique(tt$patient))
 c_d <- setNames(rnorm(length(days), 0, tau_day), days)
 markers <- c("FSC_A", "SSC_A", "LiveDead", "CD4", "CD8")
+cyto <- c("IFNg", "IL2", "TNFa", "CD107a")   # layer BG intensity: day drift, TNFa instrument shift, prior_vacc 0.3
 summ <- list(); emd <- list()
-for (mk in markers) {
+for (mk in c(markers, cyto)) {
   a_p <- setNames(rnorm(length(pats), 0, 0.3), pats)
-  base <- c(FSC_A = 100000, SSC_A = 60000, LiveDead = 1.5, CD4 = 3.5, CD8 = 3.2)[mk]
+  base <- c(FSC_A = 100000, SSC_A = 60000, LiveDead = 1.5, CD4 = 3.5, CD8 = 3.2, IFNg = 0.8, IL2 = 0.9, TNFa = 1.0, CD107a = 1.1)[mk]
   sc <- if (mk %in% c("FSC_A", "SSC_A")) 8000 else 1
   for (i in seq_len(nrow(tt))) {
-    shift <- a_p[as.character(tt$patient[i])] + c_d[tt$acq_day[i]] +
-             instr_shift * (tt$instrument[i] != ref) + rnorm(1, 0, 0.08)
+    shift <- a_p[as.character(tt$patient[i])] + c_d[tt$acq_day[i]] + rnorm(1, 0, 0.08) +
+             (if (mk %in% cyto) (mk == "TNFa") * instr_shift * (tt$instrument[i] != ref) + 0.3 * (tt$prior_vacc[i] == 2)
+              else instr_shift * (tt$instrument[i] != ref))
     med <- base + sc * shift
     summ[[length(summ) + 1L]] <- data.frame(filename = tt$filename[i], marker = mk, n = 20000,
       median = med, mad = sc * (0.6 + rnorm(1, 0, 0.02)), q10 = med - sc * 0.8, q90 = med + sc * 0.8,
@@ -51,13 +53,17 @@ for (fn in tt$filename[tt$is_neg]) {
 }
 write.csv(do.call(rbind, emd), file.path(out, "neg_emd.csv"), row.names = FALSE)
 
-# layer B: counts per tube x parent x gate on the logit scale, matched negs
+# layer B: counts per tube x parent x gate on the logit scale, matched negs. Layer BG: the neg
+# counts additionally carry a background shift on the other instrument (CD8:TNFa+) and on one day (CD4:IFNg+)
 gates <- c("IFNg+", "IL2+", "TNFa+", "CD107a+"); rows <- list()
 b_instr_B <- instr_shift; a_pB <- setNames(rnorm(length(pats), 0, 0.5), pats)
+bg_day <- names(which.max(table(tt$acq_day[tt$is_neg]))); bg_day_shift <- 1.0
 for (pp in c("CD4", "CD8")) for (g in gates) {
   for (i in seq_len(nrow(tt))) {
     n_parent <- round(runif(1, 20000, 60000))
-    eta <- -7 + a_pB[as.character(tt$patient[i])] + c_d[tt$acq_day[i]] +
+    bg <- if (!tt$is_neg[i]) 0 else bg_shift * (pp == "CD8" && g == "TNFa+" && tt$instrument[i] != ref) +
+                                    bg_day_shift * (pp == "CD4" && g == "IFNg+" && tt$acq_day[i] == bg_day)
+    eta <- -7 + a_pB[as.character(tt$patient[i])] + c_d[tt$acq_day[i]] + bg +
            b_instr_B * (tt$instrument[i] != ref) + 0.3 * (tt$prior_vacc[i] == 2) +
            (if (tt$is_neg[i]) 0 else 1.2 + 0.02 * tt$week[i]) + rnorm(1, 0, 0.2)
     k <- rbinom(1, n_parent, plogis(eta))
@@ -68,12 +74,19 @@ for (pp in c("CD4", "CD8")) for (g in gates) {
   }
 }
 fq <- do.call(rbind, rows)
-neg <- fq[fq$is_neg, c("patient", "week", "parent", "gate", "count", "parent_count", "pct")]
-names(neg)[5:7] <- c("neg_count", "neg_parent_count", "neg_pct")
-fq <- merge(fq, neg, by = c("patient", "week", "parent", "gate"), all.x = TRUE)
+fq <- match_controls(fq, cfg$controls, ref)
 fq <- cbind(fq, positivity_call(fq$pct, fq$neg_pct, cfg$positivity$min_subtracted_pct, cfg$positivity$min_fold_over_neg))
 fq$positive[fq$is_neg] <- NA
 write.csv(fq, file.path(out, "gated_frequencies.csv"), row.names = FALSE)
-write.csv(data.frame(term = c("instrument", rep("day", length(days))), level = c(other, days),
-                     truth = c(instr_shift, c_d)), file.path(out, "synthetic_truth.csv"), row.names = FALSE)
-cat("synthetic layer A/B tables written to", out, "\n")
+# truth per layer; response NA = shared by every response of the layer (the day drift c_d, the instrument shift)
+tr <- function(layer, response, term, level, truth) data.frame(layer = layer, response = response, term = term, level = level, truth = truth)
+truth <- rbind(
+  tr("A", NA, "instrument", other, instr_shift), tr("A", NA, "day", days, c_d),
+  tr("BG", NA, "day", days, c_d), tr("BG", "TNFa:median", "instrument", other, instr_shift),
+  tr("BG", NA, "instrument", other, b_instr_B),   # neg counts carry the layer B instrument shift ...
+  tr("BG", "CD8:TNFa+", "instrument", other, b_instr_B + bg_shift),   # ... plus the background shift
+  tr("BG", "CD4:IFNg+", "day", bg_day, c_d[bg_day] + bg_day_shift),
+  tr("BG", NA, "prior_vacc", "2", 0.3),
+  tr("B", NA, "instrument", other, b_instr_B), tr("B", NA, "day", days, c_d), tr("B", NA, "prior_vacc", "2", 0.3))
+write.csv(truth, file.path(out, "synthetic_truth.csv"), row.names = FALSE)
+cat("synthetic layer A/BG/B tables written to", out, "\n")

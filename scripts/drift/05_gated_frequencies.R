@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # Step 5, layer B: counts of cytokine-positive gates within CD4 and CD8 from the FlowJo gates,
-# background subtraction against the matched neg tube (same patient-week), positivity calls.
+# background subtraction against the matched neg tube (config `controls` policy), positivity calls.
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
 usage <- "05_gated_frequencies.R --wsp_dir DIR --fcs_dir DIR --out DIR --config FILE"
 a <- parse_args(list(wsp_dir = "", fcs_dir = "", out = "",
@@ -48,13 +48,11 @@ fq <- merge(fq, tt[, c("filename", "patient", "prior_vacc", "week", "cocktail", 
                        "instrument", "patient_day")], by = "filename")
 fq$pct <- 100 * fq$count / fq$parent_count
 
-# matched neg per patient-week-parent-gate
-neg <- fq[fq$is_neg, c("patient", "week", "parent", "gate", "count", "parent_count", "pct")]
-names(neg)[5:7] <- c("neg_count", "neg_parent_count", "neg_pct")
-fq <- merge(fq, neg, by = c("patient", "week", "parent", "gate"), all.x = TRUE)
+# matched neg per parent and gate: exact on the config match_keys, then the fallbacks (neg_match)
+fq <- match_controls(fq, cfg$controls, cfg$reference_instrument)
 pc <- positivity_call(fq$pct, fq$neg_pct, cfg$positivity$min_subtracted_pct, cfg$positivity$min_fold_over_neg)
 fq <- cbind(fq, pc)
 fq$positive[fq$is_neg] <- NA
 write_table(fq, file.path(a$out, "gated_frequencies.csv"))
 cat("\nGates found:\n"); print(table(fq$parent, fq$gate))
-cat("\nMissing matched neg:", sum(is.na(fq$neg_pct) & !fq$is_neg), "cocktail rows\n")
+cat("\nControl matching of cocktail rows (neg_match):\n"); print(table(fq$parent[!fq$is_neg], fq$neg_match[!fq$is_neg]))

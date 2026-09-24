@@ -4,6 +4,7 @@ output: html_document
 params:
   out: "results"
   cohort: "cohort"
+  config: ""
 ---
 
 ```{r setup, include=FALSE}
@@ -13,11 +14,25 @@ out <- params$out
 rd <- function(f) if (file.exists(file.path(out, f))) read.csv(file.path(out, f), stringsAsFactors = FALSE) else NULL
 source(file.path(dirname(knitr::current_input(dir = TRUE)), "..", "..", "src", "harmonization", "drift", "drift_models.R"))
 tt <- rd("tubes.csv"); dec <- rd("decisions.csv"); eff <- read_effects(out)
+cfg <- if (nzchar(params$config) && file.exists(params$config)) yaml::read_yaml(params$config) else NULL
+cs <- function(x) paste(unlist(x), collapse = ", ")
 ```
 
-Plan: `docs/plans/mtb_batch_drift_plan.md`. Prior vaccination status (`prior_vacc`) and week are protected covariates throughout.
+Plan: `docs/plans/mtb_batch_drift_plan.md`.
 
 ## Design
+
+```{r, results="asis"}
+if (is.null(cfg)) cat("No config passed (`config` param): design text omitted.\n") else {
+  d <- cfg$design; ctl <- cfg$controls
+  cat(sprintf("Repeated-measures unit: `%s` (random intercept in every model). Technical terms: %s. ", d$unit, cs(d$technical)))
+  cat(sprintf("Protected covariates, never absorbed into a technical term: %s. ", cs(d$protected_fixed)))
+  cat(sprintf("Time: `%s` (per-unit slope, centred, in years). Stimulation: `%s` (random intercept, endpoint class only). ", d$time, d$stimulation))
+  cat(sprintf("Reference instrument: `%s`.\n\n", cfg$reference_instrument))
+  cat(sprintf("Control matching: the neg tube is matched exactly on %s; when that neg is missing or its parent gate is empty, the fallbacks are tried in order: %s. The level used is recorded per row (`neg_match`).\n",
+              cs(ctl$match_keys), cs(ctl$fallbacks)))
+}
+```
 
 ```{r}
 knitr::kable(as.data.frame.matrix(table(tt$acq_day, tt$instrument)), caption = "Tubes per acquisition day and instrument")
@@ -29,6 +44,48 @@ knitr::kable(rd("bridge_report.csv"), caption = "Patients bridging days and inst
 ```{r}
 knitr::kable(dec[dec$term == "instrument", ], digits = 3, caption = "Instrument contrast, every response")
 knitr::kable(dec[dec$term == "day" & grepl("^detected", dec$verdict), ], digits = 3, caption = "Acquisition days with an effect above replicate noise")
+```
+
+## Background (unstimulated) shifts
+
+Layer BG: cytokine background in the neg tubes, as gate counts (`parent:gate`, logit scale) and as median intensity (`marker:median`, arcsinh units). Flips count stimulated calls that change when only the matched neg is shifted back.
+
+```{r, fig.width=11, fig.height=6}
+bg <- if (!is.null(dec)) dec[dec$layer == "BG", ] else NULL
+if (!is.null(bg) && nrow(bg)) {
+  print(knitr::kable(bg[bg$term == "instrument", ], digits = 3, caption = "Background: instrument contrasts", row.names = FALSE))
+  print(knitr::kable(bg[bg$term == "day" & grepl("^detected", bg$verdict), ], digits = 3, caption = "Background: days above replicate noise", row.names = FALSE))
+} else cat("no layer BG decisions (background fits not run)\n")
+fq <- rd("gated_frequencies.csv")
+if (!is.null(fq)) {
+  ng <- fq[fq$is_neg & !is.na(fq$parent_count) & fq$parent_count > 0, ]; ng$response <- paste(ng$parent, ng$gate, sep = ":")
+  print(ggplot(ng, aes(acq_day, pct, colour = instrument)) + geom_point(alpha = .7) + facet_wrap(~response, scales = "free_y") +
+    theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = .5, size = 7)) +
+    labs(x = "acquisition day", y = "neg tube, percent of parent"))
+}
+```
+
+## Protected covariates
+
+```{r}
+cv <- rd("covariates_brms.csv"); if (!is.null(cv)) knitr::kable(cv, digits = 3, caption = "Posterior mean and 95% interval of the protected covariates, per response") else cat("covariates_brms.csv not present\n")
+```
+
+## Technical-marker assumption check
+
+```{r}
+ac <- rd("assumption_check.csv"); if (!is.null(ac)) knitr::kable(ac, digits = 4, caption = "Layer A refitted with the protected covariates: their estimate, SE and likelihood-ratio p") else cat("assumption_check.csv not present\n")
+```
+
+## Control matching
+
+```{r}
+cm <- rd("controls_summary.csv")
+if (!is.null(cm)) {
+  print(knitr::kable(cm[is.na(cm$patient), c("parent", "neg_match", "n")], caption = "Stimulated rows per parent and matching level", row.names = FALSE))
+  fbk <- cm[!is.na(cm$patient), c("patient", "week", "parent", "gate", "neg_match")]
+  if (nrow(fbk)) print(knitr::kable(fbk, caption = "Rows that needed a fallback neg", row.names = FALSE)) else cat("every stimulated row has an exact neg\n")
+} else cat("controls_summary.csv not present (rerun steps 5 and 9)\n")
 ```
 
 ## Day effects, all fitters

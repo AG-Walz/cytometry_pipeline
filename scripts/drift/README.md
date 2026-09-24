@@ -14,6 +14,12 @@ screen -S mtb_drift
 bash scripts/drift/run_all.sh /mnt/volume/patrick/UMAP results/mtb_drift config/drift_mtb.yaml cytometry_env bayesflow_env
 ```
 
+Before the first full run, harmonise the marker names in the FCS files so the `markers` block only
+needs the canonical names: `Rscript scripts/harmonize_marker_names.R --fcs_dir <fcs> --probe` shows every
+`$PnS` spelling per channel, a run with `--canonical config/drift_mtb.yaml` previews the renames, and
+`--apply --in_place` writes them with an undo ledger (see `docs/scripts/harmonize-marker-names.md`). Run
+it before step 1; step 2 then sees one spelling per marker.
+
 Before the first full run, list the FlowJo gate tree and set `neg_population`, `parent_populations`
 and `cytokine_gate_regex` in the config to match it:
 
@@ -23,7 +29,9 @@ Rscript scripts/drift/02_panel_reconcile.R --out results/mtb_drift --config conf
 Rscript scripts/drift/04_neg_summaries.R --wsp_dir /mnt/volume/patrick/UMAP/wsp --fcs_dir /mnt/volume/patrick/UMAP/fcs --out results/mtb_drift --config config/drift_mtb.yaml --list_populations
 ```
 
-Tests without cytometry packages: `Rscript test_data/test_drift.R`. Synthetic end-to-end check of
-steps 6 to 9: run steps 1 and 2, then `Rscript test_data/drift_synthetic.R --out results/syn --config config/drift_mtb.yaml`, then
-the step 6 to 9 scripts on `results/syn`; recovered effects should match `synthetic_truth.csv`.
+Tests without cytometry packages: `Rscript test_data/test_drift.R` and `Rscript test_data/test_drift_controls.R`
+(control matching and background flips). Synthetic end-to-end check of steps 6 to 9: run steps 1 and 2, then
+`Rscript test_data/drift_synthetic.R --out results/syn --config config/drift_mtb.yaml`, then the step 6 to 9
+scripts on `results/syn`; recovered effects should match `synthetic_truth.csv`, which lists the injected
+technical (A), background (BG) and endpoint (B) effects per `layer` and `response` (NA response = shared day drift).
 Both BayesFlow scripts accept `--smoke` for a one-minute end-to-end check.
