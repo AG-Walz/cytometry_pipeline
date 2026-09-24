@@ -2,6 +2,8 @@
 # Step 0: add what the drift analysis needs on top of the existing cytometry_env conda environment,
 # and create a separate CPU-only conda env for BayesFlow (so keras/torch never touch the R env).
 #   bash scripts/drift/00_setup_env.sh [r_conda_env] [bayesflow_conda_env]
+# The R package list is also in environment_drift.yml at the repository root, for a fresh env:
+#   conda env create -f environment_drift.yml   (then `Rscript scripts/drift/drift.R doctor` to check it)
 set -euo pipefail
 ENV="${1:-cytometry_env}"
 BFENV="${2:-bayesflow_env}"

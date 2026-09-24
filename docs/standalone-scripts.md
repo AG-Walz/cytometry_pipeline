@@ -68,6 +68,7 @@ downsampled <- downsample_flowframes(
 | `panel_homogenization.R` | `homogenize_flowframes()` | `(flow_frames, sample_names, markers_of_interest, markername_replacing=list(), save_csv=FALSE, save_fcs=FALSE, output_dir=NULL)` | Named list of homogenized flowFrames |
 | `panel_comparison.R` | `compare_panels_detailed()` | `(flow_frames)` | Panel comparison report |
 | `batch_correction.R` | `run_batch_correction()` | `(flow_frames, batch_labels, ...)` | Batch-corrected flowFrames |
+| `drift/` (modules behind `scripts/drift/drift.R`) | `drift.R init / doctor / check / run / status` | `Rscript scripts/drift/drift.R run --sample_sheet CSV --fcs_dir DIR --wsp_dir DIR --out DIR --config CFG` | acquisition-drift analysis of a cohort: `tubes.csv`, `decisions.csv`, `report.html`; walkthrough in [`docs/scripts/drift.md`](scripts/drift.md) |
 
 **Example — Homogenizing panels standalone:**
 
