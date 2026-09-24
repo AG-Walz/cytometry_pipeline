@@ -58,10 +58,11 @@ check_design <- function(cfg, tubes) {
   invisible(TRUE)
 }
 
-#' File names excluded by step 3, or none when it has not run.
+#' File names excluded by step 3 (excluded_tubes.csv) or by hand in the sample sheet
+#' (excluded_manual.csv, written by step 1); none when neither exists.
 excluded_tubes <- function(out) {
-  f <- file.path(out, "excluded_tubes.csv")
-  if (file.exists(f)) read.csv(f)$filename else character(0)
+  fs <- file.path(out, c("excluded_tubes.csv", "excluded_manual.csv"))
+  unique(as.character(unlist(lapply(fs[file.exists(fs)], function(f) read.csv(f)$filename))))
 }
 
 #' Every FlowJo workspace under `wsp_dir`.
