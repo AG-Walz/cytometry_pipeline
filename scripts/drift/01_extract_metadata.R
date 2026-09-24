@@ -30,8 +30,10 @@ if (!is.null(sheet)) {
 write_table(tt, file.path(a$out, "tubes.csv"))
 write_table(bridge_report(tt), file.path(a$out, "bridge_report.csv"))
 
-cat("\nTubes per instrument x acquisition day:\n")
-print(table(tt$instrument, tt$acq_day, useNA = "ifany"))
+cat("\nTubes per instrument (acquisition days, first to last):\n")
+for (ins in sort(unique(tt$instrument))) { d <- tt[tt$instrument %in% ins, ]
+  cat(sprintf("  %-16s %3d tubes on %2d day(s), %s to %s\n", ins, nrow(d), length(unique(d$acq_day)), min(d$acq_day, na.rm = TRUE), max(d$acq_day, na.rm = TRUE))) }
+cat("  (full table: tubes.csv, columns instrument and acq_day)\n")
 for (col in intersect(unlist(cfg$design$protected_fixed), names(tt))) {
   cat(sprintf("\nPatients with inconsistent %s label:\n", col))
   inc <- tapply(tt[[col]], tt$patient, function(x) length(unique(x)) > 1L)

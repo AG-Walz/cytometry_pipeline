@@ -61,8 +61,9 @@ if (!is.na(a$wsp_dir)) {
     sigs <- if (file.exists(sig_csv)) read.csv(sig_csv, stringsAsFactors = FALSE) else NULL
     wanted <- c(neg = cfg$neg_population, unlist(cfg$parent_populations))
     seen <- character(0); miss <- list(); empty <- list()
-    cat("\nWorkspaces under", a$wsp_dir, "\n")
-    for (w in list_workspaces(a$wsp_dir)) for (gs in open_workspace(w, a$fcs_dir, sigs)) for (s in flowWorkspace::sampleNames(gs)) {
+    wsps <- list_workspaces(a$wsp_dir)
+    cat(sprintf("\nWorkspaces: %d under %s (reading the gates, this takes a while)\n", length(wsps), a$wsp_dir))
+    for (w in wsps) for (gs in open_workspace(w, a$fcs_dir, sigs, quiet = TRUE)) for (s in flowWorkspace::sampleNames(gs)) {
       gh <- gs[[s]]; fn <- gh_filename(gh); seen <- c(seen, fn)
       for (k in names(wanted)) {
         node <- find_population(gh, wanted[[k]])

@@ -252,7 +252,7 @@ cmd_run <- function(args) {
     for (d in st$dirs) if (a[[d]] == "none") stop("step ", id, " needs --", d, call. = FALSE)
     cmd <- step_command(st, a, out, config)
     say(sprintf("\n===== %s step %s %s (%s) =====", format(Sys.time(), "%F %T"), id, st$name, if (a$force) "forced" else state))
-    say(cmd)
+    if (!is.null(LOG)) cat(cmd, "\n", sep = "", file = LOG, append = TRUE)   # the command line goes to the log only
     started <- Sys.time()
     status <- run_cmd(cmd)
     if (status != 0) { say(sprintf("step %s %s FAILED (exit %d); see %s", id, st$name, status, LOG)); quit(status = 1) }

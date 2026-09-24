@@ -63,10 +63,11 @@ load_workspace_gatingsets <- function(wsp_path, fcs_dir, signatures = NULL) {
 
 #' GatingSets of one workspace for the step 4/5 loops: announces the workspace
 #' and turns a load failure into a message and an empty list.
-open_workspace <- function(wsp_path, fcs_dir, signatures) {
-  cat("\nWorkspace", basename(wsp_path), "\n")
-  tryCatch(load_workspace_gatingsets(wsp_path, fcs_dir, signatures = signatures),
-           error = function(e) { cat("  FAILED:", conditionMessage(e), "\n"); list() })
+open_workspace <- function(wsp_path, fcs_dir, signatures, quiet = FALSE) {
+  if (!quiet) cat("\nWorkspace", basename(wsp_path), "\n")
+  load <- function() load_workspace_gatingsets(wsp_path, fcs_dir, signatures = signatures)
+  tryCatch(if (quiet) { utils::capture.output(gs <- load()); gs } else load(),
+           error = function(e) { cat("  ", basename(wsp_path), "FAILED:", conditionMessage(e), "\n"); list() })
 }
 
 #' The FCS file name a GatingHierarchy was built from.

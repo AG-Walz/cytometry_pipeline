@@ -14,8 +14,8 @@ write_table(pm$map, file.path(a$out, "panel_map.csv"))
 write_table(pm$signature, file.path(a$out, "panel_signatures.csv"))
 write_table(gaps, file.path(a$out, "panel_gaps.csv"))
 
-cat("\nDistinct panel signatures:", length(unique(pm$signature$panel_signature)), "\n")
-print(table(pm$signature$panel_signature))
+sig_n <- sort(table(pm$signature$panel_signature), decreasing = TRUE)
+cat("\nDistinct panel signatures:", length(sig_n), "(files per signature:", paste(sig_n, collapse = ", "), "; see panel_signatures.csv)\n")
 if (nrow(gaps)) { cat("\nFiles missing required markers:\n"); print(gaps) } else cat("\nAll files carry every required marker.\n")
 unmapped <- pm$map[is.na(pm$map$canonical) & !grepl("Time|-H$|-W$", pm$map$channel), ]
 if (nrow(unmapped)) { cat("\nChannels not mapped to any canonical marker (check config$markers):\n")
