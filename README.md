@@ -72,6 +72,12 @@ Check **FlowJo -> Preferences -> Workspace -> "How should data files be named"**
 before you run it: if it is set to "Use Short File Name" you do not need the
 tool at all.
 
+Its sibling [`scripts/harmonize_marker_names.R`](docs/scripts/harmonize-marker-names.md)
+does the same for marker names: it writes one canonical spelling into `$PnS`
+across a cohort (`INFy`, `IFN` and blank all become `IFNg`), driven by a
+`markers` block such as the one in `config/drift_mtb.yaml`, with the same dry
+run, ledger and `--revert`.
+
 Both this and the UMAP script have a GUI: [`app/`](app/README.md) is a Dash
 front-end with a tab for each.
 

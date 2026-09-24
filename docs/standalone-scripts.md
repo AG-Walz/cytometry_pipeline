@@ -172,3 +172,4 @@ results <- run_cluster_enrichment(
 | `overlap_statistics.R` | `compute_fleiss_kappa()` | `(label_lists, ...)` |
 | `compare_gatings.R` | `compare_gatings()` | `(pop_strings_list, ...)` |
 | `sync_fcs_names.R` | `sync_fcs_names()` | `(fcs_dir, apply=FALSE, in_place=TRUE, output_dir=NULL, also=character(), guid="never", probe_only=FALSE, revert=FALSE, ...)` |
+| `harmonize_marker_names.R` | `harmonize_marker_names()` | `(fcs_dir, canonical=NULL, aliases=NULL, probe_only=FALSE, apply=FALSE, in_place=FALSE, out_dir=NULL, revert=FALSE, ledger="marker_names_ledger.csv", ...)` |
