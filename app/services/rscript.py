@@ -185,7 +185,7 @@ def run_argv(params: dict) -> list[str]:
     add("--plot_height", params.get("plot_height"), config.DEFAULTS["plot_height"])
 
     formats = params.get("output_formats") or []
-    if sorted(formats) != sorted(config.DEFAULTS["output_formats"]):
+    if sorted(formats) != sorted(config.R_DEFAULT_OUTPUT_FORMATS):
         argv.extend(["--output_formats", ",".join(formats)])
 
     return argv

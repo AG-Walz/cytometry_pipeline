@@ -96,3 +96,5 @@ dependencies:
       - dash-mantine-components>=2.0
       - dash-iconify
       - gunicorn        # WSGI server used by app/run.sh (single worker)
+      - pandas          # scripts/fcs_overview.py
+      - openpyxl        # scripts/fcs_overview.py (xlsx output)

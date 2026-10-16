@@ -812,11 +812,16 @@ fcs_range_identical <- function(path_a, from_a, path_b, from_b, n,
 #' @param output_path Where to write. NULL means patch `path` itself.
 #' @param allow Refusal codes to downgrade.
 #' @param dry_run Plan and report, write nothing.
+#' @param allow_parameter_labels Let $PnS (the marker label of parameter n)
+#'   through the parameter-keyword guard. $PnS is a free-text display name with
+#'   no structural role, unlike $PnB/$PnN/$PnE/$PnR, which stay protected. Off
+#'   by default; only the marker-name harmoniser turns it on.
 #' @param .fault Test-only fault injection; NULL in every real call.
 #' @return list(status = ok|unchanged|refused|failed, strategy, changed, ...).
 fcs_write_keywords <- function(path, set = character(), unset = character(),
                                output_path = NULL, allow = character(),
                                dry_run = FALSE, chunk_bytes = 8 * 1024^2,
+                               allow_parameter_labels = FALSE,
                                .fault = NULL) {
   res <- list(path = path, output_path = output_path, status = "failed",
               strategy = NA_character_, changed = character(0),
@@ -850,8 +855,9 @@ fcs_write_keywords <- function(path, set = character(), unset = character(),
 
   # --- what is actually changing -------------------------------------------
   protected <- toupper(trimws(c(names(set), unset)))
-  bad <- protected[protected %in% FCS_PROTECTED_KEYWORDS |
-                     vapply(protected, .fcs_is_parameter_keyword, logical(1))]
+  is_param <- vapply(protected, .fcs_is_parameter_keyword, logical(1))
+  if (allow_parameter_labels) is_param <- is_param & !grepl("^\\$P[0-9]+S$", protected)
+  bad <- protected[protected %in% FCS_PROTECTED_KEYWORDS | is_param]
   if (length(bad)) {
     res$status <- "refused"
     res$refusals <- "protected_keyword"

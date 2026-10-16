@@ -1,0 +1,365 @@
+---
+title: "`r params$cohort`: acquisition drift and instrument shift"
+output: html_document
+params:
+  out: "results"
+  cohort: "cohort"
+  config: ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(ggplot2)
+out <- params$out
+rd <- function(f) if (file.exists(file.path(out, f))) read.csv(file.path(out, f), stringsAsFactors = FALSE) else NULL
+drift_src <- file.path(dirname(knitr::current_input(dir = TRUE)), "..", "..", "src", "harmonization", "drift")
+source(file.path(drift_src, "drift_models.R")); source(file.path(drift_src, "drift_biology.R"))
+tt <- rd("tubes.csv"); dec <- rd("decisions.csv"); eff <- read_effects(out)
+cfg <- if (nzchar(params$config) && file.exists(params$config)) yaml::read_yaml(params$config) else NULL
+cs <- function(x) paste(unlist(x), collapse = ", ")
+
+# One visual system for every figure: instruments are identities (fixed categorical order, reference
+# first), verdicts are statuses (detected effects in colour, the rest grey), signed effects use a
+# blue-grey-red diverging scale and magnitudes a single blue ramp.
+ref <- if (!is.null(cfg)) cfg$reference_instrument else NA
+instr_levels <- if (!is.null(tt)) c(intersect(ref, unique(tt$instrument)), setdiff(sort(unique(tt$instrument)), ref)) else character(0)
+pal_instr <- setNames(c("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948")[seq_along(instr_levels)], instr_levels)
+verdict_levels <- c("not detected", "detected, relevance unknown", "detected, not clinically relevant", "detected, correct")
+pal_verdict <- setNames(c("#9a9a94", "#eda100", "#eda100", "#e34948"), verdict_levels)
+shape_verdict <- setNames(c(16, 17, 15, 18), verdict_levels)
+thm <- theme_bw(base_size = 11) + theme(panel.grid.minor = element_blank(), panel.grid.major.x = element_blank(),
+  strip.background = element_rect(fill = "#f0f0ee", colour = NA), legend.position = "bottom",
+  axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1, size = 7))
+layer_lab <- c(A = "A technical", BG = "BG background", B = "B endpoint")
+if (!is.null(dec)) {
+  dec$verdict <- factor(dec$verdict, verdict_levels)
+  dec$layer_f <- factor(layer_lab[dec$layer], layer_lab)
+  dec$z <- dec$effect_mean / dec$replicate_sd      # effect in units of same-day replicate noise
+  dec$z_lo <- dec$ci_low / dec$replicate_sd; dec$z_hi <- dec$ci_high / dec$replicate_sd
+}
+if (!is.null(tt)) tt$instrument <- factor(tt$instrument, instr_levels)
+```
+
+Plan: `docs/plans/mtb_batch_drift_plan.md`.
+
+## Design
+
+```{r, results="asis"}
+if (is.null(cfg)) cat("No config passed (`config` param): design text omitted.\n") else {
+  d <- cfg$design; ctl <- cfg$controls
+  cat(sprintf("Repeated-measures unit: `%s` (random intercept in every model). Technical terms: %s. ", d$unit, cs(d$technical)))
+  cat(sprintf("Protected covariates, never absorbed into a technical term: %s. ", cs(d$protected_fixed)))
+  cat(sprintf("Time: `%s` (per-unit slope, centred, in years). Stimulation: `%s` (random intercept, endpoint class only). ", d$time, d$stimulation))
+  cat(sprintf("Reference instrument: `%s`.\n\n", cfg$reference_instrument))
+  cat(sprintf("Control matching: the neg tube is matched exactly on %s; when that neg is missing or its parent gate is empty, the fallbacks are tried in order: %s. The level used is recorded per row (`neg_match`).\n",
+              cs(ctl$match_keys), cs(ctl$fallbacks)))
+}
+```
+
+Acquisition map: one cell per patient and day, coloured by instrument, labelled with the number of tubes. Day drift is identified by rows with several cells, instrument shift by rows that carry both colours.
+
+```{r, fig.width=11, fig.height=6}
+if (!is.null(tt)) {
+  am <- aggregate(cbind(n = 1, negs = tt$is_neg %in% TRUE) ~ patient + acq_day + instrument, tt, sum)
+  am$patient <- factor(am$patient, sort(unique(am$patient), decreasing = TRUE))
+  print(ggplot(am, aes(acq_day, patient, fill = instrument)) + geom_tile(colour = "white", linewidth = 1) +
+    geom_text(aes(label = n), size = 3, colour = "white") +
+    scale_fill_manual(values = pal_instr, drop = FALSE) + thm +
+    labs(x = "acquisition day", y = "patient", fill = NULL, title = "Tubes per patient and acquisition day"))
+}
+```
+
+```{r}
+knitr::kable(as.data.frame.matrix(table(tt$acq_day, tt$instrument)), caption = "Tubes per acquisition day and instrument")
+knitr::kable(rd("bridge_report.csv"), caption = "Patients bridging days and instruments")
+```
+
+## Biological effect: weeks since first vaccination
+
+The headline of this analysis is biology: the change of every endpoint response with time since first vaccination (fixed week slope, logit per year, lme4 glmer with the endpoint design plus the fixed slope). Each slope is estimated twice, with the full design and with the technical terms removed (no instrument contrast, no acquisition-day intercept). If the two agree, technical drift is not what the response is measuring. Below, the full model is refitted with each acquisition day left out in turn, and the per-patient slopes (fixed plus random) are shown by group.
+
+```{r, results="asis"}
+sens <- rd("week_slope_sensitivity.csv"); lodo <- rd("week_slope_lodo.csv"); subj <- rd("week_slope_subjects.csv")
+pal_model <- c(full = "#2a78d6", no_technical = "#1baf7a")
+if (!is.null(sens) && !is.null(lodo)) cat(sensitivity_sentence(sens), lodo_sentence(lodo, sens), "\n")
+```
+
+```{r, fig.width=9, fig.height=4.5}
+if (!is.null(sens)) {
+  sp <- sens[is.finite(sens$week_slope), ]
+  sp$model <- factor(sp$model, names(pal_model)); sp$lo <- sp$week_slope - 1.96 * sp$se; sp$hi <- sp$week_slope + 1.96 * sp$se
+  sp$response <- factor(sp$response, rev(unique(sp$response[sp$model == "full"][order(sp$week_slope[sp$model == "full"])])))
+  print(ggplot(sp, aes(week_slope, response, colour = model)) + geom_vline(xintercept = 0, colour = "#52514e") +
+    geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0, linewidth = .6, position = position_dodge(.55)) +
+    geom_point(size = 2.6, position = position_dodge(.55)) +
+    scale_colour_manual(values = pal_model, labels = c(full = "full design", no_technical = "without technical terms"), drop = FALSE) +
+    thm + theme(axis.text.x = element_text(angle = 0, hjust = .5)) +
+    labs(x = "week slope, logit per year (estimate and 95% interval)", y = NULL, colour = NULL,
+         title = "Change of the endpoint responses over time, with and without the technical terms"))
+} else cat("week_slope_sensitivity.csv not present (run scripts/drift/06_biology.R)\n")
+```
+
+```{r, fig.width=11, fig.height=7.5}
+if (!is.null(lodo) && !is.null(sens)) {
+  ls <- lodo_shifts(lodo, sens); ls <- ls[is.finite(ls$week_slope), ]
+  full <- unique(ls[, c("response", "week_slope_full", "se_full")])
+  print(ggplot(ls, aes(dropped_day, week_slope)) +
+    geom_rect(data = full, aes(xmin = -Inf, xmax = Inf, ymin = week_slope_full - se_full, ymax = week_slope_full + se_full), inherit.aes = FALSE, fill = "#f0f0ee") +
+    geom_hline(data = full, aes(yintercept = week_slope_full), colour = pal_model[["full"]], linewidth = .8) +
+    geom_hline(yintercept = 0, colour = "#52514e", linetype = 2) +
+    geom_point(colour = "#9a9a94", size = 1.6) +
+    geom_point(data = ls[ls$flag, ], colour = "#eb6834", size = 2.2) +
+    geom_text(data = ls[ls$flag, ], aes(label = dropped_day), colour = "#eb6834", size = 2.4, angle = 90,
+              hjust = ifelse(ls$shift_se[ls$flag] > 0, -0.25, 1.25)) +
+    facet_wrap(~response, scales = "free_y", ncol = 4) + scale_y_continuous(expand = expansion(mult = .55)) + coord_cartesian(clip = "off") + thm +
+    labs(x = "acquisition day left out", y = "week slope, logit per year",
+         title = "Leave-one-day-out: blue line and band are the full-model slope and its SE; labelled days move it by more than one SE"))
+} else cat("week_slope_lodo.csv not present (run scripts/drift/06_biology.R)\n")
+```
+
+```{r, fig.width=11, fig.height=4.5}
+if (!is.null(subj)) {
+  grp <- if (!is.null(tt) && "prior_vacc" %in% names(tt)) unique(tt[, c("patient", "prior_vacc")]) else NULL
+  subj$patient <- as.character(subj$patient)
+  if (!is.null(grp)) { grp$patient <- as.character(grp$patient); subj <- merge(subj, grp, by = "patient", all.x = TRUE); subj$group <- factor(paste("prior_vacc =", subj$prior_vacc)) }
+  else subj$group <- factor("all patients")
+  pal_group <- setNames(c("#4a3aa7", "#e87ba4", "#eda100")[seq_along(levels(subj$group))], levels(subj$group))
+  set.seed(1)
+  print(ggplot(subj, aes(group, slope, colour = group)) + geom_hline(yintercept = 0, colour = "#52514e", linetype = 2) +
+    geom_jitter(width = .18, height = 0, size = 1.8, alpha = .85) +
+    stat_summary(fun = median, geom = "crossbar", width = .45, linewidth = .4, colour = "#52514e") +
+    facet_wrap(~response, scales = "free_y", ncol = 4) + scale_colour_manual(values = pal_group) +
+    thm + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+    labs(x = NULL, y = "per-patient week slope, logit per year", colour = NULL,
+         title = "Per-patient slopes (fixed plus random) from the full model; bar is the group median"))
+} else cat("week_slope_subjects.csv not present (run scripts/drift/06_biology.R)\n")
+```
+
+```{r}
+if (!is.null(sens)) knitr::kable(sensitivity_pairs(sens)[, c("response", "week_slope", "se", "week_slope_nt", "se_nt", "shift_se", "rel_change")], digits = 3,
+  col.names = c("response", "slope (full)", "SE", "slope (no technical)", "SE", "shift / SE", "relative change"), caption = "Week slope with and without the technical terms", row.names = FALSE)
+```
+
+## Decisions
+
+Every effect is shown in units of the same-day replicate noise of that response, so scatter, arcsinh and logit responses share one axis. Rule 1 asks whether the effect exceeds one replicate SD with posterior probability above the configured threshold (dashed lines at plus and minus 1). Rule 2 counts positivity calls that change when the effect is removed.
+
+```{r, fig.width=11, fig.height=9}
+if (!is.null(dec)) {
+  di <- dec[dec$term == "instrument" & is.finite(dec$z), ]
+  di$response <- factor(di$response, rev(unique(di$response[order(di$layer, di$z)])))
+  print(ggplot(di, aes(z, response, colour = verdict, shape = verdict)) +
+    geom_vline(xintercept = 0, colour = "#52514e") + geom_vline(xintercept = c(-1, 1), linetype = 2, colour = "#9a9a94") +
+    geom_errorbarh(aes(xmin = z_lo, xmax = z_hi), height = 0, linewidth = .5) + geom_point(size = 2.5) +
+    facet_grid(layer_f ~ level, scales = "free_y", space = "free_y") +
+    scale_x_continuous(trans = scales::pseudo_log_trans(sigma = 1), breaks = c(-30, -10, -3, -1, 0, 1, 3, 10, 30, 100)) +
+    scale_colour_manual(values = pal_verdict, drop = FALSE) + scale_shape_manual(values = shape_verdict, drop = FALSE) +
+    thm + theme(axis.text.x = element_text(angle = 0, hjust = .5)) +
+    labs(x = "instrument effect, in replicate-SD units (posterior mean and 95% interval; pseudo-log axis)", y = NULL, colour = NULL, shape = NULL,
+         title = "Instrument contrast against the reference, every response"))
+}
+```
+
+```{r, fig.width=12, fig.height=9}
+if (!is.null(dec)) {
+  dd <- dec[dec$term == "day" & is.finite(dec$z), ]
+  dd$z_c <- pmax(pmin(dd$z, 3), -3)
+  dd$mark <- ifelse(grepl("^detected", dd$verdict), ifelse(dd$positivity_flips %in% 0 | is.na(dd$positivity_flips), "●", as.character(dd$positivity_flips)), "")
+  print(ggplot(dd, aes(level, response, fill = z_c)) + geom_tile(colour = "white", linewidth = .6) +
+    geom_text(aes(label = mark), size = 2.6, colour = "#0b0b0b") +
+    facet_grid(layer_f ~ ., scales = "free_y", space = "free_y") +
+    scale_fill_gradient2(low = "#2a78d6", mid = "#f0f0ee", high = "#e34948", limits = c(-3, 3), name = "effect / replicate SD\n(capped at 3)") +
+    thm + theme(legend.position = "right") +
+    labs(x = "acquisition day", y = NULL, title = "Day effects; a dot marks an effect above replicate noise, a number the positivity calls it flips"))
+}
+```
+
+```{r, fig.width=10, fig.height=4}
+if (!is.null(dec)) {
+  fl <- dec[dec$term == "day" & !is.na(dec$positivity_flips) & dec$positivity_flips > 0, ]
+  if (nrow(fl)) {
+    fl$rule1 <- ifelse(grepl("^detected", fl$verdict), "above replicate noise", "within replicate noise")
+    print(ggplot(fl, aes(level, positivity_flips, fill = rule1)) + geom_col(width = .7) +
+      facet_grid(layer_f ~ ., scales = "free_y") +
+      scale_fill_manual(values = c("above replicate noise" = "#e34948", "within replicate noise" = "#9a9a94")) + thm +
+      labs(x = "acquisition day", y = "positivity calls flipped", fill = NULL,
+           title = "Positivity calls that change when a day effect is removed (all responses, stacked)"))
+  } else cat("no day effect flips a positivity call\n")
+}
+```
+
+```{r}
+knitr::kable(dec[dec$term == "instrument", setdiff(names(dec), c("layer_f", "z", "z_lo", "z_hi"))], digits = 3, caption = "Instrument contrast, every response", row.names = FALSE)
+knitr::kable(dec[dec$term == "day" & grepl("^detected", dec$verdict), setdiff(names(dec), c("layer_f", "z", "z_lo", "z_hi"))], digits = 3, caption = "Acquisition days with an effect above replicate noise", row.names = FALSE)
+```
+
+## Background (unstimulated) shifts
+
+Layer BG: cytokine background in the neg tubes, as gate counts (`parent:gate`, logit scale) and as median intensity (`marker:median`, arcsinh units). Flips count stimulated calls that change when only the matched neg is shifted back.
+
+```{r, fig.width=11, fig.height=6}
+bg <- if (!is.null(dec)) dec[dec$layer == "BG", ] else NULL
+if (!is.null(bg) && nrow(bg)) {
+  print(knitr::kable(bg[bg$term == "instrument", setdiff(names(bg), c("layer_f", "z", "z_lo", "z_hi"))], digits = 3, caption = "Background: instrument contrasts", row.names = FALSE))
+  print(knitr::kable(bg[bg$term == "day" & grepl("^detected", bg$verdict), setdiff(names(bg), c("layer_f", "z", "z_lo", "z_hi"))], digits = 3, caption = "Background: days above replicate noise", row.names = FALSE))
+} else cat("no layer BG decisions (background fits not run)\n")
+fq <- rd("gated_frequencies.csv")
+if (!is.null(fq)) {
+  ng <- fq[fq$is_neg & !is.na(fq$parent_count) & fq$parent_count > 0, ]; ng$response <- paste(ng$parent, ng$gate, sep = ":")
+  ng$instrument <- factor(ng$instrument, instr_levels)
+  print(ggplot(ng, aes(acq_day, pct, colour = instrument)) + geom_point(alpha = .8, size = 2) +
+    facet_wrap(~response, scales = "free_y", ncol = 4) + scale_colour_manual(values = pal_instr, drop = FALSE) + thm +
+    labs(x = "acquisition day", y = "neg tube, percent of parent", colour = NULL, title = "Cytokine background frequency in the neg tubes"))
+}
+ns <- rd("neg_summaries.csv")
+if (!is.null(ns) && !is.null(cfg)) {
+  ns <- merge(ns[ns$marker %in% cfg$cytokine_markers, ], tt[tt$is_neg %in% TRUE, c("filename", "acq_day", "instrument")], by = "filename")
+  if (nrow(ns)) print(ggplot(ns, aes(acq_day, median, colour = instrument)) + geom_point(alpha = .8, size = 2) +
+    facet_wrap(~marker, scales = "free_y", ncol = 4) + scale_colour_manual(values = pal_instr, drop = FALSE) + thm +
+    labs(x = "acquisition day", y = "neg tube median, arcsinh units", colour = NULL, title = "Cytokine background intensity in the neg tubes"))
+}
+```
+
+## Protected covariates
+
+Posterior mean and 95 percent interval of the protected covariates and the time slope. These are biology and are reported, never corrected.
+
+```{r, fig.width=10, fig.height=5}
+cv <- rd("covariates_brms.csv")
+if (!is.null(cv)) {
+  cv$term <- ifelse(is.na(cv$level) | cv$level == "", cv$covariate, paste0(cv$covariate, " = ", cv$level))
+  cv$layer_f <- factor(layer_lab[cv$layer], layer_lab)
+  print(ggplot(cv, aes(mean, response)) + geom_vline(xintercept = 0, colour = "#52514e") +
+    geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0, colour = "#2a78d6") + geom_point(colour = "#2a78d6", size = 2.2) +
+    facet_grid(layer_f ~ term, scales = "free", space = "free_y") + thm + theme(axis.text.x = element_text(angle = 0, hjust = .5)) +
+    labs(x = "posterior mean and 95% interval (logit for counts, arcsinh for intensities)", y = NULL))
+  knitr::kable(cv[, setdiff(names(cv), c("term", "layer_f"))], digits = 3, caption = "Protected covariates, per response", row.names = FALSE)
+} else cat("covariates_brms.csv not present\n")
+```
+
+## Technical-marker assumption check
+
+Layer A assumes the technical markers carry no biology. Each response is refitted with the protected covariates and time added; the plot shows estimate over standard error, the table the likelihood-ratio p values.
+
+```{r, fig.width=9, fig.height=4.5}
+ac <- rd("assumption_check.csv")
+if (!is.null(ac)) {
+  ac$zval <- ac$estimate / ac$se; ac$flag <- ifelse(ac$p_lrt < 0.05, "p < 0.05", "p >= 0.05")
+  print(ggplot(ac, aes(zval, response, colour = flag, shape = flag)) + geom_vline(xintercept = 0, colour = "#52514e") +
+    geom_vline(xintercept = c(-2, 2), linetype = 2, colour = "#9a9a94") + geom_point(size = 2.5) + facet_grid(. ~ covariate) +
+    scale_colour_manual(values = c("p < 0.05" = "#eda100", "p >= 0.05" = "#9a9a94")) + scale_shape_manual(values = c("p < 0.05" = 17, "p >= 0.05" = 16)) +
+    thm + theme(axis.text.x = element_text(angle = 0, hjust = .5)) +
+    labs(x = "estimate / SE of the covariate in a technical-marker model", y = NULL, colour = NULL, shape = NULL))
+  knitr::kable(ac[, c("layer", "response", "covariate", "estimate", "se", "p_lrt")], digits = 4, caption = "Layer A refitted with the protected covariates: estimate, SE and likelihood-ratio p", row.names = FALSE)
+} else cat("assumption_check.csv not present\n")
+```
+
+## Control matching
+
+```{r}
+cm <- rd("controls_summary.csv")
+if (!is.null(cm)) {
+  print(knitr::kable(cm[is.na(cm$patient), c("parent", "neg_match", "n")], caption = "Stimulated rows per parent and matching level", row.names = FALSE))
+  fbk <- cm[!is.na(cm$patient), c("patient", "week", "parent", "gate", "neg_match")]
+  if (nrow(fbk)) print(knitr::kable(fbk, caption = "Rows that needed a fallback neg", row.names = FALSE)) else cat("every stimulated row has an exact neg\n")
+} else cat("controls_summary.csv not present (rerun steps 5 and 9)\n")
+```
+
+## Neg-tube distributions over time
+
+Raw layer A signal: the median of each technical marker in every neg tube, by acquisition day and instrument, then the Earth Mover's Distance of each tube to the pooled reference-instrument negs of the same patient.
+
+```{r, fig.width=11, fig.height=5}
+ns_all <- rd("neg_summaries.csv")
+if (!is.null(ns_all) && !is.null(cfg)) {
+  nt <- merge(ns_all[ns_all$marker %in% cfg$technical_markers, ], tt[tt$is_neg %in% TRUE, c("filename", "acq_day", "instrument")], by = "filename")
+  print(ggplot(nt, aes(acq_day, median, colour = instrument)) + geom_point(alpha = .8, size = 2) +
+    facet_wrap(~marker, scales = "free_y", ncol = 5) + scale_colour_manual(values = pal_instr, drop = FALSE) + thm +
+    labs(x = "acquisition day", y = "neg tube median (arcsinh units; scatter: raw units)", colour = NULL, title = "Technical markers in the neg tubes"))
+}
+e <- rd("neg_emd.csv")
+if (!is.null(e)) {
+  e <- merge(e, tt, by = "filename")
+  print(ggplot(e, aes(acq_day, emd, colour = instrument)) + geom_point(alpha = .8, size = 2) + facet_wrap(~marker, scales = "free_y", ncol = 5) +
+    scale_colour_manual(values = pal_instr, drop = FALSE) + thm + labs(x = "acquisition day", y = "EMD to reference negs", colour = NULL, title = "Distance of every neg tube to its reference"))
+}
+```
+
+## Day effects, all fitters
+
+```{r, fig.width=11, fig.height=7}
+if (!is.null(eff) && nrow(eff)) {
+  key <- c("model", "layer", "response", "term", "level")
+  d <- eff[eff$term == "day" & eff$layer == "A" & grepl(":median$", eff$response), ]
+  if (nrow(d)) {
+    sp <- split(d$value, d[key], drop = TRUE)
+    s <- do.call(rbind, lapply(names(sp), function(k) {
+      v <- sp[[k]]; parts <- strsplit(k, ".", fixed = TRUE)[[1]]
+      data.frame(model = parts[1], response = parts[3], level = parts[5], m = mean(v),
+                 lo = unname(quantile(v, .025)), hi = unname(quantile(v, .975)))
+    }))
+    print(ggplot(s, aes(level, m, colour = model)) +
+      geom_pointrange(aes(ymin = lo, ymax = hi), position = position_dodge(.6), size = .3) +
+      geom_hline(yintercept = 0, linetype = 2) +
+      facet_wrap(~response, scales = "free_y") + scale_colour_manual(values = c("#2a78d6", "#eb6834", "#1baf7a", "#eda100")) + thm +
+      labs(x = "acquisition day", y = "effect on neg-tube median (arcsinh units; scatter: raw units)", colour = NULL))
+  }
+}
+```
+
+## Gate-position drift (were shifts hand-corrected by the analyst?)
+
+```{r, fig.width=10, fig.height=4}
+gb <- rd("gate_bounds.csv")
+if (!is.null(gb) && nrow(gb)) {
+  gb$position <- ifelse(is.na(gb$lower), gb$upper, gb$lower)
+  gb <- merge(gb[!is.na(gb$position) & !is.na(gb$marker), ], tt[, c("filename", "acq_day", "instrument")], by = "filename")
+  gb$gate <- paste0(gb$parent, " gate on ", gb$marker)
+  print(ggplot(gb, aes(acq_day, position, colour = instrument)) + geom_point(alpha = .6, size = 1.8) +
+    facet_wrap(~gate, scales = "free_y") + scale_colour_manual(values = pal_instr, drop = FALSE) + thm +
+    labs(x = "acquisition day", y = "gate boundary, arcsinh units", colour = NULL, title = "Where the analyst placed the parent gates, per tube"))
+}
+g <- rd("gate_drift.csv"); if (!is.null(g)) knitr::kable(g, digits = 3) else cat("gate_bounds.csv empty: no rectangle/polygon gates found for the parent populations")
+```
+
+## Frequentist cross-check
+
+Variance components from lme4: how large the day variance is relative to the between-patient variance, per response.
+
+```{r, fig.width=10, fig.height=8}
+lv <- rd("lme4_variance_components.csv")
+if (!is.null(lv)) {
+  lv$layer_f <- factor(layer_lab[lv$layer], layer_lab); lv$ratio <- pmin(lv$drift_to_biology, 5)
+  lv1 <- lv[!duplicated(lv[, c("layer", "response")]), ]
+  print(ggplot(lv1, aes(ratio, response)) + geom_col(fill = "#2a78d6", width = .7) + geom_vline(xintercept = 1, linetype = 2, colour = "#52514e") +
+    facet_grid(layer_f ~ ., scales = "free_y", space = "free_y") + thm + theme(axis.text.x = element_text(angle = 0, hjust = .5)) +
+    labs(x = "SD(day) / SD(patient), capped at 5", y = NULL, title = "Day drift relative to between-patient biology"))
+  knitr::kable(lv[, setdiff(names(lv), c("layer_f", "ratio"))], digits = 4, row.names = FALSE)
+}
+```
+
+## Fitter agreement and BayesFlow acceptance
+
+Each point is one day or instrument effect: the primary fitter's posterior mean against another fitter's. Agreement means the second mean lies inside the primary 95 percent interval.
+
+```{r, fig.width=10, fig.height=4.5}
+fa <- rd("fitter_agreement.csv")
+if (!is.null(fa)) {
+  fa$agree_f <- ifelse(fa$agree %in% TRUE, "inside 95% interval", "outside")
+  sd_a <- (fa$hi - fa$lo) / 3.92; fa$za <- fa$mean / sd_a; fa$zb <- fa$mean_b / sd_a   # both in units of the primary posterior SD
+  print(ggplot(fa, aes(za, zb, colour = agree_f, shape = agree_f)) + geom_abline(colour = "#52514e") + geom_point(alpha = .7, size = 1.8) +
+    facet_grid(layer ~ model_b) + scale_colour_manual(values = c("inside 95% interval" = "#2a78d6", "outside" = "#e34948")) +
+    scale_shape_manual(values = c("inside 95% interval" = 16, "outside" = 17)) + thm + theme(axis.text.x = element_text(angle = 0, hjust = .5)) +
+    labs(x = paste(unique(fa$model_a)[1], "posterior mean, in units of its posterior SD"), y = "other fitter posterior mean, same units", colour = NULL, shape = NULL))
+  knitr::kable(agreement_table(fa))
+}
+for (v in c("v1", "v2")) { r <- rd(sprintf("bf_%s_recovery.csv", v)); if (!is.null(r)) print(knitr::kable(merge(r, rd(sprintf("bf_%s_sbc.csv", v))), digits = 3, caption = paste("BayesFlow", v))) }
+p <- rd("bf_v2_ppc.csv"); if (!is.null(p)) cat(sprintf("BayesFlow v2 posterior predictive: %.2f of real neg medians inside the 90%% band\n", mean(tolower(p$inside_90) == "true")))
+tm <- list.files(out, "bf_v._timing.json", full.names = TRUE); for (f in tm) cat(basename(f), ":", readLines(f), "\n")
+```
+
+## QC and exclusions
+
+```{r}
+knitr::kable(rd("excluded_tubes.csv"))
+```

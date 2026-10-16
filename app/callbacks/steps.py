@@ -372,10 +372,7 @@ def register_callbacks() -> None:
             data = gating.flat_subgate_tree(populations, population)
             expanded: list[str] = []
             mode_note = dmc.Text(
-                "Every gate under the selected population. Turn this off to "
-                "change the population.",
-                size="xs",
-                c="dimmed",
+                "Gates under the selected population.", size="xs", c="dimmed",
                 mb=6,
             )
         else:
@@ -398,37 +395,17 @@ def register_callbacks() -> None:
         ]
         if multi:
             # With several workspaces the gate list is their INTERSECTION, and
-            # saying so here saves you hunting for a gate that only one of them
-            # has. In per-workspace mode that is no longer true, and a stale
-            # sentence here would flatly contradict the tree underneath it.
+            # saying so saves you hunting for a gate only one of them has. In
+            # per-workspace mode that is no longer true.
             body += [
                 dmc.Space(h=4),
                 dmc.Text(
-                    (f"The tree below shows {wsp}'s OWN gates. Each workspace "
-                     "contributes the gate you pick for it."
-                     if per_wsp else
-                     "The tree below shows only the gates shared by every "
-                     "workspace — those are the ones a run can use."),
-                    size="xs",
-                ),
-                dmc.Space(h=6),
-                dmc.Group(
-                    [dmc.Badge(w.get("label", "?"), variant="light", size="sm",
-                               tt="none")
-                     for w in workspaces],
-                    gap=4,
+                    (f"Tree: {wsp}'s own gates." if per_wsp else
+                     "Tree: gates shared by every workspace."),
+                    size="xs", c="dimmed",
                 ),
             ]
-        body += [
-            dmc.Space(h=4),
-            dmc.Text(", ".join(samples) or "—", size="xs", c="dimmed"),
-        ]
-        summary = dmc.Alert(
-            body,
-            color="green",
-            variant="light",
-            title="Workspaces loaded" if multi else "Workspace loaded",
-        )
+        summary = dmc.Alert(body, color="green", variant="light")
         return (
             data,
             expanded,
@@ -485,9 +462,7 @@ def register_callbacks() -> None:
         if not per_wsp:
             return None
         if not by_wsp:
-            return _alert(
-                "Load the workspaces in step 1 first — this needs each "
-                "workspace's own gating tree.", color="gray")
+            return _alert("Load the workspaces in step 1 first.", color="gray")
 
         pop_map = pop_map or {}
         labels = list(by_wsp)
@@ -671,11 +646,8 @@ def register_callbacks() -> None:
         }
         chosen = common.subpop_selection(form, populations)
         if not chosen:
-            return _alert(
-                "Tick gates underneath the selected population to build the "
-                "colour partition.",
-                color="yellow",
-            )
+            return _alert("Tick gates under the selected population.",
+                          color="yellow")
         return dmc.Box(
             [
                 dmc.Text(f"--subpop_select ({len(chosen)} gate(s))",
@@ -691,6 +663,82 @@ def register_callbacks() -> None:
             ],
             mt=8,
         )
+
+    # -- sample metadata upload --------------------------------------------
+
+    @callback(
+        Output({"comp": "fb-input", "bid": "meta"}, "value"),
+        Input("up-meta", "contents"),
+        State("up-meta", "filename"),
+        prevent_initial_call=True,
+    )
+    def store_metadata(contents, filename):
+        """Save the upload as a comma CSV the R side can read, and hand back its path.
+
+        XLSX is converted here because R only reads CSV; every column is kept
+        as text so a timepoint like "01" stays "01".
+        """
+        import base64
+        import io
+        import pandas as pd
+
+        raw = base64.b64decode(contents.split(",", 1)[1])
+        if filename.lower().endswith(".xlsx"):
+            df = pd.read_excel(io.BytesIO(raw), dtype=str)
+        else:
+            # Same rule as the R reader: ";" if the header has one, else ",".
+            first = raw.split(b"\n", 1)[0]
+            sep = ";" if b";" in first else "\t" if b"\t" in first else ","
+            df = pd.read_csv(io.BytesIO(raw), dtype=str, sep=sep)
+        dest = config.CACHE_DIR / "metadata" / (Path(filename).stem + ".csv")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(dest, index=False)
+        return str(dest)
+
+    @callback(
+        Output("meta-check", "children"),
+        Output("meta-title", "children"),
+        Output("meta-table", "columns"),
+        Output("meta-table", "data"),
+        Input({"comp": "fb-input", "bid": "meta"}, "value"),
+        Input({"comp": "fb-input", "bid": "fcs"}, "value"),
+    )
+    def check_metadata(metadata, fcs_dir):
+        """Validate the table and show it: first column = FCS file name, and
+        every FCS file in the folder must have exactly one row."""
+        import pandas as pd
+
+        path = (metadata or "").strip()
+        if not path:
+            return None, "No metadata uploaded.", [], []
+        try:
+            df = pd.read_csv(path, dtype=str, keep_default_na=False)
+        except Exception as exc:  # noqa: BLE001 - shown to the user as is
+            return _alert(f"Could not read the metadata: {exc}"), "No metadata uploaded.", [], []
+
+        key = lambda n: Path(str(n)).name.lower().removesuffix(".fcs")  # noqa: E731
+        problems = []
+        if df.shape[1] < 2:
+            problems.append("At least two columns are needed: the file name plus one annotation.")
+        if any(c.startswith("Unnamed:") or not c.strip() for c in df.columns):
+            problems.append("Every column needs a header.")
+        keys = [key(v) for v in df.iloc[:, 0]]
+        if "" in keys:
+            problems.append("The first column has empty file names.")
+        dups = sorted({k for k in keys if keys.count(k) > 1} - {""})
+        if dups:
+            problems.append(f"Duplicate file names: {', '.join(dups[:5])}.")
+        fcs, _ = fs_tree.find_files((fcs_dir or "").strip(), (".fcs",))
+        missing = sorted(Path(f).name for f in fcs if key(f) not in set(keys))
+        if missing:
+            problems.append(f"{len(missing)} of {len(fcs)} FCS file(s) have no metadata row: "
+                            + ", ".join(missing[:5]) + ("…" if len(missing) > 5 else ""))
+        title = f"{Path(path).name}: {len(df)} row(s), {df.shape[1] - 1} annotation column(s)."
+        note = (_alert(_problem_list(problems), color="red", title="Metadata problems")
+                if problems else
+                _alert(title + (f" All {len(fcs)} FCS file(s) covered." if fcs else
+                                " Pick an FCS folder to check coverage."), color="green"))
+        return note, title, [{"name": c, "id": c} for c in df.columns], df.to_dict("records")
 
     # -- sample annotations ------------------------------------------------
 
@@ -826,9 +874,7 @@ def register_callbacks() -> None:
             )
         if "svg" in formats and "png" not in formats:
             return _alert(
-                "SVG previews of a large embedding carry one node per cell and "
-                "can be slow to render in the browser. Tick PNG too for a fast "
-                "gallery.",
+                "Large SVGs are not previewed in the gallery; tick PNG too.",
                 color="blue",
             )
         return None

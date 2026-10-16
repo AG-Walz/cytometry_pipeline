@@ -285,7 +285,8 @@ def register_callbacks() -> None:
 
     @callback(
         Output("run-start-sink", "children"),
-        Output("store-results-dir", "data", allow_duplicate=True),
+        Output({"comp": "fb-input", "bid": "results"}, "value",
+               allow_duplicate=True),
         Input("btn-run", "n_clicks"),
         *common.form_states(),
         State("store-inspect", "data"),
@@ -330,7 +331,8 @@ def register_callbacks() -> None:
 
     @callback(
         Output("reattach-note", "children"),
-        Output("store-results-dir", "data", allow_duplicate=True),
+        Output({"comp": "fb-input", "bid": "results"}, "value",
+               allow_duplicate=True),
         Input("poll", "n_intervals"),
         State({"comp": "fb-input", "bid": "outparent"}, "value"),
         prevent_initial_call=True,
@@ -376,13 +378,17 @@ def register_callbacks() -> None:
         Output("progress-wrap", "children"),
         Output("store-run-generation", "data"),
         Output("store-inspect", "data"),
-        Output("store-results-dir", "data"),
+        Output({"comp": "fb-input", "bid": "results"}, "value",
+               allow_duplicate=True),
         Output("inspect-feedback", "children"),
         Output("tabs", "value"),
         Input("poll", "n_intervals"),
         State("store-run-generation", "data"),
         State("store-inspect", "data"),
         State("tabs", "value"),
+        # The results-folder output is shared with start_run (and the file
+        # browser); this is what lets a duplicate output fire on page load.
+        prevent_initial_call="initial_duplicate",
     )
     def poll(_n, seen_generation, inspect_store, current_tab):
         snap = RUNNER.snapshot()

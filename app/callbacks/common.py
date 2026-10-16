@@ -45,6 +45,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("plot_width", "in-width", "value"),
     ("plot_height", "in-height", "value"),
     ("output_formats", "in-formats", "value"),
+    ("results_dir", {"comp": "fb-input", "bid": "results"}, "value"),
     ("population_map", "store-popmap", "data"),
     ("excluded_workspaces", "store-wsp-exclude", "data"),
     ("selected_gates", "gate-tree", "selected"),

@@ -186,8 +186,11 @@ process group. Only one thing runs at a time, inspect included.
 
 ## Results
 
-The gallery reads the output directory rather than tracking what the script
-said it wrote, so it shows the truth on disk. Files are grouped into:
+The gallery reads the **Results folder** at the top of the tab rather than
+tracking what the script said it wrote, so it shows the truth on disk. A
+finished run fills the folder in; typing or browsing to an earlier run shows
+that run instead, and the value is remembered with the rest of the form, so a
+reload or a server restart does not lose it. Files are grouped into:
 
 * **Overview** — `by_file`, `by_workspace` (only when several workspaces were
   loaded) and `by_subpopulation`
@@ -198,8 +201,10 @@ said it wrote, so it shows the truth on disk. Files are grouped into:
   has to control that itself.
 
 Marker and sample dropdowns filter all three. Clicking an image opens it full
-size. PNG is preferred for preview: an SVG of a large embedding carries one node
-per cell and can be tens of megabytes.
+size. PNG is preferred for preview and is the form's default output format
+(the CLI's own default stays `svg`): an SVG of a large embedding carries one
+node per cell and can be tens of megabytes, so an SVG over 8 MB is offered
+for download instead of being embedded.
 
 ---
 

@@ -25,8 +25,6 @@ SESSION_FILE = CACHE_DIR / "last_session.json"
 
 # File-browser filters.
 WSP_EXTENSIONS = (".wsp",)
-# Sample-metadata tables. The R side sniffs "," vs ";" itself.
-METADATA_EXTENSIONS = (".csv", ".tsv", ".txt")
 
 # Plot files the results gallery knows about. PNG is preferred for inline
 # preview: an SVG scatter of a large embedding carries one node per cell and can
@@ -34,12 +32,21 @@ METADATA_EXTENSIONS = (".csv", ".tsv", ".txt")
 PLOT_EXTENSIONS = (".png", ".svg", ".pdf")
 PREVIEW_EXTENSIONS = (".png", ".svg")
 EXTENSION_PREFERENCE = (".png", ".svg", ".pdf")
+#: An SVG larger than this is offered for download instead of embedded: with
+#: one node per cell, a cohort-sized embedding is a file the browser cannot
+#: render inline, and one such <img> freezes the whole gallery.
+MAX_INLINE_SVG_BYTES = 8 * 1024 * 1024
 
 SUBPOP_MODES = ("furthest", "cd4cd8", "direct", "deepest", "none")
 NORMALIZE_METHODS = ("none", "zscore", "minmax")
 # uwot's supported distance metrics.
 UMAP_METRICS = ("euclidean", "cosine", "manhattan", "hamming", "correlation")
 OUTPUT_FORMATS = ("svg", "png", "pdf")
+
+#: The R script's own --output_formats default. The form default below differs
+#: on purpose (PNG previews; SVG of a large embedding does not), so run_argv
+#: compares against THIS to decide whether the flag needs to be passed.
+R_DEFAULT_OUTPUT_FORMATS = ("svg",)
 
 #: Defaults for every form field, mirroring the R CLI.
 DEFAULTS: dict = {
@@ -82,9 +89,11 @@ DEFAULTS: dict = {
     "point_alpha": 0.6,
     "plot_width": 10.0,
     "plot_height": 8.0,
-    "output_formats": ["svg"],
+    "output_formats": ["png"],
     "output_parent": "",
     "output_name": "",
+    # Folder the Results tab shows. Set by the last finished run, or by hand.
+    "results_dir": "",
     # FCS-names tab. The folder only. The write mode is deliberately NOT
     # remembered: a refresh must never bring the app back pre-armed to apply.
     "fcs_sync_dir": "",

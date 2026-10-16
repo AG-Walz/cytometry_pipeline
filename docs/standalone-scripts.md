@@ -68,6 +68,7 @@ downsampled <- downsample_flowframes(
 | `panel_homogenization.R` | `homogenize_flowframes()` | `(flow_frames, sample_names, markers_of_interest, markername_replacing=list(), save_csv=FALSE, save_fcs=FALSE, output_dir=NULL)` | Named list of homogenized flowFrames |
 | `panel_comparison.R` | `compare_panels_detailed()` | `(flow_frames)` | Panel comparison report |
 | `batch_correction.R` | `run_batch_correction()` | `(flow_frames, batch_labels, ...)` | Batch-corrected flowFrames |
+| `drift/` (modules behind `scripts/drift/drift.R`) | `drift.R init / doctor / check / run / status` | `Rscript scripts/drift/drift.R run --sample_sheet CSV --fcs_dir DIR --wsp_dir DIR --out DIR --config CFG` | acquisition-drift analysis of a cohort: `tubes.csv`, `decisions.csv`, `report.html`; walkthrough in [`docs/scripts/drift.md`](scripts/drift.md) |
 
 **Example — Homogenizing panels standalone:**
 
@@ -172,3 +173,4 @@ results <- run_cluster_enrichment(
 | `overlap_statistics.R` | `compute_fleiss_kappa()` | `(label_lists, ...)` |
 | `compare_gatings.R` | `compare_gatings()` | `(pop_strings_list, ...)` |
 | `sync_fcs_names.R` | `sync_fcs_names()` | `(fcs_dir, apply=FALSE, in_place=TRUE, output_dir=NULL, also=character(), guid="never", probe_only=FALSE, revert=FALSE, ...)` |
+| `harmonize_marker_names.R` | `harmonize_marker_names()` | `(fcs_dir, canonical=NULL, aliases=NULL, probe_only=FALSE, apply=FALSE, in_place=FALSE, out_dir=NULL, revert=FALSE, ledger="marker_names_ledger.csv", ...)` |

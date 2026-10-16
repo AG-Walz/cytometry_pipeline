@@ -25,9 +25,13 @@ if [ ! -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
     exit 1
 fi
 
+# Activation hooks are not nounset-safe (cmdstan's reads an unset $CMDSTAN), so
+# relax -u around them or the script dies before gunicorn starts.
 # shellcheck disable=SC1091
 . "$CONDA_BASE/etc/profile.d/conda.sh"
+set +u
 conda activate "$UMAP_APP_ENV"
+set -u
 
 # Repo root, so `app.app` is importable and the R script is found relative to it.
 cd "$(dirname "$(readlink -f "$0")")/.."

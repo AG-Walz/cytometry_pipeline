@@ -72,6 +72,22 @@ Check **FlowJo -> Preferences -> Workspace -> "How should data files be named"**
 before you run it: if it is set to "Use Short File Name" you do not need the
 tool at all.
 
+Its sibling [`scripts/harmonize_marker_names.R`](docs/scripts/harmonize-marker-names.md)
+does the same for marker names: it writes one canonical spelling into `$PnS`
+across a cohort (`INFy`, `IFN` and blank all become `IFNg`), driven by a
+`markers` block such as the one in `config/drift_mtb.yaml`, with the same dry
+run, ledger and `--revert`.
+
+### Acquisition drift and instrument shift
+
+`scripts/drift/drift.R` runs the drift analysis of a cohort (`docs/plans/mtb_batch_drift_plan.md`):
+does the response over weeks since vaccination separate from the acquisition day and the cytometer,
+and does either need a correction? `drift.R init` pre-fills a sample sheet from the FCS headers,
+`check` tests whether the two clocks are separable before any model is fitted, `run` executes the
+steps whose outputs are missing or stale (Bayesian yardstick, lme4, decision rules, HTML report) and
+`status` shows what exists. The walkthrough for a new cohort is in
+[docs/scripts/drift.md](docs/scripts/drift.md); the R environment comes from `environment_drift.yml`.
+
 Both this and the UMAP script have a GUI: [`app/`](app/README.md) is a Dash
 front-end with a tab for each.
 
@@ -134,6 +150,8 @@ Rscript pipelines/pipeline_X_name.R --config config/pipeline_X_config.R
 | [File Formats](docs/file-formats.md) | Input and output file format specifications |
 | [Standalone Scripts](docs/standalone-scripts.md) | Using individual scripts outside pipelines |
 | [UMAP from a FlowJo Population](docs/scripts/umap-from-flowjo.md) | Extract a gated population from a `.wsp` + FCS, build a shared UMAP, colour by sample, FlowJo subgate, and every marker (conjoint + per file) |
+| [Drift analysis for a new cohort](docs/scripts/drift.md) | From a folder of FCS and `.wsp` files to the drift report: sample sheet, separability check, resumable `drift.R run`, status |
+| [Cytokine combinations per patient](docs/scripts/cytokine-combinations.md) | Stacked bars of the Boolean cytokine combinations under CD4/CD8 per FCS file, by timepoint and cocktail, one figure per patient |
 | [FlowJo → UMAP Dash app](app/README.md) | Browser front-end for that script: file/gate pickers, live log, results gallery |
 | [R_shared API Reference](docs/r-shared-reference.md) | Shared utility library (8 modules, 50+ functions) |
 | [Composability Guide](docs/composability-guide.md) | Cross-pipeline data flow, format contracts, example workflows |

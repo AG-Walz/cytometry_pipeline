@@ -1,0 +1,96 @@
+# Cohort configuration for the acquisition-drift analysis (docs/plans/mtb_batch_drift_plan.md):
+# the MTB ICS cohort. Every script under scripts/drift/ takes this file as --config; data and
+# result paths are given on the command line. Copy and edit it for another cohort.
+
+cohort: "MTB ICS cohort"
+
+# Where the biological metadata of each tube comes from. Step 1 first looks for a sample sheet
+# (--sample_sheet, CSV with a `filename` column plus the fields below) and otherwise parses the
+# file name with this regex. Named groups become columns of tubes.csv. Later steps need
+# `patient`, `cocktail` and `is_neg`; layer B additionally needs `prior_vacc` and `week`.
+# The MTB field called "batch" is PRIOR VACCINATION STATUS (2 = previously vaccinated), never a batch.
+tubes:
+  filename_regex: "^MTB(?<patient>\\d+)_(?<prior_vacc>\\d+)_V(?<vaccine>\\d+)W(?<week>\\d+)_(?<cocktail>.+)$"
+  integer_fields: [patient, prior_vacc, vaccine, week]
+  # A tube whose `cocktail` matches this regex is the unstimulated (neg) tube; its cocktail is set to "neg".
+  neg_regex: "neg$"
+
+# Instrument label from the FCS $CYT keyword: the first key found in $CYT (case-insensitive) gives
+# the label; unmatched $CYT strings are kept with non-alphanumerics removed.
+instrument_labels:
+  Symphony: "FACSymphonyA1"
+  Canto: "FACSCantoII"
+
+# Canonical marker names, matched case-insensitively against $PnS (marker) and $PnN (channel).
+# The first regex that hits wins. Scatter and time are kept by channel name.
+# Fluorochrome assignments are constant across the study, so the channel name ($PnN) is a
+# reliable fallback: 162 Canto files and 10 Symphony files carry no $PnS marker names at all,
+# and the ones that do spell IFNg as "INFy", "IFN" and live/dead as "ALD".
+markers:
+  FSC_A:    ["^FSC-A$"]
+  SSC_A:    ["^SSC-A$"]
+  LiveDead: ["live", "dead", "^ALD$", "aqua", "zombie", "viab", "^BV480-A$"]
+  CD4:      ["^CD4$", "^APC-Cy7-A$"]
+  CD8:      ["^CD8$", "^PE-Cy7-A$"]
+  IFNg:     ["IFN", "INF", "^PE-A$"]
+  IL2:      ["IL-?2", "^APC-A$"]
+  TNFa:     ["TNF", "^Pacific Blue-A$"]
+  CD107a:   ["CD107", "^FITC-A$"]
+
+# Study design (plan section 4). Model formulas are assembled from these fields by
+# design_formula() in src/harmonization/drift/drift_models.R, so a new cohort edits this block and
+# never the R code. Every name is a column of tubes.csv.
+design:
+  unit: patient                     # repeated-measures unit: random intercept in every model
+  technical: [acq_day, instrument]  # acq_day: random intercept; instrument: fixed factor against reference_instrument
+  protected_fixed: [prior_vacc]     # biology that must never be absorbed into a technical term (factor)
+  time: week                        # per-unit slope, centred and in years; background and endpoint classes only
+  stimulation: cocktail             # random intercept; endpoint class only
+
+# Response classes (one model builder, the class picks covariates and family):
+#   technical  (layer A):  neg tubes, technical_markers; assumed free of biology, which
+#                          06_lme4.R tests by refitting with the protected covariates (assumption_check.csv)
+#   background (layer BG): neg tubes, cytokine gate counts (beta-binomial) and cytokine median
+#                          intensity (gaussian); full design, biology allowed
+#   endpoint   (layer B):  stimulated tubes minus matched control; full design
+
+# Control (neg) matching for background subtraction: exact match on match_keys first, then the
+# fallbacks in order. The level used is recorded per row in gated_frequencies.csv (neg_match).
+controls:
+  match_keys: [patient, week]
+  fallbacks: [same_patient_day, same_patient_reference_instrument, pooled_reference_instrument]
+
+# Markers whose distribution in an unstimulated (neg) tube should not depend on the biology.
+technical_markers: ["FSC_A", "SSC_A", "LiveDead", "CD4", "CD8"]
+# Cytokine channels: analysed as background level in negs, as response in cocktail tubes.
+cytokine_markers: ["IFNg", "IL2", "TNFa", "CD107a"]
+# Lineage markers expected to be bimodal in the neg population (valley position is a summary).
+bimodal_markers: ["CD4", "CD8"]
+
+# arcsinh cofactor applied to compensated fluorescence (not to scatter).
+arcsinh_cofactor: 150
+
+# FlowJo gating tree (listed 2026-09-21): /Lymphocytes/Single Cells/Live cells/{CD4,CD8}/{CD107a,IFNy|INFy,IL-2,TNF}
+# FlowJo population from which neg summaries are taken. Matched as a suffix of the full gate path,
+# so "Single Cells/Live" matches "/Lymphocytes/Single Cells/Live". Set after listing the tree
+# with `scripts/drift/04_neg_summaries.R --list_populations`.
+neg_population: "Live cells"
+# Parent populations for frequencies, and the regex that identifies a cytokine-positive child gate.
+parent_populations:
+  CD4: "CD4"
+  CD8: "CD8"
+cytokine_gate_regex: "IFN|INF|IL-?2|TNF|CD107"
+
+# Decision rule (section 3 of the plan).
+positivity:
+  min_subtracted_pct: 0.05    # background-subtracted frequency, percent of parent
+  min_fold_over_neg:  3       # stimulated / neg
+replicate_noise_prob: 0.95     # P(|effect| > replicate SD) needed to call an effect "detected"
+
+# Reference instrument the correction (if any) maps onto.
+reference_instrument: "FACSCantoII"
+
+# Neg summary statistics and EMD settings.
+quantiles: [0.10, 0.50, 0.90]
+n_cells_summary: 20000         # subsample per tube for summaries and EMD
+seed: 20260921

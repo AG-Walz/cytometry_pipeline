@@ -121,8 +121,7 @@ ok("census writes nothing",
    identical(vapply(scan_fcs_dir(d), fx_md5, character(1)), md5_before))
 ok("census reports the $FIL collision", grepl("\\$FIL: 1 group", res$report))
 ok("census reports the GUID collision", grepl("GUID: 1 group", res$report))
-# The census deliberately does NOT simulate a write per file -- that is what
-# keeps it cheap enough to run just for the keyword table. Preview does.
+# The census does not simulate a write per file; the preview does.
 ok("census leaves the per-file strategy unprojected", all(is.na(res$plan$strategy)))
 prev <- quiet(sync_fcs_names(d))
 ok("preview projects a strategy for every file",
@@ -471,9 +470,7 @@ fcs_fixture(file.path(d, "Good.fcs"), keywords = list("$FIL" = "Specimen_001.fcs
 fcs_fixture(file.path(d, "Multi.fcs"), keywords = list("$FIL" = "Specimen_001.fcs",
                                                        "$NEXTDATA" = "4096"))
 bad_before <- fx_md5(file.path(d, "Multi.fcs"))
-# A preview whose job is to say "this file cannot be synced" has succeeded at
-# that job. Only the write fails. Otherwise the GUI shows a red run for exactly
-# the folders you most need to look at before touching anything.
+# A preview that reports an unsyncable file has done its job; only the write fails.
 res <- quiet(sync_fcs_names(d))
 eq("a preview REPORTS a refused file without failing",
    sort(vapply(res$results, function(r) r$status, character(1))),

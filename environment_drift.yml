@@ -1,0 +1,22 @@
+# R side of the drift analysis (scripts/drift/): the same packages 00_setup_env.sh installs.
+#   conda env create -f environment_drift.yml        # or: micromamba create -f environment_drift.yml
+#   conda run -n drift_env Rscript scripts/drift/drift.R doctor
+# BayesFlow (steps 7 and 8, opt-in) lives in a separate CPU-only Python 3.12 env; see 00_setup_env.sh.
+name: drift_env
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-brms
+  - r-cmdstanr
+  - cmdstan
+  - r-yaml
+  - r-lme4
+  - r-rmarkdown
+  - r-knitr
+  - r-ggplot2
+  - bioconductor-cytoml
+  - bioconductor-flowworkspace
+  - bioconductor-flowcore
+  - bioconductor-peacoqc
+  - bioconductor-flowai

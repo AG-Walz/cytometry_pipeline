@@ -130,15 +130,6 @@ option_list <- list(
               help = paste0("Undo ledger, written next to the data (or in ",
                             "--output_dir). Semicolon-separated. ",
                             "[default %default]")),
-  make_option("--wsp", type = "character", default = NULL,
-              help = paste0("FlowJo workspace file(s) or folder(s) to check ",
-                            "this sync against, comma-separated. Default: any ",
-                            ".wsp under --fcs_dir or its parent. A workspace ",
-                            "whose samples currently pair with these files by ",
-                            "$FIL would LOSE that pairing if $FIL is ",
-                            "overwritten with the disk names, so a sync that ",
-                            "reduces the number of matches is refused (see ",
-                            "--allow workspace_match).")),
   make_option("--no_recursive", action = "store_true", default = FALSE,
               help = "Do not descend into subfolders."),
   make_option("--src_dir", type = "character", default = NULL,
@@ -156,37 +147,15 @@ opt <- parse_args(OptionParser(
 # -----------------------------------------------------------------------------
 # Locate the repo and source the two modules
 # -----------------------------------------------------------------------------
-find_script_path <- function() {
-  # Works under Rscript (--file=) and source().
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) == 1) {
-    return(normalizePath(sub("^--file=", "", file_arg), mustWork = FALSE))
-  }
-  if (!is.null(sys.function(1)) && !is.null(attr(body(sys.function(1)), "srcfile"))) {
-    sf <- attr(body(sys.function(1)), "srcfile")
-    if (!is.null(sf$filename)) return(normalizePath(sf$filename, mustWork = FALSE))
-  }
-  NA_character_
+# find_script_path, resolve_src_dir, split_csv: shared by the CLI wrappers and
+# kept next to this script, so located from Rscript's --file= argument.
+script_file <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+if (length(script_file) == 1) {
+  cli_dir <- dirname(sub("^--file=", "", script_file))
+} else {
+  cli_dir <- file.path(getwd(), "scripts")
 }
-
-resolve_src_dir <- function(user_src) {
-  if (!is.null(user_src)) {
-    sd <- normalizePath(user_src, mustWork = FALSE)
-    if (!dir.exists(sd)) stop("--src_dir does not exist: ", sd)
-    return(sd)
-  }
-  sp <- find_script_path()
-  if (!is.na(sp)) {
-    # script is repo/scripts/sync_fcs_names.R -> repo/src
-    cand <- file.path(dirname(dirname(sp)), "src")
-    if (dir.exists(cand)) return(normalizePath(cand))
-  }
-  # Fallback: relative to current working directory (repo root).
-  cand <- file.path(getwd(), "src")
-  if (dir.exists(cand)) return(normalizePath(cand))
-  stop("Could not locate the 'src' directory. Pass --src_dir explicitly.")
-}
+source(file.path(cli_dir, "_cli_common.R"))
 
 src_dir    <<- resolve_src_dir(opt$src_dir)
 shared_dir <<- file.path(src_dir, "R_shared")
@@ -197,20 +166,11 @@ if (!dir.exists(shared_dir)) {
 source(file.path(shared_dir, "io_utils.R"))      # make_outdir, die
 # The FCS keyword layer: fcs_inspect, fcs_write_keywords, fcs_keywords
 source(file.path(shared_dir, "fcs_keywords.R"))
-# wsp_referenced_names(): what a FlowJo workspace asks for, read from the XML
-# alone. Needed to tell a helpful rename from one that breaks the workspaces.
-source(file.path(src_dir, "loading", "flowjo_workspace.R"))
 source(file.path(src_dir, "metadata_qc", "sync_fcs_names.R"))  # sync_fcs_names
 
 # -----------------------------------------------------------------------------
 # Parse the comma/semicolon-separated CLI strings, then hand off.
 # -----------------------------------------------------------------------------
-split_csv <- function(s) {
-  if (is.null(s)) return(character(0))
-  v <- trimws(strsplit(s, ",")[[1]])
-  v[nzchar(v)]
-}
-
 # KEY=VALUE pairs are semicolon-separated, because a keyword name may contain a
 # space ("TUBE NAME") and a template may contain a comma.
 parse_sets <- function(s) {
@@ -241,17 +201,16 @@ sync_fcs_names(
   apply           = opt$apply,
   in_place        = opt$in_place,
   output_dir      = opt$output_dir,
-  also            = split_csv(opt$also),
+  also            = split_csv(opt$also, empty = character(0)),
   set             = parse_sets(opt$set),
-  unset           = split_csv(opt$unset),
+  unset           = split_csv(opt$unset, empty = character(0)),
   guid            = opt$guid,
   strip_extension = opt$strip_extension,
   recursive       = !opt$no_recursive,
   probe_only      = opt$probe,
   revert          = opt$revert,
-  allow           = split_csv(opt$allow),
+  allow           = split_csv(opt$allow, empty = character(0)),
   ledger          = opt$ledger,
   keyword_table   = opt$keyword_table,
-  write_original  = !opt$no_original,
-  wsp             = split_csv(opt$wsp)
+  write_original  = !opt$no_original
 )

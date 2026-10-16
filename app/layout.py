@@ -8,7 +8,7 @@ means a component can never be addressed before it exists.
 from __future__ import annotations
 
 import dash_mantine_components as dmc
-from dash import dcc, html
+from dash import dash_table, dcc, html
 
 from app import config
 from app.components.filebrowser import browser_field
@@ -245,12 +245,8 @@ def _step_gates(state: dict) -> list:
             id="sw-per-wsp",
             label="Pick the population separately in each workspace",
             description=(
-                "Use this when workspaces name the same biology differently "
-                "— \"Live/CD8\" in one, \"Live cells/CD8\" in another. The "
-                "list above them is only the gates ALL workspaces share, "
-                "which collapses to a couple of nodes when they were gated "
-                "independently. A workspace you leave unset is left out of "
-                "the UMAP."
+                "For workspaces that name the same gate differently. A "
+                "workspace left unset is excluded from the UMAP."
             ),
             checked=bool(state.get("population_map")),
         ),
@@ -267,8 +263,7 @@ def _step_gates(state: dict) -> list:
             children=dmc.Select(
                 id="sel-wsp",
                 label="Workspace",
-                description=("The tree below shows this workspace's own gates; "
-                             "clicking one sets its population."),
+                description="Clicking a gate below sets this workspace's population.",
                 data=[],
                 value="",
                 searchable=True,
@@ -307,10 +302,7 @@ def _step_gates(state: dict) -> list:
         dmc.Switch(
             id="sw-explicit",
             label="Choose an explicit gate set instead of a mode",
-            description=(
-                "Tick gates in the tree above to build a custom colour "
-                "partition (--subpop_select), overriding the mode below."
-            ),
+            description="Tick gates under the population (--subpop_select).",
             checked=state["explicit_subpop"],
         ),
         dmc.Space(h=10),
@@ -335,10 +327,7 @@ def _step_gates(state: dict) -> list:
         dmc.MultiSelect(
             id="in-markers",
             label="Markers to use",
-            description=(
-                "Leave empty to use every marker common to all samples. "
-                "Selection order is preserved."
-            ),
+            description="Empty = every marker common to all samples.",
             data=[],
             value=state["markers"],
             searchable=True,
@@ -350,31 +339,26 @@ def _step_gates(state: dict) -> list:
         dmc.Space(h=16),
         dmc.Divider(label="Sample annotations", labelPosition="center"),
         dmc.Space(h=10),
-        dmc.Text(
-            "Group the samples by anything you know about them — patient, "
-            "timepoint, response — and get one plot coloured by it plus one "
-            "plot per level, all on the same embedding. Optional.",
-            size="xs",
-            c="dimmed",
+        # Uploaded rather than browsed: the file is stored as a comma CSV under
+        # the app cache and its path lands in the hidden input below, which
+        # keeps the id the form, the session file and the R argv already use.
+        dcc.Upload(
+            id="up-meta",
+            accept=".csv,.tsv,.txt,.xlsx",
+            children=dmc.Button("Upload metadata (CSV or XLSX)",
+                                variant="default", fullWidth=True),
         ),
-        dmc.Space(h=10),
-        browser_field(
-            "meta",
-            "Metadata CSV",
-            "Keyed on sample; every other column becomes an annotation",
-            mode="file",
-            extensions=config.METADATA_EXTENSIONS,
-            placeholder="/path/to/cohort.csv",
-            value=state["sample_metadata"],
-        ),
+        dmc.Text("First column: FCS file name. Every other column becomes an "
+                 "annotation. Optional.", size="xs", c="dimmed", mt=4),
+        dmc.TextInput(id={"comp": "fb-input", "bid": "meta"},
+                      value=state["sample_metadata"], style={"display": "none"}),
+        dmc.Space(h=6),
+        html.Div(id="meta-check"),
         dmc.Space(h=10),
         dmc.TextInput(
             id="in-pattern",
-            label="…or derive from the sample name",
-            description=(
-                "A regex with named groups, used only when no CSV is given. "
-                "Example: (?<patient>MTB[0-9]+)_(?<timepoint>TP[0-9]+)"
-            ),
+            label="…or a regex on the sample name",
+            description="Named groups become columns; used only without a CSV.",
             value=state["sample_pattern"],
             placeholder="(?<patient>...)_(?<timepoint>...)",
         ),
@@ -384,7 +368,7 @@ def _step_gates(state: dict) -> list:
         dmc.MultiSelect(
             id="in-annotate",
             label="Annotations to plot",
-            description="Leave empty to plot every column that resolves.",
+            description="Empty = every column.",
             data=[],
             value=state["annotate"],
             searchable=True,
@@ -616,23 +600,16 @@ def _fcs_names_panel(state: dict) -> list:
         dmc.Badge("sync_fcs_names.R", variant="dot", color="gray", size="sm"),
         dmc.Space(h=10),
         dmc.Text(
-            "FlowJo shows the name stored inside each file ($FIL), not the file "
-            "name on disk, so renamed files can all show up as one sample. This "
-            "rewrites $FIL to match the file name; the event data is never "
+            "Rewrites each file's $FIL keyword to its name on disk, so renamed "
+            "files stop appearing as one sample in FlowJo. Event data is not "
             "touched.",
             size="sm", c="dimmed",
-        ),
-        dmc.Space(h=6),
-        dmc.Text(
-            "If FlowJo → Preferences → Workspace → \"How should data files be "
-            "named\" can be set to \"Use Short File Name\", you do not need this.",
-            size="xs", c="dimmed",
         ),
         dmc.Space(h=14),
         browser_field(
             "fcssync",
             "FCS folder",
-            "Searched recursively; .fcs and .FCS alike",
+            "Searched recursively",
             mode="dir",
             placeholder="/path/to/renamed",
             value=state.get("fcs_sync_dir", ""),
@@ -658,10 +635,7 @@ def _fcs_names_panel(state: dict) -> list:
         dmc.TextInput(
             id="fcs-also",
             label="Also sync these keywords",
-            description=(
-                "Comma-separated, e.g. $SRC,TUBE NAME. Only for FlowJo's "
-                "\"Keyword Combination\" naming; $FIL is always written."
-            ),
+            description="Comma-separated, e.g. $SRC,TUBE NAME",
             placeholder="",
         ),
         dmc.Space(h=16),
@@ -679,12 +653,6 @@ def _fcs_names_panel(state: dict) -> list:
         html.Div(id="fcs-feedback"),
         dmc.Space(h=18),
         dmc.Divider(label="Stored metadata", labelPosition="center"),
-        dmc.Space(h=8),
-        dmc.Text(
-            "What each file in the folder currently stores, side by side. "
-            "Read-only.",
-            size="xs", c="dimmed",
-        ),
         dmc.Space(h=8),
         dmc.Group(
             [
@@ -752,7 +720,7 @@ def _left_column(state: dict) -> dmc.Paper:
     )
 
 
-def _right_column() -> dmc.Paper:
+def _right_column(state: dict) -> dmc.Paper:
     return dmc.Paper(
         [
             dmc.Tabs(
@@ -761,7 +729,27 @@ def _right_column() -> dmc.Paper:
                         [
                             dmc.TabsTab("Log", value="log"),
                             dmc.TabsTab("Results", value="results"),
+                            dmc.TabsTab("Metadata", value="metadata"),
                         ]
+                    ),
+                    dmc.TabsPanel(
+                        [
+                            dmc.Space(h=12),
+                            dmc.Text("No metadata uploaded.", id="meta-title",
+                                     size="sm", c="dimmed"),
+                            dmc.Space(h=8),
+                            dash_table.DataTable(
+                                id="meta-table",
+                                fixed_rows={"headers": True},
+                                page_action="none",
+                                style_table={"overflowX": "auto", "overflowY": "auto",
+                                             "height": "calc(100vh - 240px)"},
+                                style_cell={"textAlign": "left", "fontSize": "12px",
+                                            "minWidth": "110px", "maxWidth": "300px",
+                                            "whiteSpace": "normal"},
+                            ),
+                        ],
+                        value="metadata",
                     ),
                     dmc.TabsPanel(
                         [
@@ -835,12 +823,26 @@ def _right_column() -> dmc.Paper:
                     dmc.TabsPanel(
                         [
                             dmc.Space(h=12),
+                            # The gallery shows whatever folder this names. A
+                            # finished run fills it in; typing or browsing to
+                            # an older run's folder shows that run instead, and
+                            # the value is remembered with the rest of the form
+                            # so a reload or a server restart does not lose it.
+                            browser_field(
+                                "results",
+                                "Results folder",
+                                "Filled in when a run finishes; pick any "
+                                "earlier run to view it",
+                                mode="dir",
+                                placeholder="/path/to/results/umap_…",
+                                value=state.get("results_dir", ""),
+                            ),
+                            dmc.Space(h=6),
                             dmc.Group(
                                 [
                                     dmc.Text("No results yet.", id="results-path",
                                              size="sm", c="dimmed",
-                                             style={"wordBreak": "break-all",
-                                                    "flex": 1}),
+                                             style={"flex": 1}),
                                     dmc.Button("Refresh", id="btn-refresh-results",
                                                variant="default",
                                                size="compact-sm"),
@@ -939,7 +941,6 @@ def build_layout(state: dict):
                 # in the folder later is included rather than silently dropped.
                 dcc.Store(id="store-wsp-exclude",
                           data=state.get("excluded_workspaces") or []),
-                dcc.Store(id="store-results-dir", data=""),
                 dcc.Store(id="store-run-generation", data=-1),
                 dcc.Interval(id="poll", interval=POLL_MS, disabled=False),
                 # Sink for callbacks whose only real effect is starting or
@@ -999,7 +1000,7 @@ def build_layout(state: dict):
                                 id="tool-tabs", value="umap",
                             ),
                             span={"base": 12, "lg": 5}),
-                        dmc.GridCol(_right_column(), span={"base": 12, "lg": 7}),
+                        dmc.GridCol(_right_column(state), span={"base": 12, "lg": 7}),
                     ],
                     gutter="md",
                 ),
