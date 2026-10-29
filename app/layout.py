@@ -582,6 +582,10 @@ def _step_run(state: dict) -> list:
         html.Div(id="run-validation"),
         dmc.Space(h=10),
         dmc.Button("Run UMAP", id="btn-run", fullWidth=True, size="md"),
+        # Why the last run failed, was cancelled or left samples out (see
+        # execution.poll). Right under the button, where the eye already is.
+        dmc.Space(h=10),
+        html.Div(id="run-feedback"),
     ]
 
 

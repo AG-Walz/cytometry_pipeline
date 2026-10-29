@@ -692,6 +692,25 @@ ok("an ambiguous population is reported",
 throws("resolve_population() still throws for its existing callers",
        resolve_population("CD4+", pops_b), "not found")
 
+# --- samples_missing_population ----------------------------------------------
+cat("\nsamples_missing_population()\n")
+
+# The J445 CTA case: a workspace whose first sample has the full tree, so the
+# population resolves, and one sample in "All Samples" that only has /Live.
+live <- "/Lymphocytes/Single Cells/Live"
+trees <- list(
+  "a.fcs_100" = c("root", "/Lymphocytes", "/Lymphocytes/Single Cells", live),
+  "b.fcs_200" = c("root", "/Live"),
+  "c.fcs_300" = c("root", "/Lymphocytes", "/Lymphocytes/Single Cells", live,
+                  paste0(live, "/CD8")))
+eq("a sample without the population is named",
+   samples_missing_population(trees, live), "b.fcs_200")
+eq("a same-named gate elsewhere in the tree does not count",
+   samples_missing_population(trees["b.fcs_200"], live), "b.fcs_200")
+eq("nothing is reported when every sample has it",
+   samples_missing_population(trees[c("a.fcs_100", "c.fcs_300")], live),
+   character(0))
+
 # --- merge_subgate_candidates ------------------------------------------------
 cat("\nmerge_subgate_candidates()\n")
 

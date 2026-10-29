@@ -99,6 +99,24 @@ resolve_population <- function(requested, available) {
 }
 
 # -----------------------------------------------------------------------------
+# Samples whose OWN gating tree lacks the resolved population.
+#
+# gs_get_pop_paths(gs) reads one sample's tree, so a population can resolve for
+# a workspace and still be absent from some of its samples: an "All Samples"
+# group happily holds a sample that was never gated, or was gated with another
+# template. Left alone, extraction stops at that sample with flowWorkspace's
+# bare "<path> not found!", minutes into the run and without saying which
+# sample. Checked up front instead, so every such sample is named at once.
+#
+# `paths_by_sample` is a named list (sample name -> its full pop paths).
+# Returns the names of the samples missing `population`, in input order.
+# -----------------------------------------------------------------------------
+samples_missing_population <- function(paths_by_sample, population) {
+  has <- vapply(paths_by_sample, function(p) population %in% p, logical(1))
+  names(paths_by_sample)[!has]
+}
+
+# -----------------------------------------------------------------------------
 # Parse a per-workspace population mapping: which gate each workspace
 # contributes to the shared embedding.
 #
@@ -1512,14 +1530,54 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     }
   }
 
+  # Every sample's own tree, per gating set: the population has to be in each
+  # of them, and 2b needs their union.
+  paths_by_sample <- lapply(gs_list, function(gs) {
+    nms <- flowWorkspace::sampleNames(gs)
+    stats::setNames(lapply(nms, function(s)
+      flowWorkspace::gh_get_pop_paths(gs[[s]], path = "full")), nms)
+  })
+  lacking <- lapply(names(gs_list), function(w)
+    samples_missing_population(paths_by_sample[[w]], pop_by_wsp[[w]]))
+  names(lacking) <- names(gs_list)
+  lacking <- lacking[lengths(lacking) > 0]
+  # Left out, loudly, rather than stopping the run: one stray sample in an "All
+  # Samples" group is the usual case, and the rest of the run is sound without
+  # it. Its cells must not be pooled under some other gate, so it is skipped in
+  # the extraction loop below and named here. The app shows this block under
+  # the Run button (app/callbacks/execution.py, _left_out_warning): keep its
+  # first line and the "To include them" sentence as they are.
+  if (length(lacking)) {
+    detail <- vapply(names(lacking), function(w) {
+      rows <- vapply(lacking[[w]], function(s) sprintf(
+        "      %s\n        its gates: %s",
+        sub("(\\.fcs)_[0-9]+$", "\\1", s, ignore.case = TRUE),
+        paste(utils::head(setdiff(paths_by_sample[[w]][[s]], "root"), 6),
+              collapse = ", ")), character(1))
+      sprintf("  %s (%s): %d sample(s) without %s\n%s", w,
+              specs[[gs_source[[w]]]]$wsp,
+              length(lacking[[w]]), pop_by_wsp[[w]],
+              paste(rows, collapse = "\n"))
+    }, character(1))
+    cat("\nWARNING: ", sum(lengths(lacking)), " sample(s) are LEFT OUT: they ",
+        "do not have the population in their own gating tree, although the ",
+        "rest of their workspace does. Usually a sample that was never gated, ",
+        "or gated with a different template, inside a generic group such as ",
+        "'All Samples'.\n\n", paste(detail, collapse = "\n"),
+        "\n\nTo include them, gate them in FlowJo. To silence this, remove ",
+        "them from the workspace or load a sample group that leaves them ",
+        "out.\n", sep = "")
+    if (sum(lengths(lacking)) == sum(lengths(paths_by_sample))) {
+      stop("no sample is left: every one lacks the population in its own ",
+           "gating tree.", call. = FALSE)
+    }
+  }
+
   # --- 2b. Discover the FlowJo subgates UNDER `population` to colour by. ------
   # Per workspace, then merged on the RELATIVE path (the only key comparable
   # across workspaces whose ancestors are named differently).
   cands <- lapply(names(gs_list), function(w) {
-    gs <- gs_list[[w]]
-    pop_paths_union <- unique(unlist(lapply(
-      flowWorkspace::sampleNames(gs),
-      function(s) flowWorkspace::gh_get_pop_paths(gs[[s]], path = "full"))))
+    pop_paths_union <- unique(unlist(paths_by_sample[[w]]))
     flowjo_subgate_candidates(pop_paths_union, pops_by_wsp[[w]],
                               pop_by_wsp[[w]], mode = subpop_mode,
                               select = subpop_select, warn = FALSE)
@@ -1587,7 +1645,8 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # Progress is reported against the sample count the GatingSets actually hold,
   # which is the only total that is known before the loop and true after it.
   n_total_samples <- sum(vapply(gs_list, function(g)
-    length(flowWorkspace::sampleNames(g)), integer(1)))
+    length(flowWorkspace::sampleNames(g)), integer(1))) -
+    sum(lengths(lacking))
   n_done <- 0L
   for (w in names(gs_list)) {
     gs <- gs_list[[w]]
@@ -1598,6 +1657,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       # `w` is a GatingSet name and sample_index is keyed per workspace — see
       # sample_display_label(), which owns that translation.
       display <- sample_display_label(sample_index, gs_source, w, s)
+      if (s %in% lacking[[w]]) next   # no population gate: left out above
       res <- extract_population_sample(gs[[s]], pop_by_wsp[[w]],
                                        subpop_paths_by_wsp[[w]],
                                        subpop_depths, subpop_labels,

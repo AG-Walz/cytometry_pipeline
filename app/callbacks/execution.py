@@ -46,15 +46,57 @@ def _failure_message(what: str, snap: dict) -> str:
 
     The old text printed the raw return code, which for a detached run is None
     — nobody wait()s for it — so it read "failed (exit code None)" and said
-    nothing at all. What is actually useful is the last thing the run printed,
-    because that is where it stopped.
+    nothing at all. What is actually useful is R's own error message. The last
+    line alone is not it: after stop() R always ends on "Execution halted",
+    with the error and its warnings above, so the message is taken from the
+    last "Error" line up to that point.
     """
     code = snap.get("returncode")
-    tail = [ln for ln in (snap.get("log") or "").splitlines() if ln.strip()]
-    last = tail[-1].strip() if tail else ""
+    tail = [ln.rstrip() for ln in (snap.get("log") or "").splitlines()
+            if ln.strip()]
+    if tail and tail[-1].strip() == "Execution halted":
+        tail = tail[:-1]
+    starts = [i for i, ln in enumerate(tail) if ln.startswith("Error")]
+    # R's "In addition: Warning message:" block after the error is noise here;
+    # the Log tab still has it.
+    error = tail[starts[-1]:] if starts else tail[-1:]
+    for i, ln in enumerate(error):
+        if ln.startswith("In addition:"):
+            error = error[:i]
+            break
     reason = (f"{what} failed (exit code {code})." if code is not None
               else f"{what} stopped before it finished.")
-    return f"{reason} Last line: {last}" if last else f"{reason} See the Log tab."
+    if not error:
+        return f"{reason} See the Log tab."
+    return f"{reason}\n" + "\n".join(error[:25])
+
+
+def _left_out_warning(log: str) -> str | None:
+    """The "sample(s) are LEFT OUT" block R prints before extraction, or None.
+
+    Contract with umap_from_flowjo.R (section 2a): the block starts with
+    "WARNING: <n> sample(s) are LEFT OUT" and ends with the "To include them"
+    sentence. A run that succeeds without some samples must not read as a run
+    that used them all.
+    """
+    lines = log.splitlines()
+    starts = [i for i, ln in enumerate(lines)
+              if "sample(s) are LEFT OUT" in ln]
+    if not starts:
+        return None
+    block = []
+    for ln in lines[starts[-1]:]:
+        block.append(ln.rstrip())
+        if ln.startswith("To include them"):
+            break
+    block = block[:40]
+    block[0] = block[0].replace("WARNING: ", "", 1)
+    return "\n".join(block)
+
+
+def _left_out_alert(text: str):
+    return _alert(html.Div(text, style={"whiteSpace": "pre-wrap"}),
+                  color="orange", title="Samples left out of this run")
 
 
 def _format_remaining(seconds: float | None) -> str:
@@ -284,7 +326,7 @@ def register_callbacks() -> None:
     # -- start: run --------------------------------------------------------
 
     @callback(
-        Output("run-start-sink", "children"),
+        Output("run-feedback", "children", allow_duplicate=True),
         Output({"comp": "fb-input", "bid": "results"}, "value",
                allow_duplicate=True),
         Input("btn-run", "n_clicks"),
@@ -316,7 +358,9 @@ def register_callbacks() -> None:
         )
         if not ok:
             return _alert(f"Could not start the run: {message}"), no_update
-        return "", params["output_dir"]
+        # Clears the previous run's failure, which would otherwise sit next to
+        # the Run button while the new run goes.
+        return None, params["output_dir"]
 
     @callback(
         Output("run-start-sink", "children", allow_duplicate=True),
@@ -381,6 +425,7 @@ def register_callbacks() -> None:
         Output({"comp": "fb-input", "bid": "results"}, "value",
                allow_duplicate=True),
         Output("inspect-feedback", "children"),
+        Output("run-feedback", "children"),
         Output("tabs", "value"),
         Input("poll", "n_intervals"),
         State("store-run-generation", "data"),
@@ -411,13 +456,27 @@ def register_callbacks() -> None:
         )
 
         # Nothing finished since the last poll: only the live fields change.
-        if snap["generation"] == seen_generation or status == "idle":
-            return (*base, no_update, no_update, no_update, no_update, no_update)
+        # A RUNNING job has not finished either, whatever the generation says:
+        # starting a job does not bump it, so the first job after the app starts
+        # (generation 0 against the page's -1) used to land below and be
+        # reported as "stopped before it finished" for as long as it ran.
+        if (snap["generation"] == seen_generation or status == "idle"
+                or running):
+            # Samples left out are reported by R right after the load, so the
+            # warning is up while the run is still going, not only at the end.
+            live = no_update
+            if running and kind == "run":
+                left_out = _left_out_warning(snap.get("log") or "")
+                if left_out:
+                    live = _left_out_alert(left_out)
+            return (*base, no_update, no_update, no_update, no_update,
+                    live, no_update)
 
         generation = snap["generation"]
         new_inspect = no_update
         new_results = no_update
         feedback = no_update
+        run_feedback = no_update
         tab = no_update
 
         if kind == "inspect":
@@ -447,21 +506,31 @@ def register_callbacks() -> None:
             elif status == CANCELLED:
                 feedback = _alert("Workspace load cancelled.", color="orange")
             else:
-                feedback = _alert(_failure_message("Loading the workspaces",
-                                                   snap))
+                feedback = _alert(html.Div(
+                    _failure_message("Loading the workspaces", snap),
+                    style={"whiteSpace": "pre-wrap"}))
 
         elif kind == "run":
             output_dir = snap["meta"].get("output_dir") or ""
             new_results = output_dir
             if status == DONE:
                 tab = "results"
+                # Samples the run had to leave out are the one thing a
+                # finished run still has to say.
+                left_out = _left_out_warning(snap.get("log") or "")
+                run_feedback = _left_out_alert(left_out) if left_out else None
             else:
                 # A failed run leaves the gallery empty, and an empty gallery on
-                # its own reads as "nothing happened". Say what stopped it.
+                # its own reads as "nothing happened". Say what stopped it, in
+                # step 4 under the Run button: in step 1 nobody at step 4
+                # sees it.
                 if status == CANCELLED:
-                    feedback = _alert("Run cancelled.", color="orange")
+                    run_feedback = _alert("Run cancelled.", color="orange")
                 else:
-                    feedback = _alert(_failure_message("The run", snap))
+                    run_feedback = _alert(html.Div(
+                        _failure_message("The run", snap),
+                        style={"whiteSpace": "pre-wrap"}), title="Run failed")
                 tab = "log"
 
-        return (*base, generation, new_inspect, new_results, feedback, tab)
+        return (*base, generation, new_inspect, new_results, feedback,
+                run_feedback, tab)
