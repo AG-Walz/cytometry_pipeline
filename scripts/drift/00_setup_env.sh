@@ -11,7 +11,7 @@ BFENV="${2:-bayesflow_env}"
 echo "== R packages into conda env $ENV =="
 conda install -y -n "$ENV" -c conda-forge -c bioconda \
   r-brms r-cmdstanr cmdstan r-yaml r-lme4 r-rmarkdown r-knitr r-ggplot2 \
-  bioconductor-cytoml bioconductor-flowworkspace bioconductor-flowcore bioconductor-peacoqc bioconductor-flowai
+  bioconductor-cytoml bioconductor-flowworkspace bioconductor-flowcore bioconductor-peacoqc bioconductor-flowai bioconductor-compass
 conda run -n "$ENV" Rscript -e 'cmdstanr::set_cmdstan_path(Sys.getenv("CMDSTAN", cmdstanr::cmdstan_path())); cat("cmdstan:", cmdstanr::cmdstan_version(), "\n")' \
   || echo "cmdstanr cannot see CmdStan; run: conda run -n $ENV Rscript -e 'cmdstanr::install_cmdstan(cores = 8)'"
 
@@ -25,4 +25,4 @@ conda run -n "$BFENV" pip install -q "bayesflow>=2.0.14,<3" pandas pyyaml scipy 
 conda run -n "$BFENV" python -c "import bayesflow as bf, keras; print('bayesflow', bf.__version__, 'keras', keras.__version__, keras.backend.backend())"
 
 echo "== check =="
-conda run -n "$ENV" Rscript -e 'for (p in c("CytoML","flowWorkspace","flowCore","PeacoQC","flowAI","brms","cmdstanr","lme4","yaml","rmarkdown")) cat(sprintf("%-14s %s\n", p, requireNamespace(p, quietly = TRUE)))'
+conda run -n "$ENV" Rscript -e 'for (p in c("CytoML","flowWorkspace","flowCore","PeacoQC","flowAI","COMPASS","brms","cmdstanr","lme4","yaml","rmarkdown")) cat(sprintf("%-14s %s\n", p, requireNamespace(p, quietly = TRUE)))'
