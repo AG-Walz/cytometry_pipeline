@@ -79,6 +79,19 @@ and no day drift, the straight line reported 0.13 to 0.94 logit² of day varianc
 A technical term listed in `design.technical` without a `tech_*` column is read from `tubes.csv`, so the
 FCS operator keyword works without a sheet column (`technical: [acq_day, instrument, operator]`).
 
+Three fields added on 2026-10-13 (`docs/plans/drift_methods_review.md`):
+
+- `design.visit`: the columns of one sample, normally `[patient, week]`. Every model whose tubes repeat
+  within a visit (endpoints, technical markers on all tubes, the variance partition) then gets a visit
+  intercept. Without it, whatever is specific to one sample is booked as acquisition day whenever a day holds
+  a single subject, and the tube residual used as rule 1 noise is too large. In the partition the visit
+  share is its own category, neither biology nor batch, because it mixes both.
+- `technical_tubes`: `all` fits the technical markers on every tube with a `stimulated` term and the visit
+  intercept (step 4 always summarises all tubes); `neg` keeps the unstimulated tubes only.
+- `relevance.count_cv`: the rule 1 margin for counts, a fold change of 1 + CV (default 0.35, the
+  inter-laboratory CV of ICS responses, Jaimes et al. 2011). Rule 1 then has three states: detected,
+  negligible and inconclusive.
+
 ## 2. Harmonise marker names
 
 Several files of one cohort often spell the same marker differently in `$PnS` (`IFNy`, `INFy`, `IFN`)
@@ -139,12 +152,12 @@ Steps and what they produce under `--out`:
 | 1b | design check (section 3) | `separability.csv`, `separability_summary.csv` | minutes |
 | 2 | panel reconciliation | `panel_map.csv`, `panel_signatures.csv`, `panel_gaps.csv` | seconds |
 | 3 | tube QC | `qc.csv`, `excluded_tubes.csv` | 30 min |
-| 4 | unstimulated-tube summaries from the FlowJo gates | `neg_summaries.csv`, `neg_emd.csv`, `gate_bounds.csv`, `neg_cells/` | 30 min |
+| 4 | tube summaries from the FlowJo gates, and the parent and cytokine gate positions | `neg_summaries.csv`, `neg_emd.csv`, `gate_bounds.csv`, `neg_cells/` | 10 to 30 min |
 | 5 | gated frequencies with matched controls | `gated_frequencies.csv`, `all_gate_counts.csv` | 30 min |
 | 6a | brms yardstick | `effects_brms_{A,BG,B}.csv`, `covariates_brms.csv`, `fits_brms_summary.csv` | hours |
 | 6b | hand-written Stan | `effects_stan_{A,BG,B}.csv`, `covariates_stan.csv` | 1 h |
 | 6c | lme4 variance components and assumption check | `lme4_variance_components.csv`, `assumption_check.csv` | minutes |
-| 6d | biological effect: week slope with and without technical terms, leave-one-day-out | `week_slope_sensitivity.csv`, `week_slope_lodo.csv` | minutes |
+| 6d | biological effect: week slope with and without technical terms, leave-one-day-out, and the drift-free slope from subject-days with several visits | `week_slope_sensitivity.csv`, `week_slope_lodo.csv`, `week_slope_within_day.csv` | under an hour |
 | 7, 8 | BayesFlow (only with `--with_bayesflow --bf_env NAME`) | `effects_bayesflow_v{1,2}.csv`, `bf_*` | hours |
 | 11 | MFI of every marker in the neg population and the parent populations, all tubes | `mfi.csv` | 30 min |
 | 11b | acquisition audit: every FCS keyword, detector voltage per marker, compensation matrix, CS&T setup, FlowJo display transformation per sample and channel, gate positions per sample, sample quality (viability, live cells) and the overlap of all these with the design factors | `acquisition_settings.csv`, `sample_quality.csv`, `flowjo_transformations.csv`, `gate_positions.csv`, `factor_overlap.csv`, `fcs_keywords.csv.gz` | 10 min |
@@ -152,7 +165,8 @@ Steps and what they produce under `--out`:
 | 12b | the same with brms, posterior intervals (`--workers` fits in parallel, 4 chains each) | `variance_partition_brms.csv`, `partition_fits_brms.csv`, `partition_brms/` | hours |
 | 13 | responder calls by the lab rule, Fisher's exact test and MIMOSA | `calls_compare.csv`, `calls_agreement.csv` | minutes |
 | 14 | figures and tables comparing the ten data settings (MFI linear / arcsinh, frequency % / arcsinh % / logit, each plain and stimulated minus unstimulated; the responder call is a decision, not a setting): biological against batch share. Figures, in reading order: `01_analysis_workflow`, `02_CD4_IFNg_per_tube_by_acquisition_day`, `03_combinations_ranked_biology_vs_batch`, `04_combinations_kept_and_dropped` (gating level x setting, with the keep/drop rule), `05_frequency_biology_vs_batch_by_source`, `06_mfi_biology_vs_batch_by_source`, `07_frequency_all_sources_of_variance`, `08_mfi_all_sources_of_variance`, `09_frequency_per_readout_biology_vs_batch`, `10_mfi_per_readout_biology_vs_batch_with_negative_controls`, `11_engines_brms_vs_lme4_variance_shares`, `12_engines_brms_vs_stan_correction_effects`, `13_bayesflow_vs_brms_run_<date>` (only when an earlier BayesFlow run is kept in `bayesflow_<date>/`). Gating levels: cytokine MFI on all events, live cells and the CD4/CD8 gate (step 11); frequencies in the manual FlowJo cytokine gate | `partition_grid.csv`, `partition_grid_summary.csv`, `partition_engine_agreement.csv`, `figures/*.png`, `figures/*.pdf` | a minute |
-| 9 | decision rules | `decisions.csv`, `controls_summary.csv`, `gate_drift.csv`, `fitter_agreement.csv` | a minute |
+| 15 | sensitivity analyses: calendar-time smooth next to the day intercept, manual against fixed-threshold gates, call stability under counting noise and the minimum parent count, technical markers without the live gate (`--ungated_dir`: step 4 run with `neg_population: root` into that folder) | `sensitivity_calendar.csv`, `sensitivity_fixed_gates.csv`, `call_stability.csv`, `call_stability_summary.csv`, `min_parent_sensitivity.csv`, `sensitivity_ungated.csv` | minutes |
+| 9 | decision rules | `decisions.csv`, `controls_summary.csv`, `gate_drift.csv` (parent and cytokine gates), `fitter_agreement.csv` | a few minutes |
 | 10 | report | `report.html` | minutes |
 
 Sources in the variance partition and why each is (or is not) a model term:
@@ -198,9 +212,10 @@ every step that is `ok`, which makes a rerun after a failure or an edit cheap: o
 `<out>/report.html` opens in a browser and leads with three answers
 (`docs/plans/drift_three_questions_plan.md`):
 
-1. Do the data need correcting? Per technical term and layer, the contrasts above noise and the
-   responder calls they flip (rule 1 noise: same-sample tubes for technical markers, the tube-level
-   residual of the lme4 model for counts).
+1. Do the data need correcting? Per technical term and layer, the contrasts detected, negligible or
+   inconclusive against the rule 1 margin (count CV for counts, same-sample tube noise for technical
+   markers), and the responder calls they flip over posterior draws against the flips that counting noise
+   alone produces on the same tubes (rule 2).
 2. Should the unstimulated tube be subtracted? The unwanted and wanted variance shares of the gated
    counts, the subtracted frequency, the frequency over the neg and the responder call, per readout, and
    the agreement of the calling rules.
@@ -211,7 +226,8 @@ every step that is `ok`, which makes a rerun after a failure or an edit cheap: o
 Then the biological effect: the week slope per
 endpoint with and without the technical terms and the leave-one-day-out sensitivity from step 6d,
 followed by the instrument and day verdicts per layer (A technical, BG background, B endpoint) from
-`decisions.csv`, the control matching, the gate-position drift and the agreement between fitters.
+`decisions.csv`, the control matching, the gate-position drift (parent and cytokine gates), the
+sensitivity analyses of step 15 and the agreement between fitters.
 `decisions.csv` is the machine-readable version.
 
 ## Backwards compatibility

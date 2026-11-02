@@ -71,6 +71,9 @@ STEPS <- list(
        needs = "variance_partition_*.csv", makes = c("partition_grid.csv", "partition_grid_summary.csv", "figures/01_analysis_workflow.png")),
   list(id = "13", name = "calling rules",   script = "13_calling_rules.R",
        needs = "gated_frequencies.csv", makes = c("calls_compare.csv", "calls_agreement.csv")),
+  list(id = "15", name = "sensitivity",     script = "15_sensitivity.R",
+       needs = c("tubes.csv", "gated_frequencies.csv", "neg_summaries.csv"),
+       makes = c("sensitivity_calendar.csv", "call_stability_summary.csv", "min_parent_sensitivity.csv"), optional = TRUE),
   list(id = "16a", name = "boolean counts", script = "16_compass.R",
        needs = c("tubes.csv", "panel_signatures.csv", "gated_frequencies.csv", "excluded_tubes.csv"),
        makes = c("boolean_counts.csv", "boolean_marginal_check.csv"), dirs = c("wsp_dir", "fcs_dir"), optional = TRUE),
@@ -246,7 +249,7 @@ run_usage <- "drift.R run --out DIR --config CFG [--sample_sheet CSV] [--fcs_dir
              [--cores 4] [--workers 8] [--from N] [--only 5,9,10] [--with_bayesflow] [--bf_env bayesflow_env] [--force]
   Runs every step whose outputs are missing or older than its inputs (or the config). --from N and --only
   restrict the set of steps considered, --force reruns the considered steps regardless. Steps 7 and 8
-  (BayesFlow, `conda run -n <bf_env> python`) run only with --with_bayesflow. Steps: 1 1b 2 3 4 5 6a 6b 6c 6d 7 8 9 10.
+  (BayesFlow, `conda run -n <bf_env> python`) run only with --with_bayesflow. Steps: 1 1b 2 3 4 5 6a 6b 6c 6d 7 8 9 11 12a 12b 13 14 15 10.
   Output goes to the terminal and to <out>/run_all.log; <out>/.done/<step>.json records each finished step."
 
 cmd_run <- function(args) {

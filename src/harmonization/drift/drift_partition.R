@@ -275,15 +275,19 @@ subtraction_table <- function(vp, base = "freq_raw", alts = c("freq_pct", "freq_
   if (length(rows)) do.call(rbind, rows) else NULL
 }
 
-#' Question 1: per technical term and layer, how many contrasts exceed replicate noise (rule 1) and
-#' how many of those flip responder calls (rule 2). `dec` is decisions.csv.
+#' Question 1: per technical term and layer, how many contrasts are detected above the relevance margin,
+#' negligible or inconclusive (rule 1), and how many detected ones flip more responder calls than counting
+#' noise alone (rule 2, verdict "detected, correct"). `dec` is decisions.csv.
 correction_summary <- function(dec) {
   dec$detected <- grepl("^detected", dec$verdict)
-  dec$flipping <- dec$detected & dec$positivity_flips %in% seq_len(1e6)
-  agg <- aggregate(cbind(contrasts = 1, detected = detected, flipping = flipping,
+  dec$negligible <- dec$verdict %in% c("negligible", "not detected")   # "not detected": decisions written before 2026-10-13
+  dec$inconclusive <- dec$verdict == "inconclusive"
+  dec$flipping <- dec$verdict == "detected, correct"
+  agg <- aggregate(cbind(contrasts = 1, detected = detected, negligible = negligible, inconclusive = inconclusive, flipping = flipping,
                          calls_flipped = ifelse(flipping, positivity_flips, 0)) ~ term + layer, dec, sum)
   agg$action <- ifelse(agg$flipping > 0, "correct (see the contrasts that flip calls)",
-                       ifelse(agg$detected > 0, "keep as covariate, no correction", "no correction"))
+                       ifelse(agg$detected > 0, "keep as covariate, no correction",
+                              ifelse(agg$inconclusive > 0, "no correction; inconclusive contrasts stay as covariates", "no correction")))
   agg[order(agg$term, agg$layer), ]
 }
 

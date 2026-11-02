@@ -58,20 +58,26 @@ confounding_index <- function(tt) {
 
 #' Counts of ONE synthetic endpoint on the real design: the stimulated tubes of
 #' `tt`, one row each. On the logit scale
-#'   -6 + a_patient + week_slope * week_c + c_day[acq_day] + instr_shift * (instrument != ref) + N(0, 0.2)
-#' with a_patient ~ N(0, 0.5), c_day ~ N(0, day_sd), week_c the centred week in
-#' years (design_frame), parent_count ~ U(20000, 60000). `week_slope` is in
-#' logit units per year. Returns the design frame (factors, week_c) plus
-#' count and parent_count, ready for the lme4 endpoint formula.
-simulate_endpoint <- function(tt, cfg, week_slope, day_sd, instr_shift, seed = 1, ref = cfg$reference_instrument) {
+#'   -6 + a_patient + week_slope * week_c + c_day[acq_day] + instr_shift * (instrument != ref)
+#'      + e_visit[patient, week] + N(0, tube_sd)
+#' with a_patient ~ N(0, 0.5), c_day ~ N(0, day_sd), e_visit ~ N(0, visit_sd), week_c the centred
+#' week in years (design_frame), parent_count ~ U(20000, 60000). `week_slope` is in logit units per
+#' year. The visit and tube defaults (0.6, 0.3) are the MTB layer B values with a visit term
+#' (2026-10-13, docs/plans/drift_methods_review.md 2.1); before, the simulation had no visit term and a
+#' tube SD of 0.2, which made the design look more separable than it is. Returns the design frame
+#' (factors, week_c) plus count and parent_count, ready for the lme4 endpoint formula.
+simulate_endpoint <- function(tt, cfg, week_slope, day_sd, instr_shift, seed = 1, ref = cfg$reference_instrument,
+                              visit_sd = 0.6, tube_sd = 0.3) {
   set.seed(seed)
   s <- tt[!(tt$is_neg %in% TRUE), ]
   s <- design_frame(s, cfg, ref)
   pats <- levels(s[[cfg$design$unit]]); days <- sort(unique(s$acq_day))
   a_p <- setNames(rnorm(length(pats), 0, 0.5), pats)
   c_d <- setNames(rnorm(length(days), 0, day_sd), days)
+  vk <- paste(s[[cfg$design$unit]], s$week); uv <- unique(vk)
+  e_v <- setNames(rnorm(length(uv), 0, visit_sd), uv)
   eta <- -6 + a_p[as.character(s[[cfg$design$unit]])] + week_slope * s$week_c + c_d[as.character(s$acq_day)] +
-         instr_shift * (as.character(s$instrument) != ref) + rnorm(nrow(s), 0, 0.2)
+         instr_shift * (as.character(s$instrument) != ref) + e_v[vk] + rnorm(nrow(s), 0, tube_sd)
   s$parent_count <- round(runif(nrow(s), 20000, 60000))
   s$count <- rbinom(nrow(s), s$parent_count, plogis(eta))
   rownames(s) <- NULL
@@ -110,13 +116,15 @@ fit_simulated_endpoint <- function(d, cfg) {
 #' `week_slope` is in logit per year (default 0.02 per week). Returns one row
 #' per scenario x rep: scenario, rep, week_slope_true, week_slope_hat,
 #' day_sd_true, day_sd_hat, instr_true, instr_hat, converged. Needs lme4.
-design_power <- function(tt, cfg, n_rep = 10, week_slope = 0.02 * 52, day_sd = 0.5, instr_shift = 0.4, seed = 1) {
+design_power <- function(tt, cfg, n_rep = 10, week_slope = 0.02 * 52, day_sd = 0.5, instr_shift = 0.4, seed = 1,
+                         visit_sd = 0.6, tube_sd = 0.3) {
   if (!requireNamespace("lme4", quietly = TRUE)) stop("design_power() needs the lme4 package", call. = FALSE)
   scen <- data.frame(scenario = c("a_both", "b_week_only", "c_day_only"),
                      week = c(week_slope, week_slope, 0), day = c(day_sd, 0, day_sd), stringsAsFactors = FALSE)
   rows <- list()
   for (i in seq_len(nrow(scen))) for (r in seq_len(n_rep)) {
-    d <- simulate_endpoint(tt, cfg, scen$week[i], scen$day[i], instr_shift, seed = seed + 1000L * i + r)
+    d <- simulate_endpoint(tt, cfg, scen$week[i], scen$day[i], instr_shift, seed = seed + 1000L * i + r,
+                           visit_sd = visit_sd, tube_sd = tube_sd)
     fit <- fit_simulated_endpoint(d, cfg)
     rows[[length(rows) + 1L]] <- data.frame(scenario = scen$scenario[i], rep = r,
       week_slope_true = scen$week[i], week_slope_hat = fit$week, day_sd_true = scen$day[i], day_sd_hat = fit$day_sd,

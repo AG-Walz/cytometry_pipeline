@@ -27,9 +27,10 @@ cs <- function(x) paste(unlist(x), collapse = ", ")
 ref <- if (!is.null(cfg)) cfg$reference_instrument else NA
 instr_levels <- if (!is.null(tt)) c(intersect(ref, unique(tt$instrument)), setdiff(sort(unique(tt$instrument)), ref)) else character(0)
 pal_instr <- setNames(c("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948")[seq_along(instr_levels)], instr_levels)
-verdict_levels <- c("not detected", "detected, relevance unknown", "detected, not clinically relevant", "detected, correct")
-pal_verdict <- setNames(c("#9a9a94", "#eda100", "#eda100", "#e34948"), verdict_levels)
-shape_verdict <- setNames(c(16, 17, 15, 18), verdict_levels)
+verdict_levels <- c("negligible", "inconclusive", "not detected", "detected, relevance unknown", "detected, not clinically relevant",
+                    "detected, within counting noise", "detected, correct")   # "not detected": decisions written before 2026-10-13
+pal_verdict <- setNames(c("#c9c9c4", "#9a9a94", "#9a9a94", "#eda100", "#eda100", "#eda100", "#e34948"), verdict_levels)
+shape_verdict <- setNames(c(1, 16, 16, 17, 15, 0, 18), verdict_levels)
 thm <- theme_bw(base_size = 11) + theme(panel.grid.minor = element_blank(), panel.grid.major.x = element_blank(),
   strip.background = element_rect(fill = "#f0f0ee", colour = NA), legend.position = "bottom",
   axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1, size = 7))
@@ -37,8 +38,9 @@ layer_lab <- c(A = "A technical", BG = "BG background", B = "B endpoint")
 if (!is.null(dec)) {
   dec$verdict <- factor(dec$verdict, verdict_levels)
   dec$layer_f <- factor(layer_lab[dec$layer], layer_lab)
-  dec$z <- dec$effect_mean / dec$replicate_sd      # effect in units of same-day replicate noise
-  dec$z_lo <- dec$ci_low / dec$replicate_sd; dec$z_hi <- dec$ci_high / dec$replicate_sd
+  unit_sd <- if ("margin" %in% names(dec)) dec$margin else dec$replicate_sd   # effect in units of the rule 1 margin
+  dec$z <- dec$effect_mean / unit_sd
+  dec$z_lo <- dec$ci_low / unit_sd; dec$z_hi <- dec$ci_high / unit_sd
 }
 if (!is.null(tt)) tt$instrument <- factor(tt$instrument, instr_levels)
 ```
@@ -91,7 +93,7 @@ DOIs checked by literature search on 2026-10-12 and 2026-10-13.
 
 ## Answer 1: do the data need correcting?
 
-Each technical contrast (every acquisition day, the instrument, every operator) is tested in three layers: technical markers of the unstimulated tubes (A), the background of the unstimulated tubes (BG) and the endpoints (B). Rule 1: the effect exceeds the noise between tubes of the same sample (layer A) or the tube-level residual of the endpoint model (layers BG and B) with posterior probability of at least `r if (!is.null(cfg)) cfg$replicate_noise_prob else 0.95`. Rule 2: removing the effect changes responder calls. A correction is warranted only when both hold (CLSI H62; O'Hara et al. 2011 for intermediate precision across operators, days and instruments).
+Each technical contrast (every acquisition day, the instrument, every operator) is tested in three layers: technical markers of the unstimulated tubes (A), the background of the unstimulated tubes (BG) and the endpoints (B). Rule 1 has three states against a relevance margin: for counts (layers BG and B) a shift of log(1 + `r if (!is.null(cfg$relevance$count_cv)) cfg$relevance$count_cv else 0.35`) on the logit scale, the inter-laboratory CV of ICS responses (Jaimes et al. 2011); for the technical markers and intensities the noise between tubes of the same sample. An effect is *detected* when it exceeds the margin with posterior probability of at least `r if (!is.null(cfg)) cfg$replicate_noise_prob else 0.95`, *negligible* when it stays inside with that probability, and *inconclusive* otherwise (Kruschke 2018). Rule 2: removing the effect changes more responder calls than counting noise alone changes on the same tubes (the 95th percentile of binomial resampling); the flip count is averaged over posterior draws. A correction is warranted only when both hold (CLSI H62; O'Hara et al. 2011 for intermediate precision across operators, days and instruments).
 
 ```{r answer1}
 if (!is.null(dec)) {
@@ -102,11 +104,14 @@ if (!is.null(dec)) {
 
 ```{r answer1-line, results="asis"}
 if (!is.null(dec)) {
-  fl <- dec[grepl("^detected", dec$verdict) & dec$positivity_flips %in% seq_len(1e6), ]
-  if (!nrow(fl)) cat("**No correction needed.** No technical effect both exceeds the noise and changes a responder call. Keep the technical factors as covariates in downstream models.\n\n")
-  else { cat(sprintf("**Correction to consider for %d contrast(s)**, each flipping responder calls:\n\n", nrow(fl)))
-    for (i in seq_len(nrow(fl))) cat(sprintf("- %s %s = %s (layer %s): %d call(s)\n", fl$response[i], fl$term[i], fl$level[i], fl$layer[i], fl$positivity_flips[i]))
+  fl <- dec[dec$verdict %in% "detected, correct", ]
+  n_inc <- sum(dec$verdict %in% "inconclusive")
+  if (!nrow(fl)) cat("**No correction needed.** No technical effect both exceeds the margin and changes more responder calls than counting noise. Keep the technical factors as covariates in downstream models.\n\n")
+  else { cat(sprintf("**Correction to consider for %d contrast(s)**, each flipping more responder calls than counting noise:\n\n", nrow(fl)))
+    for (i in seq_len(nrow(fl))) cat(sprintf("- %s %s = %s (layer %s): %.1f call(s) on average (95%% interval %.0f to %.0f; counting noise alone: 95th percentile %.0f)\n",
+      fl$response[i], fl$term[i], fl$level[i], fl$layer[i], fl$positivity_flips[i], fl$flips_lo[i], fl$flips_hi[i], fl$noise_flips_q95[i]))
     cat("\nFlipping calls on a single response may also be handled by flagging those calls rather than correcting values.\n\n") }
+  if (n_inc) cat(sprintf("%d of %d contrasts are **inconclusive**: their posterior reaches both inside and beyond the margin, so the data cannot say whether they matter. Most are days with one patient.\n\n", n_inc, nrow(dec)))
 }
 ```
 
@@ -497,17 +502,67 @@ if (!is.null(cm)) {
 
 ## Gate-position drift (were shifts hand-corrected by the analyst?)
 
-```{r, fig.width=10, fig.height=4}
+Within a visit the unstimulated and stimulated tubes share one gate. Between acquisitions a gate that moves with the measured intensity shift means the analyst corrected the shift by hand; frequencies then look free of it, and the correction cannot be audited (Maecker et al. 2005; Welters et al. 2012; Finak et al. 2016). The fixed-threshold comparison under *Sensitivity analyses* shows what the frequencies look like without that adjustment.
+
+```{r, fig.width=12, fig.height=6}
 gb <- rd("gate_bounds.csv")
 if (!is.null(gb) && nrow(gb)) {
+  if (!"gate_marker" %in% names(gb)) gb$gate_marker <- gb$parent   # files before 2026-10-13: parent gates only
   gb$position <- ifelse(is.na(gb$lower), gb$upper, gb$lower)
-  gb <- merge(gb[!is.na(gb$position) & !is.na(gb$marker), ], tt[, c("filename", "acq_day", "instrument")], by = "filename")
-  gb$gate <- paste0(gb$parent, " gate on ", gb$marker)
+  gb <- merge(gb[!is.na(gb$position) & !is.na(gb$marker) & gb$marker == gb$gate_marker, ], tt[, c("filename", "acq_day", "instrument")], by = "filename")
+  gb$gate <- ifelse(gb$gate_marker == gb$parent, paste(gb$parent, "gate"), paste(gb$parent, gb$gate_marker))
   print(ggplot(gb, aes(acq_day, position, colour = instrument)) + geom_point(alpha = .6, size = 1.8) +
-    facet_wrap(~gate, scales = "free_y") + scale_colour_manual(values = pal_instr, drop = FALSE) + thm +
-    labs(x = "acquisition day", y = "gate boundary, arcsinh units", colour = NULL, title = "Where the analyst placed the parent gates, per tube"))
+    facet_wrap(~gate, scales = "free_y", ncol = 5) + scale_colour_manual(values = pal_instr, drop = FALSE) + thm +
+    labs(x = "acquisition day", y = "gate boundary on its own marker, arcsinh units", colour = NULL,
+         title = "Where the analyst placed the parent and cytokine gates, per tube"))
 }
 g <- rd("gate_drift.csv"); if (!is.null(g)) knitr::kable(g, digits = 3) else cat("gate_bounds.csv empty: no rectangle/polygon gates found for the parent populations")
+```
+
+## Sensitivity analyses
+
+From `15_sensitivity.R` and `06_biology.R` (docs/plans/drift_methods_review.md). Each table is also a CSV next to this report.
+
+```{r sens-within-day, results="asis"}
+wdf <- rd("week_slope_within_day.csv")
+if (!is.null(wdf)) {
+  cat("**Drift-free week slope.** On subject-days that carry several visits, week contrasts within the subject-day are immune to day, instrument and operator effects. The same tubes are fitted with the subject-day as a fixed effect (within day) and with subject and day as random intercepts (between day). These subject-days mostly hold the early visits, so the slope is a local one; what matters is whether the two estimators agree.\n\n")
+  w <- reshape(wdf[, c("response", "estimator", "week_slope", "se")], idvar = "response", timevar = "estimator", direction = "wide")
+  print(knitr::kable(w, digits = 2, row.names = FALSE, caption = paste("Week slope, logit per year, on", wdf$n_tubes[1], "tubes of", wdf$n_subject_days[1], "subject-days")))
+}
+```
+
+```{r sens-calendar, results="asis"}
+sc <- rd("sensitivity_calendar.csv")
+if (!is.null(sc)) {
+  cat("\n**Gradual drift.** Each model refitted with a natural spline of the acquisition date next to the day intercept. A day variance that drops and a lower AIC mean the day effects are partly a trend over calendar time (laser ageing, tandem-dye degradation, lot changes) rather than day-specific noise.\n\n")
+  print(knitr::kable(sc, digits = 3, row.names = FALSE, caption = "Calendar-time smooth (layer A responses standardised)"))
+}
+```
+
+```{r sens-fixed, results="asis"}
+sf <- rd("sensitivity_fixed_gates.csv")
+if (!is.null(sf)) {
+  cat("\n**Manual against fixed gates.** The endpoint model on frequencies above one fixed threshold per channel (no per-tube gate adjustment) against the manual FlowJo gates. Technical effects that appear only with the fixed threshold were absorbed by the analyst's gating.\n\n")
+  print(knitr::kable(sf, digits = 3, row.names = FALSE, caption = "Layer B, lme4, logit scale"))
+}
+```
+
+```{r sens-calls, results="asis"}
+cst <- rd("call_stability_summary.csv"); mp <- rd("min_parent_sensitivity.csv")
+if (!is.null(cst)) {
+  cat("\n**Call stability.** The probability that each lab-rule call changes when the stimulated and unstimulated counts are resampled binomially at their observed proportions: counting noise alone, no drift. This is the baseline against which rule 2 judges the flips caused by a technical effect (Roederer 2008).\n\n")
+  print(knitr::kable(cst, digits = 1, row.names = FALSE, caption = "Calls per response under counting noise (call_stability.csv per tube)"))
+}
+if (!is.null(mp)) print(knitr::kable(mp, digits = 2, row.names = FALSE, caption = "Calls kept and their stability at a minimum parent event count"))
+```
+
+```{r sens-ungated, results="asis"}
+su <- rd("sensitivity_ungated.csv")
+if (!is.null(su)) {
+  cat("\n**Hand-gated against ungated technical markers.** The technical-marker summaries are normally taken inside the analyst's live-cell gate. Taken on all events instead, an instrument or day effect that the gate had absorbed shows up.\n\n")
+  print(knitr::kable(su[order(su$response, su$population), ], digits = 3, row.names = FALSE, caption = "Layer A, lme4, raw units"))
+}
 ```
 
 ## Frequentist cross-check

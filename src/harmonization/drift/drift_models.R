@@ -14,7 +14,29 @@
 #' inflated operator effect, the log-time spline 0.002 to 0.018 (2026-10-12, 9 fits each).
 default_design <- function() {
   list(unit = "patient", technical = c("acq_day", "instrument"),
-       protected_fixed = character(0), time = NULL, stimulation = "cocktail", time_df = 5)
+       protected_fixed = character(0), time = NULL, stimulation = "cocktail", time_df = 5, visit = NULL)
+}
+
+#' TRUE when the design names the columns of one sample (`design$visit`, e.g. [patient, week]).
+#' The frame then carries a `visit` factor, and every model whose tubes repeat within a visit
+#' (layer B; layer A on all tubes; the variance partition) gets a `(1 | visit)` intercept. Without it,
+#' 2026-10-13 on the MTB cohort: whatever is specific to one sample (thaw, handling, deviation from the
+#' smooth time curve) was booked as acquisition day, because 13 of 23 days hold a single patient, and
+#' the tube-level residual used as rule 1 noise was 2 to 5 times too large
+#' (docs/plans/drift_methods_review.md, section 2.1).
+has_visit <- function(cfg) length(unlist(cfg$design$visit)) > 0L
+
+#' Which tubes enter the technical class (layer A): "neg" (default, one tube per visit) or "all"
+#' (stimulated tubes too, with a `stimulated` fixed term and the visit intercept; about six times
+#' more tubes for the day effects; review section 3.2).
+technical_tubes <- function(cfg) if (identical(cfg$technical_tubes, "all")) "all" else "neg"
+
+#' The layer A rows a fitter uses, per technical_tubes().
+layer_a_rows <- function(fa, cfg) {
+  if (technical_tubes(cfg) == "neg") return(fa[fa$is_neg, ])
+  if (all(fa$is_neg %in% TRUE))
+    stop("technical_tubes: all needs neg_summaries.csv for every tube (step 4 with --all_tubes)", call. = FALSE)
+  fa
 }
 
 #' Names of the non-linear time columns design_frame() adds (character(0) when
@@ -36,7 +58,7 @@ design_technical_factors <- function(cfg) setdiff(unlist(cfg$design$technical), 
 #' Design columns of `cfg` (unlisted, in a fixed order) that a frame must carry.
 design_columns <- function(cfg) {
   ds <- cfg$design
-  unique(c(ds$unit, unlist(ds$technical), unlist(ds$protected_fixed), ds$time, ds$stimulation))
+  unique(c(ds$unit, unlist(ds$technical), unlist(ds$protected_fixed), ds$time, ds$stimulation, unlist(ds$visit)))
 }
 
 #' Turn the design columns of `df` into model-ready factors: unit, the technical
@@ -56,6 +78,9 @@ design_frame <- function(df, cfg, ref = NULL) {
     df$instrument <- relevel(df$instrument, ref = ref)
   for (v in intersect(names(ds$reference_levels), setdiff(names(df), "instrument")))
     if (ds$reference_levels[[v]] %in% levels(df[[v]])) df[[v]] <- relevel(df[[v]], ref = ds$reference_levels[[v]])
+  if (has_visit(cfg) && all(unlist(ds$visit) %in% names(df)))
+    df$visit <- factor(do.call(paste, c(lapply(unlist(ds$visit), function(v) as.character(df[[v]])), sep = "|")))
+  if ("is_neg" %in% names(df)) df$stimulated <- factor(ifelse(df$is_neg %in% TRUE, "no", "yes"), c("no", "yes"))
   if (!is.null(ds$time)) df$week_c <- (df[[ds$time]] - mean(df[[ds$time]])) / 52   # keeps slopes O(1)
   nl <- time_nl_terms(cfg)
   if (length(nl)) {
@@ -100,11 +125,20 @@ design_formula <- function(cfg, class = c("technical", "background_counts", "bac
       if (counts) unit_re <- sprintf("(1 + week_c | %s)", ds$unit)
     }
   }
+  if (class == "technical" && technical_tubes(cfg) == "all") fixed <- c(fixed, "stimulated")
   day <- design_day_term(cfg)
   terms <- c(fixed, unit_re, if (!is.na(day)) sprintf("(1 | %s)", day))
   if (class == "endpoint" && !is.null(ds$stimulation)) terms <- c(terms, sprintf("(1 | %s)", ds$stimulation))
+  if (visit_term(cfg, class)) terms <- c(terms, "(1 | visit)")
   if (counts && engine == "lme4") terms <- c(terms, "(1 | filename)")
   as.formula(paste(response_lhs, "~", paste(terms, collapse = " + ")), env = globalenv())
+}
+
+#' TRUE when the models of `class` carry the `(1 | visit)` intercept: a visit is declared and the
+#' class has several tubes per visit (endpoint; technical on all tubes). Background classes use the
+#' one neg per visit, where a visit term would be the tube residual under another name.
+visit_term <- function(cfg, class) {
+  has_visit(cfg) && (class == "endpoint" || (class == "technical" && technical_tubes(cfg) == "all"))
 }
 
 #' Population-level coefficient names of the fixed design terms `vars` in
@@ -128,6 +162,7 @@ fixed_terms_table <- function(frame, vars) {
 design_fixed_vars <- function(cfg, class) {
   ds <- cfg$design
   vars <- design_technical_factors(cfg)
+  if (class == "technical" && technical_tubes(cfg) == "all") vars <- c(vars, "stimulated")
   if (class != "technical") {
     vars <- c(vars, unlist(ds$protected_fixed))
     if (!is.null(ds$time)) vars <- c(vars, "week_c", time_nl_terms(cfg))
@@ -344,7 +379,8 @@ lme_variance_row <- function(m, layer, response, n, resid_grp, unit = "patient",
   fe <- lme4::fixef(m); se <- sqrt(diag(as.matrix(vcov(m))))
   ic <- grep("^instrument", names(fe))
   data.frame(layer = layer, response = response, n = n,
-    var_patient = v[unit], var_day = v[day], var_resid = v[resid_grp],
+    var_patient = v[unit], var_day = v[day], var_visit = if ("visit" %in% names(v)) v[["visit"]] else NA_real_,
+    var_resid = v[resid_grp],
     icc_day = v[day] / sum(v), drift_to_biology = sqrt(v[day] / v[unit]),
     instrument_effect = if (length(ic)) fe[ic] else NA, instrument_se = if (length(ic)) se[ic] else NA,
     instrument_level = if (length(ic)) sub("^instrument", "", names(fe)[ic]) else NA,
@@ -363,9 +399,10 @@ n_divergent <- function(fit) {
 brms_fit_row <- function(fit, layer, response, n, scale = 1, unit = "patient", day = "acq_day") {
   vc <- brms::VarCorr(fit)
   s <- as.data.frame(vc[[day]]$sd); sp <- as.data.frame(vc[[unit]]$sd)
+  sv <- if (!is.null(vc[["visit"]])) as.data.frame(vc[["visit"]]$sd)$Estimate[1] * scale else NA_real_
   spec <- summary(fit)$spec_pars
   data.frame(layer = layer, response = response, n = n,
-    tau_day = s$Estimate * scale, tau_patient = sp$Estimate[1] * scale,
+    tau_day = s$Estimate * scale, tau_patient = sp$Estimate[1] * scale, tau_visit = sv,
     sigma = if ("sigma" %in% rownames(spec)) spec["sigma", "Estimate"] * scale else NA,
     max_rhat = max(brms::rhat(fit), na.rm = TRUE), n_divergent = n_divergent(fit),
     stringsAsFactors = FALSE)

@@ -49,6 +49,9 @@ design:
   protected_fixed: {{protected_fixed}}  # the group_* columns of the sample sheet (prefix stripped); regenerate the config if they change
   time: week                        # per-unit slope, centred and in years; background and endpoint classes only
   stimulation: cocktail             # random intercept; endpoint class only
+  visit: [patient, week]            # columns of one sample: (1 | visit) wherever tubes repeat within a visit
+                                    # (layer B, layer A on all tubes, variance partition); without it, sample-specific
+                                    # variation is booked as acquisition day (docs/plans/drift_methods_review.md 2.1)
 
 # Response classes (one model builder, the class picks covariates and family):
 #   technical  (layer A):  neg tubes, technical_markers; assumed free of biology, which
@@ -88,7 +91,15 @@ cytokine_gate_regex: "IFN|INF|IL-?2|TNF|CD107"
 positivity:
   min_subtracted_pct: 0.05    # background-subtracted frequency, percent of parent
   min_fold_over_neg:  3       # stimulated / neg
-replicate_noise_prob: 0.95     # P(|effect| > replicate SD) needed to call an effect "detected"
+replicate_noise_prob: 0.95     # posterior probability for rule 1: P(|effect| > margin) -> detected,
+                               # P(|effect| < margin) -> negligible, neither -> inconclusive
+relevance:
+  count_cv: 0.35               # rule 1 margin for counts: log(1 + CV) on the logit scale; 35 % is the inter-laboratory
+                               # CV of ICS responses in proficiency panels (Jaimes et al. 2011). Other responses use
+                               # the same-sample replicate SD
+# Tubes of the technical class (layer A): "neg" (one per visit) or "all" (stimulated tubes too, with a
+# `stimulated` term and the visit intercept; about six times more tubes for the day effects)
+technical_tubes: all
 
 # EDIT: reference instrument the correction (if any) maps onto (a label from instrument_labels).
 reference_instrument: "FACSCantoII"

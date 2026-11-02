@@ -180,5 +180,27 @@ fbt <- read_layer_b(to, "Canto", cfg_op)
 check("read_layer_b backfills a missing design column from tubes.csv", nrow(fbt) == 2 && is.factor(fbt$operator) && all(fbt$operator == "Anna"))
 
 unlink(tmp, recursive = TRUE)
+# --- visit (sample) term and layer A on all tubes (2026-10-13) --------------------------------------
+cat("\n--- visit term ---\n")
+cv <- list(design = modifyList(default_design(), list(unit = "patient", technical = c("acq_day", "instrument"),
+            time = "week", stimulation = "cocktail", visit = c("patient", "week"), time_df = 1)), reference_instrument = "Canto")
+fe <- function(f) paste(deparse(f, width.cutoff = 500), collapse = "")
+check("visit: endpoint formula carries (1 | visit)", grepl("(1 | visit)", fe(design_formula(cv, "endpoint", "lme4")), fixed = TRUE))
+check("visit: background formulas do not (one neg per visit)",
+      !grepl("visit", fe(design_formula(cv, "background_counts", "lme4"))) && !grepl("visit", fe(design_formula(cv, "technical", "brms"))))
+cv$technical_tubes <- "all"
+ft <- fe(design_formula(cv, "technical", "brms"))
+check("all tubes: technical formula gets stimulated and the visit intercept", grepl("stimulated", ft) && grepl("(1 | visit)", ft, fixed = TRUE))
+check("all tubes: stimulated is a fixed design var of the technical class", "stimulated" %in% design_fixed_vars(cv, "technical"))
+df <- data.frame(patient = c(1, 1, 2), week = c(0, 0, 4), acq_day = "d1", instrument = "Canto", cocktail = c("neg", "p1", "neg"),
+                 is_neg = c(TRUE, FALSE, TRUE))
+fr <- design_frame(df, cv, "Canto")
+check("design_frame: visit factor from patient and week", nlevels(fr$visit) == 2 && fr$visit[1] == fr$visit[2])
+check("design_frame: stimulated factor", identical(as.character(fr$stimulated), c("no", "yes", "no")))
+check("layer_a_rows: all tubes kept", nrow(layer_a_rows(fr, cv)) == 3)
+check("layer_a_rows: neg only by default", nrow(layer_a_rows(fr, list(design = cv$design))) == 2)
+check("layer_a_rows: all requested on negs only stops", inherits(tryCatch(layer_a_rows(fr[fr$is_neg, ], cv), error = function(e) e), "error"))
+check("no visit declared: no visit term", !grepl("visit", fe(design_formula(list(design = default_design()), "endpoint", "lme4"))))
+
 cat(sprintf("\n%d passed, %d failed\n", n_pass, n_fail))
 if (n_fail > 0) quit(status = 1)

@@ -2,7 +2,7 @@
 
 # Drift analysis: critical review against the cytometry literature
 
-Status: review written 2026-10-13. It covers the approach in `mtb_batch_drift_plan.md`, `drift_three_questions_plan.md` and `drift_technical_factors_plan.md`, the code under `scripts/drift/` and `src/harmonization/drift/`, and the results in `results_mtb_drift_2026-10-12_operator/`. The checks in section 2 were run on the development box on 2026-10-13 against that results folder, with the `mtb_drift` micromamba environment. Nothing in the pipeline was changed.
+Status: review written 2026-10-13. It covers the approach in `mtb_batch_drift_plan.md`, `drift_three_questions_plan.md` and `drift_technical_factors_plan.md`, the code under `scripts/drift/` and `src/harmonization/drift/`, and the results in `results_mtb_drift_2026-10-12_operator/`. The checks in section 2 were run on the development box on 2026-10-13 against that results folder, with the `mtb_drift` micromamba environment. Section 6 records the implementation of the recommendations and the rerun the same day.
 
 ## 1. Verdict in brief
 
@@ -181,7 +181,84 @@ The plan's lab actions are confirmed by every design guideline found (Cossarizza
 - a minimum number of acquired events per tube, set so that the parent populations clear the threshold of 3.4;
 - all visits of a patient thawed and acquired together where the sample schedule allows it. This design made 2.4 possible.
 
-## 6. References
+## 6. Implementation and rerun (2026-10-13)
+
+Code changes, all behind config fields so older configs behave as before:
+
+| Recommendation | Implementation |
+|---|---|
+| 1 Visit term | `design.visit: [patient, week]` builds a `visit` factor in `design_frame()`. `(1 \| visit)` enters the endpoint class, the technical class on all tubes and the variance partition. The background classes are left without it: with one neg per visit it would be the tube residual under another name. In the partition the visit share is its own group (`sample`) and its own colour, neither biology nor batch. Both Stan programs take an optional visit intercept. `simulate_endpoint()` has a visit SD (0.6) and a realistic tube SD (0.3) |
+| 2 Decision rule | `drift_decision()` has three states against `relevance_margin()`: log(1.35) on the logit scale for counts (`relevance.count_cv`), the same-sample SD otherwise. `flip_summary()` gives rule 2 over 200 posterior draws, and `counting_noise_flips()` gives the binomial baseline on the same tubes. "Detected, correct" now needs more flips than the 95th percentile of counting noise; flips below that are "detected, within counting noise" |
+| 3 Gate audit | Step 4 records the cytokine gates under each parent with a `gate_marker` column. Step 9 measures each gate on its own dimension, which also removes the duplicated CD4/CD8 rows |
+| 4 Within-day slope | `06_biology.R` writes `week_slope_within_day.csv` |
+| 5 Layer A on all tubes | `technical_tubes: all`; a `stimulated` fixed term and the visit intercept. Ungated summaries: step 4 with `neg_population: root` into a subfolder, compared in step 15 |
+| 6 Fixed gates | Uses the fixed-threshold frequencies of step 11 (99.5th percentile of the reference-instrument negs, one threshold per channel) in step 15. An openCyto re-gating was not built |
+| 7 Calendar time | Step 15 refits with a natural spline of the acquisition date (4 df) next to the day intercept. lme4 AIC, not brms LOO |
+| 8 Calling | Step 15 writes the counting-noise flip probability per call and the calls kept at minimum parent counts. The primary rule is unchanged (a decision for the lab) |
+| 9 CD4 IFNg | Refitted with the visit term |
+
+New step `15_sensitivity.R`; report sections for the three-state verdicts, the gate audit and the sensitivity analyses; 244 base-R tests pass (22 new).
+
+Rerun: `results_mtb_drift_2026-10-13_review/` on the development box. Steps 1 to 3, 5, 11 and 13 and the layer BG fits were copied from `results_mtb_drift_2026-10-12_operator/`; steps 4, 1b, 6a and 6b (layers A and B), 6c, 6d, 12a, 12b, 15, 9, 14 and 10 were rerun. The command lines are in `run_review.sh` and `run_finish.sh` in that folder.
+
+### 6.1 Convergence
+
+- Layer B, brms with the visit term: R-hat ≤ 1.005 and no divergent transitions for all 8 endpoints, CD4 IFNg included (57 divergences before).
+- Layer A on all tubes: R-hat ≤ 1.01. Divergences remain in three scatter and viability spreads (FSC 34, LiveDead 22, SSC 4), which are not correction candidates.
+- brms and Stan agree on 885 of 885 day, 39 of 39 instrument and 78 of 78 operator effects.
+- Variance partition: max R-hat 1.028, no divergences (as before).
+
+### 6.2 Answer 1: correction
+
+| Layer | Detected | Negligible | Inconclusive | Correct |
+|---|---|---|---|---|
+| A technical (19 statistics) | 70 | 0 | 416 | not applicable |
+| BG background | 30 | 0 | 278 | 1 |
+| B endpoints | 7 | 0 | 201 | 0 |
+
+- No contrast is negligible. Every technical effect that was "not detected" before is inconclusive: the data cannot show that it is smaller than the margin. "No correction needed" is therefore "no correction shown to be needed".
+- Layer B detects 5 day effects, the Symphony on CD8 TNFa (+1.09 logit, 95 percent interval 0.25 to 1.94) and operator Anna on CD8 TNFa. None changes more calls than counting noise. The day that flipped one call on 2026-10-12 (CD4 TNFa on 2024-07-12) is no longer detected.
+- One correction candidate remains: the CD8 IFNg background on 2023-07-05 (+2.6 logit). Removing it changes 12.9 calls (95 percent interval 6 to 15), against a counting-noise 95th percentile of 4 on the same tubes. Flag or correct the CD8 IFNg calls of that day.
+
+### 6.3 The hand gating carries the instrument correction
+
+| Readout | Manual gates | One fixed threshold per channel |
+|---|---|---|
+| Symphony effect, CD8 CD107a | +0.47 (SE 0.51) | -5.41 (1.27) |
+| CD8 IL2 | -0.12 (0.45) | -2.71 (0.71) |
+| CD4 IL2 | -0.39 (0.53) | -1.96 (0.60) |
+| CD4 CD107a | +0.08 (0.50) | -1.80 (0.61) |
+| CD8 TNFa | +1.41 (0.37) | +1.99 (0.45) |
+| Day variance, CD8 IFNg | 0.86 | 2.11 |
+| Day variance, CD4 TNFa | 0.43 | 0.99 |
+
+lme4, logit scale. In the lme4 partition, the instrument share of the logit frequencies is about 1 percent with the manual gates and 15 percent with fixed thresholds. The direction of the fixed-threshold effects matches the measured gate shifts (IL2 and CD107a gates 0.7 lower on the Symphony). The fixed threshold is set on the Canto negs, so it overstates the Symphony effect where the Symphony scale differs. The analyst's gates removed most of the instrument shift for six of eight readouts. The exception is CD8 TNFa, which keeps a Symphony effect in both versions.
+
+The technical markers tell the same story one gate earlier. Without the live-cell gate, the Symphony shift of the CD8 median grows from -0.76 to -1.16 arcsinh, and that of the CD8 EMD from 0.45 to 0.65.
+
+### 6.4 Visit, day and design
+
+- With the visit term the brms day SD of the endpoints falls by up to 1.2 (CD8 TNFa 1.56 to 0.33), and the visit SD is 0.56 to 0.78. In the partition, the visit takes 10 to 32 percent of the frequency variance. The batch share of logit frequencies falls from 43 to 30 percent, and that of subtracted percentages from 18 to 15 percent.
+- The design check with realistic visit and tube noise changes its verdict from "separable" to "separable only through the unstimulated layer". The week slope is still recovered (1 percent leakage), but the day SD is underestimated by 32 percent. A pure week effect produces a day SD above 0.1 in 33 percent of simulations. Day effects estimated from the endpoints alone are weakly identified.
+- A smooth of calendar time does not explain the endpoint day effects (AIC worse for all 8). Side scatter drifts gradually (AIC -12 and -13 for the SSC median and EMD); no other technical marker improves by more than 4 AIC units.
+
+### 6.5 Biology
+
+- The whole-study week slope stays within 1.2 SE when the technical terms are removed, for every endpoint.
+- On the 15 subject-days with several visits, the drift-free early-visit slope of the CD4 responses is 3.6 to 5.9 logit per year. On the same tubes, the random-day model gives -0.19 to 0.76 logit per year for IFNg, IL2 and TNFa, 3 to 4 SE lower. In this window the random-day model gives part of the rise to the day effects. The early response should be reported from the within-day contrasts.
+
+### 6.6 Calls
+
+- Counting noise alone changes 133 of 2176 lab-rule calls on average. 419 calls have a flip probability above 10 percent.
+- Requiring 5000 parent events keeps 41 percent of the calls and cuts the expected flips to 28. Requiring 1000 keeps 76 percent with 78 expected flips.
+
+### 6.7 Open
+
+- The primary calling rule and a minimum parent count (lab decision).
+- The CD8 IFNg calls of 2023-07-05, and the CD8 TNFa instrument effect (keep `instrument` in any CD8 TNFa analysis).
+- Re-gating with a landmark-normalised template (Finak et al. 2014, Cytometry A), which would separate the instrument shift from the analyst's judgement better than one fixed threshold.
+
+## 7. References
 
 DOIs were resolved against Crossref on 2026-10-13.
 

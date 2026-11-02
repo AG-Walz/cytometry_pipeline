@@ -94,6 +94,12 @@ check("lme4 count formula", fstr(partition_formula(tm, "freq_raw", "lme4")) ==
 check("brms ratio formula has trials and the offset", grepl("^count \\| trials\\(parent_count\\) ~ .*offset\\(neg_offset\\)$", fstr(partition_formula(partition_terms(cfg, d_ratio, "freq_ratio"), "freq_ratio", "brms"))))
 check("stimulated absent when only stimulated tubes", !"stimulated" %in% partition_terms(cfg, d_sub, "freq_sub")$fixed)
 check("single-level factor left out", !"instrument" %in% partition_terms(cfg, transform(d_sub, instrument = factor("Canto")), "freq_sub")$fixed)
+cfg_v <- cfg; cfg_v$design$visit <- c("patient", "week")
+d_v <- design_frame(d_raw, cfg_v, "Canto")
+tm_v <- partition_terms(cfg_v, d_v, "freq_raw")
+check("visit declared: random visit term in its own group", "visit" %in% tm_v$random && tm_v$groups[["visit"]] == "visit")
+sh_v <- variance_shares(list(), c(patient = 1, visit = 1), 2, c(patient = "wanted", visit = "visit"))
+check("visit share is neither wanted nor unwanted", sh_v$group[sh_v$factor == "visit"] == "visit" && abs(sum(sh_v$share) - 1) < 1e-12)
 check("fixed_term_of maps columns to factors", identical(unname(fixed_term_of(c("(Intercept)", "instrumentSymph", "operatorA", "week_c", "week_nl2", "prior_vacc2"),
       c("instrument", "operator", "prior_vacc"))), c(NA, "instrument", "operator", "week", "week", "prior_vacc")))
 

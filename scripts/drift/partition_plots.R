@@ -113,7 +113,7 @@ summary_shares <- function(sh, groups = c("wanted", "unwanted", "visit")) {
 #' in percent of the variance. `kind` "mfi" or "freq". Summary: one row per gating level (medians over
 #' readouts); `by_readout`: one row per readout.
 plot_partition_paired <- function(vp, kind, by_readout = FALSE) {
-  sh <- partition_long(vp); sh <- sh[sh$group != "residual" & sh$kind == kind, ]
+  sh <- partition_long(vp); sh <- sh[sh$group %in% c("wanted", "unwanted") & sh$kind == kind, ]   # the visit share is in the full bars
   if (!by_readout) { sh <- summary_shares(sh); sh$row <- sh$gating } else sh$row <- sh$readout
   sh$bar <- factor(c(wanted = "bio", unwanted = "batch", visit = "visit")[sh$group], c("bio", "batch", "visit"))
   sh$setting <- droplevels(sh$setting)

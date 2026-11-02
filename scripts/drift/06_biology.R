@@ -3,6 +3,8 @@
 # since first vaccination, logit scale) is estimated with glmer, once with the full design and once
 # without the technical terms (instrument, acq_day), then with each acquisition day left out in
 # turn. If the slope does not move, technical drift is not what the response is measuring.
+# Also the drift-free check: the week slope from subject-days that carry several visits, with the
+# subject-day as a fixed effect, against the random-day model on the same tubes (week_slope_within_day.csv).
 # Writes week_slope_sensitivity.csv, week_slope_lodo.csv and week_slope_subjects.csv. Minutes to run.
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
 usage <- "06_biology.R --out DIR --config FILE"
@@ -30,7 +32,7 @@ lodo_formula <- function(d) {
 f_full <- biology_formula(cfg); f_nt <- biology_formula(cfg, technical = FALSE)
 cat("full:         ", deparse1(f_full), "\nno_technical: ", deparse1(f_nt), "\n")
 fb <- read_layer_b(a$out, ref, cfg)
-sens <- list(); lodo <- list(); subj <- list()
+sens <- list(); lodo <- list(); subj <- list(); wday <- list()
 for (resp in unique(fb$response)) {
   d <- fb[fb$response == resp, ]
   cat(resp, ":", nrow(d), "tubes\n")
@@ -39,6 +41,13 @@ for (resp in unique(fb$response)) {
   m_nt <- fit_glmer(d, f_nt, "no_technical")
   sens[[length(sens) + 1L]] <- list(response = resp, model = "no_technical", slope = slope_of(m_nt), n = nrow(d))
   if (!is.null(m_full)) subj[[length(subj) + 1L]] <- subject_slopes(coef(m_full)[[unit]], resp)
+  wd <- within_day_frame(d, cfg)
+  if (!is.null(wd)) for (est in names(wf <- within_day_formulas(cfg))) {
+    wd$patient_day <- factor(wd$patient_day)
+    m <- fit_glmer(wd, wf[[est]], paste("within-day", est))
+    wday[[length(wday) + 1L]] <- data.frame(response = resp, estimator = est, week_slope = slope_of(m)[1], se = slope_of(m)[2],
+      n_tubes = nrow(wd), n_subject_days = length(unique(wd$patient_day)), stringsAsFactors = FALSE)
+  }
   for (day in sort(unique(as.character(d[[day_term]])))) {
     keep <- d[[day_term]] != day
     d2 <- droplevels(d[keep, ])
@@ -52,5 +61,12 @@ write_table(sens_df, file.path(a$out, "week_slope_sensitivity.csv"))
 write_table(lodo_table(lodo), file.path(a$out, "week_slope_lodo.csv"))
 empty_subj <- data.frame(response = character(0), patient = character(0), slope = numeric(0))
 write_table(if (length(subj)) do.call(rbind, subj) else empty_subj, file.path(a$out, "week_slope_subjects.csv"))
+if (length(wday)) {
+  wdf <- do.call(rbind, wday)
+  write_table(wdf, file.path(a$out, "week_slope_within_day.csv"))
+  cat("\ndrift-free week slope from subject-days with several visits (logit per year; same tubes, two estimators):\n")
+  print(reshape(wdf[, c("response", "estimator", "week_slope", "se")], idvar = "response", timevar = "estimator", direction = "wide"),
+        digits = 3, row.names = FALSE)
+}
 cat("\nweek slope, logit per year (SE):\n")
 print(sensitivity_pairs(sens_df)[, c("response", "week_slope", "se", "week_slope_nt", "se_nt", "shift_se")], digits = 3, row.names = FALSE)

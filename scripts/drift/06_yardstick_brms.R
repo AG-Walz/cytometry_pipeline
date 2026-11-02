@@ -60,7 +60,7 @@ fit_counts <- function(d, class, iter) {
 }
 
 if ("A" %in% layers) {
-  fa <- read_layer_a(a$out, cfg, tt, ref); fa <- fa[fa$is_neg, ]
+  fa <- layer_a_rows(read_layer_a(a$out, cfg, tt, ref), cfg)
   for (key in unique(paste(fa$marker, fa$statistic, sep = ":"))) {
     d <- fa[paste(fa$marker, fa$statistic, sep = ":") == key, ]
     cat("\n[A]", key, "n =", nrow(d), "\n")
@@ -98,7 +98,12 @@ for (ly in unique(vapply(eff, function(e) e$layer[1], character(1))))
               file.path(a$out, sprintf("effects_brms_%s.csv", ly)))
 # summary tables hold all layers: rows of the layers fitted now replace the old ones
 merge_layers <- function(new, path) {
-  if (file.exists(path)) { old <- read.csv(path, stringsAsFactors = FALSE); old <- old[!old$layer %in% new$layer, ]; new <- rbind(old, new) }
+  if (file.exists(path)) {
+    old <- read.csv(path, stringsAsFactors = FALSE); old <- old[!old$layer %in% new$layer, ]
+    for (cn in setdiff(names(new), names(old))) old[[cn]] <- rep(NA, nrow(old))   # columns added later (tau_visit)
+    for (cn in setdiff(names(old), names(new))) new[[cn]] <- rep(NA, nrow(new))
+    new <- rbind(old, new[, names(old)])
+  }
   write_table(new, path)
 }
 merge_layers(do.call(rbind, fits_summary), file.path(a$out, "fits_brms_summary.csv"))

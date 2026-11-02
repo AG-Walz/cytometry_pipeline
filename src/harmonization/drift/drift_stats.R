@@ -73,23 +73,88 @@ replicate_sd <- function(value, patient_day) {
   sqrt(mean(s^2, na.rm = TRUE))
 }
 
-#' Decision for one contrast (a day or the instrument) on one marker.
-#' `draws`: posterior draws of the effect. `rep_sd`: replicate SD on the same
-#' scale. `flips`: number of positivity calls that change when the effect is
-#' removed (0 when not applicable, NA when unknown).
-drift_decision <- function(draws, rep_sd, flips, prob_threshold = 0.95) {
-  p_exceeds <- mean(abs(draws) > rep_sd)
-  detected  <- is.finite(p_exceeds) && p_exceeds >= prob_threshold
-  verdict <- if (!detected) "not detected"
-             else if (is.na(flips)) "detected, relevance unknown"
-             else if (flips > 0) "detected, correct"
-             else "detected, not clinically relevant"
+#' Decision for one contrast (a day or the instrument) on one marker, with three states for rule 1
+#' (Kruschke 2018, region of practical equivalence; Lakens 2017 for the frequentist analogue):
+#'   detected      P(|effect| > margin) >= prob_threshold
+#'   negligible    P(|effect| < margin) >= prob_threshold
+#'   inconclusive  neither: the data cannot tell (most single-patient days)
+#' `draws`: posterior draws of the effect. `rep_sd`: replicate SD on the same scale, kept for the
+#' record. `margin`: the relevance margin (defaults to rep_sd, the earlier rule). `flips`: number of
+#' positivity calls that change when the effect is removed (0 when not applicable, NA when unknown), or
+#' the list returned by flip_summary(), whose noise baseline then decides rule 2:
+#'   detected, correct                   expected flips above the 95th percentile of counting-noise flips
+#'   detected, within counting noise     flips > 0, but no more than counting noise alone produces
+#'   detected, not clinically relevant   no flips
+drift_decision <- function(draws, rep_sd, flips, prob_threshold = 0.95, margin = rep_sd) {
+  p_exceeds <- mean(abs(draws) > margin)
+  p_within <- mean(abs(draws) < margin)
+  detected <- is.finite(p_exceeds) && p_exceeds >= prob_threshold
+  fs <- if (is.list(flips)) flips else list(mean = flips, lo = NA_real_, hi = NA_real_, noise_mean = NA_real_, noise_q95 = NA_real_)
+  verdict <- if (!detected) { if (is.finite(p_within) && p_within >= prob_threshold) "negligible" else "inconclusive" }
+             else if (is.na(fs$mean)) "detected, relevance unknown"
+             else if (fs$mean == 0) "detected, not clinically relevant"
+             else if (is.na(fs$noise_q95) || fs$mean > fs$noise_q95) "detected, correct"
+             else "detected, within counting noise"
   data.frame(effect_mean = mean(draws),
              ci_low = unname(quantile(draws, 0.025)),
              ci_high = unname(quantile(draws, 0.975)),
-             replicate_sd = rep_sd, p_exceeds_noise = p_exceeds,
-             positivity_flips = flips, verdict = verdict,
+             replicate_sd = rep_sd, margin = margin, p_exceeds_noise = p_exceeds, p_within_margin = p_within,
+             positivity_flips = fs$mean, flips_lo = fs$lo, flips_hi = fs$hi,
+             noise_flips_mean = fs$noise_mean, noise_flips_q95 = fs$noise_q95, verdict = verdict,
              stringsAsFactors = FALSE)
+}
+
+#' Relevance margin of rule 1 for a response of `layer` ("A", "BG", "B") on the count (logit) scale or
+#' not. Counts: log(1 + cv) with cv = cfg$relevance$count_cv (default 0.35, the inter-laboratory CV of
+#' ICS responses above 0.2 percent in proficiency panels, Jaimes et al. 2011; Maecker et al. 2005), since
+#' a logit shift of a rare frequency is a log fold change. Other responses: the replicate SD, as before,
+#' because no external standard exists for arcsinh medians or scatter. Returns list(margin, source).
+relevance_margin <- function(cfg, counts, rep_sd) {
+  cv <- if (is.null(cfg$relevance$count_cv)) 0.35 else as.numeric(cfg$relevance$count_cv)
+  if (counts && is.finite(cv)) list(margin = log1p(cv), source = sprintf("count CV %.0f%%", 100 * cv))
+  else list(margin = rep_sd, source = "replicate SD")
+}
+
+#' Rule 2 with uncertainty and a baseline. `flip_fun(effect)` returns the number of calls that change
+#' when `effect` is removed; it is evaluated on `n_draws` posterior draws (expected flips and a 95 percent
+#' interval). `noise_fun()` returns the flips produced by one binomial resample of the affected counts
+#' at their observed proportions, with no effect at all; `n_noise` resamples give its mean and 95th
+#' percentile. Returns list(mean, lo, hi, noise_mean, noise_q95).
+flip_summary <- function(draws, flip_fun, noise_fun = NULL, n_draws = 200L, n_noise = 200L, seed = 1L) {
+  idx <- unique(round(seq(1, length(draws), length.out = min(n_draws, length(draws)))))
+  f <- vapply(draws[idx], flip_fun, numeric(1))
+  nz <- if (is.null(noise_fun)) NA_real_ else { set.seed(seed); vapply(seq_len(n_noise), function(i) noise_fun(), numeric(1)) }
+  list(mean = mean(f), lo = unname(quantile(f, 0.025)), hi = unname(quantile(f, 0.975)),
+       noise_mean = mean(nz), noise_q95 = if (all(is.na(nz))) NA_real_ else unname(quantile(nz, 0.95)))
+}
+
+#' Calls among rows `which` of `fb` (one response) that change under one binomial resample of the
+#' stimulated counts (`stim = TRUE`) and of the matched neg counts (`neg = TRUE`) at their observed
+#' proportions: the counting-noise baseline for rule 2.
+counting_noise_flips <- function(fb, which, min_subtracted_pct, min_fold_over_neg, stim = TRUE, neg = TRUE) {
+  d <- fb[which, , drop = FALSE]
+  if (!nrow(d)) return(0)
+  before <- positivity_call(d$pct, d$neg_pct, min_subtracted_pct, min_fold_over_neg)$positive
+  k <- if (stim) stats::rbinom(nrow(d), d$parent_count, d$count / d$parent_count) else d$count
+  nn <- round(d$neg_parent_count)
+  k0 <- if (neg) stats::rbinom(nrow(d), nn, pmin(1, d$neg_count / d$neg_parent_count)) else d$neg_count
+  after <- positivity_call(100 * k / d$parent_count, 100 * k0 / d$neg_parent_count, min_subtracted_pct, min_fold_over_neg)$positive
+  sum(before != after, na.rm = TRUE)
+}
+
+#' Per stimulated call, the probability that it changes under counting noise alone (binomial resampling
+#' of the stimulated and matched neg counts at their observed proportions, `n` times), with the parent
+#' count. Used for the call-stability table and the minimum-parent-count sensitivity.
+call_flip_probability <- function(st, min_subtracted_pct, min_fold_over_neg, n = 500L, seed = 1L) {
+  set.seed(seed)
+  obs <- positivity_call(st$pct, st$neg_pct, min_subtracted_pct, min_fold_over_neg)$positive
+  nn <- round(st$neg_parent_count)
+  fl <- replicate(n, {
+    k <- stats::rbinom(nrow(st), st$parent_count, st$count / st$parent_count)
+    k0 <- stats::rbinom(nrow(st), nn, pmin(1, st$neg_count / st$neg_parent_count))
+    positivity_call(100 * k / st$parent_count, 100 * k0 / st$neg_parent_count, min_subtracted_pct, min_fold_over_neg)$positive != obs
+  })
+  rowMeans(matrix(fl, nrow = nrow(st)), na.rm = TRUE)
 }
 
 #' Control (neg) matching as a policy. For every stimulated row of `fq` (the

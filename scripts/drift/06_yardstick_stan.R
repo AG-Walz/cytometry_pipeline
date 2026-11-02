@@ -51,24 +51,32 @@ keep <- function(r, layer, response, scale = 1) {
   covs[[length(covs) + 1L]] <<- covariates_long("stan", layer, response, lapply(r$covariates, function(m) m * scale))
   if (r$n_divergent > 0) cat("  ", r$n_divergent, "divergent transitions\n")
 }
-prep <- function(d) {   # drop unused unit and day levels so P and D match the frame
-  d[[unit]] <- droplevels(d[[unit]]); d[[day_term]] <- droplevels(d[[day_term]]); d
+prep <- function(d) {   # drop unused unit, day and visit levels so P, D and V match the frame
+  d[[unit]] <- droplevels(d[[unit]]); d[[day_term]] <- droplevels(d[[day_term]])
+  if ("visit" %in% names(d)) d$visit <- droplevels(d$visit)
+  d
+}
+# visit (sample) intercept of `class` (design$visit): V, has_visit and the index, as both programs take them
+visit_data <- function(d, class) {
+  on <- visit_term(cfg, class) && "visit" %in% names(d)
+  v <- if (on) d$visit else factor(rep(1L, nrow(d)))
+  list(V = nlevels(v), has_visit = as.integer(on), visit = as.integer(v))
 }
 fit_gaussian <- function(model, d, class) {
   dm <- design_matrix(d, class)
-  run(model, list(N = nrow(d), P = nlevels(d[[unit]]), D = nlevels(d[[day_term]]), K = ncol(dm$X),
-                  unit = as.integer(d[[unit]]), day = as.integer(d[[day_term]]), X = dm$X,
-                  y = as.numeric(scale(d$value))),
+  run(model, c(list(N = nrow(d), P = nlevels(d[[unit]]), D = nlevels(d[[day_term]]), K = ncol(dm$X),
+                    unit = as.integer(d[[unit]]), day = as.integer(d[[day_term]]), X = dm$X,
+                    y = as.numeric(scale(d$value))), visit_data(d, class)),
       dm$ft, levels(d[[day_term]]))
 }
 fit_counts <- function(model, d, class, stim = NULL) {
   dm <- design_matrix(d, class)
   has_stim <- !is.null(stim) && stim %in% names(d)
   s <- if (has_stim) droplevels(d[[stim]]) else factor(rep(1L, nrow(d)))
-  run(model, list(N = nrow(d), P = nlevels(d[[unit]]), D = nlevels(d[[day_term]]), C = nlevels(s), K = ncol(dm$X),
-                  has_stim = as.integer(has_stim), unit = as.integer(d[[unit]]), day = as.integer(d[[day_term]]),
-                  stim = as.integer(s), X = dm$X, week_c = if ("week_c" %in% names(d)) d$week_c else rep(0, nrow(d)),
-                  n_parent = as.integer(d$parent_count), k = as.integer(d$count)),
+  run(model, c(list(N = nrow(d), P = nlevels(d[[unit]]), D = nlevels(d[[day_term]]), C = nlevels(s), K = ncol(dm$X),
+                    has_stim = as.integer(has_stim), unit = as.integer(d[[unit]]), day = as.integer(d[[day_term]]),
+                    stim = as.integer(s), X = dm$X, week_c = if ("week_c" %in% names(d)) d$week_c else rep(0, nrow(d)),
+                    n_parent = as.integer(d$parent_count), k = as.integer(d$count)), visit_data(d, class)),
       dm$ft, levels(d[[day_term]]))
 }
 
@@ -76,7 +84,7 @@ if (any(c("A", "BG") %in% layers)) mN <- cmdstanr::cmdstan_model(file.path(stan_
 if (any(c("BG", "B") %in% layers)) mBB <- cmdstanr::cmdstan_model(file.path(stan_dir, "design_betabinom.stan"))
 
 if ("A" %in% layers) {
-  fa <- read_layer_a(a$out, cfg, tt, ref); fa <- fa[fa$is_neg, ]
+  fa <- layer_a_rows(read_layer_a(a$out, cfg, tt, ref), cfg)
   for (key in unique(paste(fa$marker, fa$statistic, sep = ":"))) {
     d <- prep(fa[paste(fa$marker, fa$statistic, sep = ":") == key, ])
     cat("\n[A]", key, "\n")
