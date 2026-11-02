@@ -54,8 +54,30 @@ STEPS <- list(
        needs = c("tubes.csv", "neg_summaries.csv", "neg_cells/*.csv.gz"),
        makes = c("effects_bayesflow_v2.csv", "bf_v2_recovery.csv", "bf_v2_sbc.csv", "bf_v2_ppc.csv", "bf_v2_timing.json")),
   list(id = "9",  name = "decision",        script = "09_decision.R",
-       needs = c("tubes.csv", "gated_frequencies.csv", "neg_summaries.csv", "effects_*.csv"),
+       needs = c("tubes.csv", "gated_frequencies.csv", "neg_summaries.csv", "effects_*.csv", "lme4_variance_components.csv"),
        makes = c("decisions.csv", "controls_summary.csv")),
+  list(id = "11", name = "mfi table",       script = "11_mfi_table.R",
+       needs = c("tubes.csv", "panel_map.csv", "panel_signatures.csv", "excluded_tubes.csv"),
+       makes = "mfi.csv", dirs = c("wsp_dir", "fcs_dir")),
+  list(id = "11b", name = "acquisition audit", script = "11b_acquisition_audit.R",
+       needs = c("tubes.csv", "panel_map.csv", "panel_signatures.csv"),
+       makes = c("acquisition_settings.csv", "sample_quality.csv", "flowjo_transformations.csv", "gate_positions.csv", "factor_overlap.csv"),
+       dirs = c("wsp_dir", "fcs_dir")),
+  list(id = "12a", name = "partition lme4", script = "12_variance_partition.R",
+       needs = c("tubes.csv", "gated_frequencies.csv", "mfi.csv"), makes = "variance_partition_lme4.csv"),
+  list(id = "12b", name = "partition brms", script = "12_variance_partition.R",
+       needs = c("tubes.csv", "gated_frequencies.csv", "mfi.csv"), makes = c("variance_partition_brms.csv", "partition_fits_brms.csv")),
+  list(id = "14", name = "partition figures", script = "14_partition_figures.R",
+       needs = "variance_partition_*.csv", makes = c("partition_grid.csv", "partition_grid_summary.csv", "figures/01_analysis_workflow.png")),
+  list(id = "13", name = "calling rules",   script = "13_calling_rules.R",
+       needs = "gated_frequencies.csv", makes = c("calls_compare.csv", "calls_agreement.csv")),
+  list(id = "16a", name = "boolean counts", script = "16_compass.R",
+       needs = c("tubes.csv", "panel_signatures.csv", "gated_frequencies.csv", "excluded_tubes.csv"),
+       makes = c("boolean_counts.csv", "boolean_marginal_check.csv"), dirs = c("wsp_dir", "fcs_dir"), optional = TRUE),
+  list(id = "16b", name = "compass",        script = "16_compass.R", needs = c("boolean_counts.csv", "gated_frequencies.csv"),
+       makes = c("compass_gamma.csv", "compass_scores.csv", "compass_mcmc.csv"), optional = TRUE),
+  list(id = "16c", name = "subset model",   script = "16_compass.R", needs = c("boolean_counts.csv", "gated_frequencies.csv"),
+       makes = c("subset_effects_visit_full.csv", "hypotheses_visit_full.csv"), optional = TRUE),
   list(id = "10", name = "report",          script = "10_report.Rmd",
        needs = c("tubes.csv", "decisions.csv", "effects_*.csv", "lme4_variance_components.csv"),
        makes = "report.html")
@@ -156,6 +178,11 @@ step_command <- function(step, a, out, config) {
     "4"  = paste("--wsp_dir", q(a$wsp_dir), "--fcs_dir", q(a$fcs_dir), "--all_tubes"),
     "5"  = paste("--wsp_dir", q(a$wsp_dir), "--fcs_dir", q(a$fcs_dir)),
     "6a" = paste("--cores", a$cores), "6b" = paste("--cores", a$cores),
+    "11" = paste("--wsp_dir", q(a$wsp_dir), "--fcs_dir", q(a$fcs_dir)),
+    "11b" = paste("--wsp_dir", q(a$wsp_dir), "--fcs_dir", q(a$fcs_dir)),
+    "12a" = "--engine lme4", "12b" = paste("--engine brms --workers", a$workers),
+    "16a" = paste("--stage counts --wsp_dir", q(a$wsp_dir), "--fcs_dir", q(a$fcs_dir)),
+    "16b" = "--stage compass", "16c" = paste("--stage model --time visit --cores", a$cores),
     "")
   paste(q(RSCRIPT), q(s), common, args)
 }
@@ -185,7 +212,7 @@ cmd_doctor <- function(args) {
   add("Rscript", TRUE, paste(RSCRIPT, R.version$major, R.version$minor, sep = " "))
   needed <- c(yaml = "steps 2 to 10", lme4 = "steps 1b, 6c, 6d", brms = "step 6a", cmdstanr = "step 6b",
               CytoML = "steps 4, 5", flowWorkspace = "steps 4, 5", flowCore = "steps 3 to 5",
-              rmarkdown = "step 10", ggplot2 = "step 10", knitr = "step 10")
+              rmarkdown = "step 10", ggplot2 = "step 10", knitr = "step 10", COMPASS = "step 16b")
   for (p in names(needed)) {
     ok <- requireNamespace(p, quietly = TRUE)
     add(paste("R package", p), ok, if (ok) as.character(packageVersion(p)) else needed[[p]], setup)

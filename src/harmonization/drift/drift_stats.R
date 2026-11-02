@@ -131,6 +131,17 @@ match_controls <- function(fq, controls, reference_instrument) {
   cbind(fq, res)
 }
 
+#' Level of technical factor `term` of the neg matched to each row of `fb`, looked up
+#' through neg_filename in the tube table `tt`; NA when the pooled negs disagree.
+#' "instrument" and "day" use the neg_instrument and neg_acq_day columns.
+matched_neg_level <- function(fb, term, tt) {
+  if (term == "instrument") return(fb$neg_instrument)
+  if (term == "day") return(fb$neg_acq_day)
+  lv <- setNames(as.character(tt[[term]]), tt$filename)
+  vapply(strsplit(as.character(fb$neg_filename), ","), function(f) {
+    x <- unique(lv[f]); if (length(x) == 1L) unname(x) else NA_character_ }, character(1))
+}
+
 #' Positivity calls that change when a background (neg) effect on the logit
 #' scale is removed from the matched negs. `fb` is a layer B frame for ONE
 #' response; `which_neg` marks the rows whose matched neg carries the effect
@@ -142,4 +153,66 @@ count_background_flips <- function(fb, effect, which_neg, min_subtracted_pct = 0
   adjn <- pn; adjn[which_neg] <- plogis(qlogis(pn[which_neg]) - effect)
   after <- positivity_call(fb$pct, 100 * adjn, min_subtracted_pct, min_fold_over_neg)$positive
   sum(before != after, na.rm = TRUE)
+}
+
+#' Responder calls of every stimulated row of `st` (gated_frequencies rows with a matched neg and
+#' a `response` column) under the lab rule and a one-sided Fisher's exact test (stimulated vs matched
+#' neg counts, Benjamini-Hochberg within each response, q < `alpha`). A `mimosa` column is added as NA.
+calling_rules <- function(st, cfg, alpha = 0.05) {
+  pos <- cfg$positivity
+  lab <- positivity_call(st$pct, st$neg_pct, pos$min_subtracted_pct, pos$min_fold_over_neg)$positive
+  p <- mapply(function(k, n, k0, n0) stats::fisher.test(matrix(c(k, n - k, k0, n0 - k0), 2), alternative = "greater")$p.value,
+              st$count, st$parent_count, st$neg_count, st$neg_parent_count)
+  q <- ave(p, st$response, FUN = function(x) stats::p.adjust(x, "BH"))
+  data.frame(filename = st$filename, response = st$response, patient = st$patient, week = st$week,
+             pct = st$pct, neg_pct = st$neg_pct, lab = lab, fisher_q = q, fisher = q < alpha,
+             mimosa = NA, stringsAsFactors = FALSE)
+}
+
+#' Per response: number of positive calls under each rule and Cohen's kappa of every pair of rules.
+calls_agreement <- function(calls) {
+  rules <- intersect(c("lab", "fisher", "mimosa"), names(calls))
+  rules <- rules[vapply(rules, function(r) any(!is.na(calls[[r]])), logical(1))]
+  kappa <- function(x, y) { ok <- !is.na(x) & !is.na(y); x <- x[ok]; y <- y[ok]; po <- mean(x == y)
+    pe <- mean(x) * mean(y) + (1 - mean(x)) * (1 - mean(y)); if (pe == 1) NA else (po - pe) / (1 - pe) }
+  do.call(rbind, lapply(split(calls, calls$response), function(d) {
+    out <- data.frame(response = d$response[1], n = nrow(d), stringsAsFactors = FALSE)
+    for (r in rules) out[[paste0("positive_", r)]] <- sum(d[[r]], na.rm = TRUE)
+    if (length(rules) > 1) for (pr in utils::combn(rules, 2, simplify = FALSE))
+      out[[paste0("kappa_", pr[1], "_", pr[2])]] <- kappa(d[[pr[1]]], d[[pr[2]]])
+    out
+  }))
+}
+
+mimosa_available <- function() requireNamespace("MIMOSA", quietly = TRUE)
+
+#' MIMOSA calls (Finak et al. 2014) for the stimulated rows of `st`: one pair per stimulated tube
+#' (its counts and its matched neg's counts), all pools of a response in one EM fit, since pools are
+#' patient-specific and MIMOSA shares information across the pairs of one stimulation. Returns
+#' data.frame(prob, fdr, positive) in the row order of `st`; positive = fdr < `alpha`.
+mimosa_calls <- function(st, alpha = 0.05) {
+  out <- data.frame(prob = rep(NA_real_, nrow(st)), fdr = NA_real_, positive = NA)
+  st$UID <- sprintf("u%05d", seq_len(nrow(st)))
+  for (resp in unique(st$response)) {
+    i <- which(st$response == resp); s <- st[i, ]
+    long <- rbind(data.frame(UID = s$UID, ANTIGEN = "POOL", CYTNUM = s$count, NSUB = s$parent_count - s$count),
+                  data.frame(UID = s$UID, ANTIGEN = "negctrl", CYTNUM = round(s$neg_count), NSUB = round(s$neg_parent_count - s$neg_count)))
+    long$CYTOKINE <- "c"; long$TCELLSUBSET <- "t"
+    res <- tryCatch(suppressMessages(suppressWarnings({
+      # MIMOSA evaluates `reference` and `.variables` unevaluated (plyr style), so they are written out here
+      E <- MIMOSA::ConstructMIMOSAExpressionSet(long, reference = ANTIGEN %in% "negctrl", measure.columns = c("CYTNUM", "NSUB"),
+             other.annotations = c("CYTOKINE", "TCELLSUBSET", "ANTIGEN", "UID"),
+             default.cast.formula = component ~ UID + ANTIGEN + CYTOKINE + TCELLSUBSET,
+             .variables = plyr::.(TCELLSUBSET, CYTOKINE, UID), featureCols = 1, ref.append.replace = "_REF")
+      fit <- MIMOSA::MIMOSA(NSUB + CYTNUM ~ UID + TCELLSUBSET + CYTOKINE | ANTIGEN, data = E, method = "EM",
+                            subset = RefTreat %in% "Treatment" & ANTIGEN %in% "POOL", ref = ANTIGEN %in% "POOL" & RefTreat %in% "Reference")
+      z <- MIMOSA::getZ(fit); q <- MIMOSA::fdr(fit)   # one row per pair, in the order of pData(fit[[1]])
+      uid <- as.character(Biobase::pData(fit[[1]])$UID)
+      list(prob = setNames(z[, "Pr.response"], uid), fdr = setNames(as.numeric(q), uid))
+    })), error = function(e) { cat("  MIMOSA failed for", resp, ":", conditionMessage(e), "\n"); NULL })
+    if (is.null(res)) next
+    out$prob[i] <- res$prob[s$UID]; out$fdr[i] <- res$fdr[s$UID]
+  }
+  out$positive <- out$fdr < alpha
+  out
 }

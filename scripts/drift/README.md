@@ -24,7 +24,9 @@ Rscript scripts/drift/drift.R status --out results/cohort --config results/cohor
 
 `run` executes, in order, 1 metadata, 1b check_design, 2 panel, 3 tube QC, 4 neg summaries, 5 frequencies,
 6a brms, 6b Stan, 6c lme4, 6d biology (week slope with and without technical terms, leave-one-day-out),
-7 and 8 BayesFlow (opt-in), 9 decision, 10 report. A step runs when one of its outputs is missing or
+7 and 8 BayesFlow (opt-in), 9 decision, 11 MFI table, 12a/12b variance partition (lme4, brms), 13 calling
+rules (lab rule, Fisher, MIMOSA), 10 report. Steps 11 to 13 answer "should the unstimulated tube be
+subtracted?" and "where do the differences come from?" (`docs/plans/drift_three_questions_plan.md`). A step runs when one of its outputs is missing or
 older than one of its inputs (the config counts as an input); `--only 6c,9,10`, `--from 6`, `--force`
 override. Output is tee'd to `<out>/run_all.log` and every step leaves `<out>/.done/<step>.json` (time,
 duration, git commit, config checksum, command line). `bash scripts/drift/run_all.sh DATA_ROOT OUT CFG

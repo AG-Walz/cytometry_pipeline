@@ -6,8 +6,11 @@
 # Lets steps 6 to 9 be exercised, and their recovered effects compared with the
 # truth in synthetic_truth.csv, without CytoML. Base R only.
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "..", "scripts", "drift", "common.R"))
-usage <- "drift_synthetic.R --out DIR --config FILE [--instr_shift 0.4] [--tau_day 0.15] [--bg_shift 0.8] [--seed 1]"
-a <- parse_args(list(out = "", config = "", instr_shift = 0.4, tau_day = 0.15, bg_shift = 0.8, seed = 1), usage = usage)
+usage <- "drift_synthetic.R --out DIR --config FILE [--instr_shift 0.4] [--tau_day 0.15] [--bg_shift 0.8] [--op_shift 0] [--week_curve 0] [--seed 1]"
+# --op_shift: layer B and BG logit shift on the first non-reference operator (needs an operator column)
+# --week_curve: amplitude of a response peak around week 12 in the stimulated tubes (biology that a straight
+#               week line misses; with --tau_day 0 every detected day effect is then a false positive)
+a <- parse_args(list(out = "", config = "", instr_shift = 0.4, tau_day = 0.15, bg_shift = 0.8, op_shift = 0, week_curve = 0, seed = 1), usage = usage)
 cfg <- read_drift_config(a$config)
 out <- a$out; ref <- cfg$reference_instrument
 instr_shift <- a$instr_shift; tau_day <- a$tau_day; bg_shift <- a$bg_shift; set.seed(a$seed)
@@ -57,6 +60,10 @@ write.csv(do.call(rbind, emd), file.path(out, "neg_emd.csv"), row.names = FALSE)
 # counts additionally carry a background shift on the other instrument (CD8:TNFa+) and on one day (CD4:IFNg+)
 gates <- c("IFNg+", "IL2+", "TNFa+", "CD107a+"); rows <- list()
 b_instr_B <- instr_shift; a_pB <- setNames(rnorm(length(pats), 0, 0.5), pats)
+op_ref <- cfg$design$reference_levels$operator
+op_level <- if ("operator" %in% names(tt)) setdiff(sort(unique(tt$operator)), op_ref)[1] else NA
+op_eff <- function(i) if (is.na(op_level)) 0 else a$op_shift * (tt$operator[i] == op_level)
+curve <- function(w) a$week_curve * exp(-((w - 12) / 10)^2)
 bg_day <- names(which.max(table(tt$acq_day[tt$is_neg]))); bg_day_shift <- 1.0
 for (pp in c("CD4", "CD8")) for (g in gates) {
   for (i in seq_len(nrow(tt))) {
@@ -65,7 +72,7 @@ for (pp in c("CD4", "CD8")) for (g in gates) {
                                     bg_day_shift * (pp == "CD4" && g == "IFNg+" && tt$acq_day[i] == bg_day)
     eta <- -7 + a_pB[as.character(tt$patient[i])] + c_d[tt$acq_day[i]] + bg +
            b_instr_B * (tt$instrument[i] != ref) + 0.3 * (tt$prior_vacc[i] == 2) +
-           (if (tt$is_neg[i]) 0 else 1.2 + 0.02 * tt$week[i]) + rnorm(1, 0, 0.2)
+           (if (tt$is_neg[i]) 0 else 1.2 + 0.02 * tt$week[i] + curve(tt$week[i])) + op_eff(i) + rnorm(1, 0, 0.2)
     k <- rbinom(1, n_parent, plogis(eta))
     rows[[length(rows) + 1L]] <- data.frame(filename = tt$filename[i], parent = pp, gate = g, count = k,
       parent_count = n_parent, patient = tt$patient[i], prior_vacc = tt$prior_vacc[i], week = tt$week[i],
@@ -87,6 +94,7 @@ truth <- rbind(
   tr("BG", "CD8:TNFa+", "instrument", other, b_instr_B + bg_shift),   # ... plus the background shift
   tr("BG", "CD4:IFNg+", "day", bg_day, c_d[bg_day] + bg_day_shift),
   tr("BG", NA, "prior_vacc", "2", 0.3),
-  tr("B", NA, "instrument", other, b_instr_B), tr("B", NA, "day", days, c_d), tr("B", NA, "prior_vacc", "2", 0.3))
+  tr("B", NA, "instrument", other, b_instr_B), tr("B", NA, "day", days, c_d), tr("B", NA, "prior_vacc", "2", 0.3),
+  if (!is.na(op_level)) rbind(tr("B", NA, "operator", op_level, a$op_shift), tr("BG", NA, "operator", op_level, a$op_shift)))
 write.csv(truth, file.path(out, "synthetic_truth.csv"), row.names = FALSE)
 cat("synthetic layer A/BG/B tables written to", out, "\n")

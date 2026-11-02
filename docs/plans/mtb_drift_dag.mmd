@@ -1,0 +1,65 @@
+%% Acquisition-drift analysis (scripts/drift/) drawn in the style of `nextflow run -with-dag`.
+%% Stadium nodes are processes (one per step script); edges are the files (channels) they exchange.
+%% Every process also receives the cohort config (--config); that edge is omitted for legibility.
+flowchart TB
+    subgraph inputs [" "]
+        direction LR
+        fcs["params.fcs_dir"]
+        wsp["params.wsp_dir"]
+    end
+
+    subgraph book ["Bookkeeping (base R)"]
+        direction LR
+        p01([EXTRACT_METADATA<br/>01_extract_metadata.R])
+        p02([PANEL_RECONCILE<br/>02_panel_reconcile.R])
+        p03([TUBE_QC<br/>03_tube_qc.R])
+    end
+
+    subgraph layers ["Two layers of evidence (CytoML / flowWorkspace)"]
+        direction LR
+        p04([NEG_SUMMARIES<br/>04_neg_summaries.R])
+        p05([GATED_FREQUENCIES<br/>05_gated_frequencies.R])
+    end
+
+    subgraph fitters ["Yardstick and experiments"]
+        direction LR
+        p6a([YARDSTICK_BRMS<br/>06_yardstick_brms.R])
+        p6b([YARDSTICK_STAN<br/>06_yardstick_stan.R])
+        p6c([LME4_CROSSCHECK<br/>06_lme4.R])
+        p07([BAYESFLOW_V1<br/>07_bayesflow_v1.py])
+        p08([BAYESFLOW_V2<br/>08_bayesflow_v2.py])
+    end
+
+    p09([DECISION<br/>09_decision.R])
+    p10([REPORT<br/>10_report.Rmd])
+    out[/"results/&lt;cohort&gt;/report.html"/]
+
+    fcs --> p01
+    p01 -->|tubes.csv| p02
+    p02 -->|panel_map.csv| p03
+    p03 -->|"excluded_tubes.csv<br/>+ tubes.csv, panel_signatures.csv"| p04
+    p03 -->|"excluded_tubes.csv<br/>+ tubes.csv, panel_signatures.csv"| p05
+    wsp --> p04
+    wsp --> p05
+    fcs --> p04
+    fcs --> p05
+
+    p04 -->|"neg_summaries.csv, neg_emd.csv"| p6a
+    p04 -->|"neg_summaries.csv, neg_emd.csv"| p6b
+    p04 -->|"neg_summaries.csv, neg_emd.csv"| p6c
+    p04 -->|"neg_summaries.csv, neg_emd.csv"| p07
+    p04 -->|"neg_cells/*.csv.gz"| p08
+    p05 -->|gated_frequencies.csv| p6a
+    p05 -->|gated_frequencies.csv| p6b
+    p05 -->|gated_frequencies.csv| p6c
+
+    p6a -->|"effects_brms_A.csv, effects_brms_B.csv"| p09
+    p6b -->|"effects_stan_A.csv, effects_stan_B.csv"| p09
+    p07 -->|"effects_bayesflow_v1.csv<br/>bf_v1_recovery.csv, bf_v1_sbc.csv"| p09
+    p08 -->|"effects_bayesflow_v2.csv<br/>bf_v2_recovery.csv, bf_v2_sbc.csv, bf_v2_ppc.csv"| p09
+    p04 -->|"gate_bounds.csv (gate-drift diagnostic)"| p09
+    p05 -->|"gated_frequencies.csv (positivity flips)"| p09
+
+    p09 -->|"decisions.csv, fitter_agreement.csv, gate_drift.csv"| p10
+    p6c -->|lme4_variance_components.csv| p10
+    p10 --> out

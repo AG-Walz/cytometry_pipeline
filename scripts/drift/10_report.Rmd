@@ -1,5 +1,5 @@
 ---
-title: "`r params$cohort`: acquisition drift and instrument shift"
+title: "`r params$cohort`: technical drift, background and sources of variation"
 output: html_document
 params:
   out: "results"
@@ -14,8 +14,11 @@ out <- params$out
 rd <- function(f) if (file.exists(file.path(out, f))) read.csv(file.path(out, f), stringsAsFactors = FALSE) else NULL
 drift_src <- file.path(dirname(knitr::current_input(dir = TRUE)), "..", "..", "src", "harmonization", "drift")
 source(file.path(drift_src, "drift_models.R")); source(file.path(drift_src, "drift_biology.R"))
+source(file.path(drift_src, "drift_partition.R")); source(file.path(drift_src, "drift_stats.R"))
+source(file.path(dirname(knitr::current_input(dir = TRUE)), "partition_plots.R"))
 tt <- rd("tubes.csv"); dec <- rd("decisions.csv"); eff <- read_effects(out)
 cfg <- if (nzchar(params$config) && file.exists(params$config)) yaml::read_yaml(params$config) else NULL
+if (!is.null(cfg) && !is.null(cfg$technical_markers)) PARTITION_CONTROL_MARKERS <- unlist(cfg$technical_markers)
 cs <- function(x) paste(unlist(x), collapse = ", ")
 
 # One visual system for every figure: instruments are identities (fixed categorical order, reference
@@ -40,7 +43,230 @@ if (!is.null(dec)) {
 if (!is.null(tt)) tt$instrument <- factor(tt$instrument, instr_levels)
 ```
 
-Plan: `docs/plans/mtb_batch_drift_plan.md`.
+Plans: `docs/plans/drift_three_questions_plan.md` (the three questions below), `docs/plans/mtb_batch_drift_plan.md` (the decision rule).
+
+```{r answers-setup}
+vp <- read_partition(out); vp_all <- read_partition(out, variant = NULL)
+# the responder call is a decision, not a data setting: fitted for the record, left out of every comparison
+if (!is.null(vp)) vp <- vp[vp$representation %in% compared_reps(), ]
+if (!is.null(vp_all)) vp_all <- vp_all[vp_all$representation %in% compared_reps(), ]
+vp_engine <- if (!is.null(vp)) vp$engine[1] else NA
+calls <- rd("calls_compare.csv"); agree <- rd("calls_agreement.csv")
+pal_group <- c(unwanted = "#e34948", wanted = "#2a78d6", residual = "#c9c9c4")
+rep_label <- vapply(PARTITION_REPS, `[[`, "", "label")
+# "cocktail used or not" is one factor for the reader: the stimulated contrast plus the pool term (the neg is a pool level)
+merge_cocktail <- function(sh) { sh$factor[sh$factor %in% c("stimulated", "pool")] <- "cocktail"; aggregate(share ~ readout + representation + factor + group, sh, sum) }
+fac_order <- function(f) { tech <- c(unlist(cfg$design$technical)); unique(c(intersect(c(tech, "acq_day"), f), setdiff(f, c(tech, "residual")), "residual")) }
+```
+
+## What was run
+
+Every tube is turned into readouts (the frequency of each cytokine gate in CD4 and CD8, and the MFI of each marker); each readout is prepared in several settings (MFI linear or arcsinh; frequency as %, arcsinh or logit; each plain or with the visit's unstimulated tube subtracted); and for every readout and setting one model splits the differences between tubes into batch (acquisition day, instrument, operator), biology (patient, weeks since vaccination, prior vaccination, peptide pool) and an unexplained rest. The best setting keeps the most biology and the least batch.
+
+```{r explain, fig.width=15, fig.height=3.4}
+print(plot_explain_workflow())
+```
+
+```{r explain-example, fig.width=12, fig.height=9}
+fq_x <- rd("gated_frequencies.csv"); if (!is.null(fq_x) && !is.null(tt)) print(plot_explain_example(fq_x, read.csv(file.path(out, "tubes.csv"), stringsAsFactors = FALSE), "CD4:IFNg"))
+```
+
+```{r explain-scorecard, fig.width=11, fig.height=5.5}
+if (!is.null(vp)) print(plot_explain_scorecard(vp))
+```
+
+## How this compares with published work
+
+DOIs checked by literature search on 2026-10-12 and 2026-10-13.
+
+| Finding here | Published support | Sources |
+|---|---|---|
+| MFI is mostly batch (acquisition day); gated frequencies are much less affected | Supported: across sites, instruments and years, frequency CVs are 2 to 4 times lower than MFI CVs, and MFI needs bead or target-value calibration to be comparable | Leipold et al. 2018 (10.1016/j.jim.2017.11.008); Le Lann et al. 2020 (10.1038/s41598-020-68468-3); Solly et al. 2019 (10.1002/cyto.a.23844); Glier et al. 2019 (10.1016/j.jim.2017.07.013); Kalina et al. 2012 (10.1038/leu.2012.122) |
+| Splitting the variance of logit frequencies into technical and biological parts with a mixed model | Same method: the HIPC multicentre study (centre, sample, residual on logit proportions); repeat runs of one donation give technical CVs of 12 to 101 percent, mostly below the biological variance | Finak et al. 2016 (10.1038/srep20686); Burel et al. 2017 (10.4049/jimmunol.1601750) |
+| Subtracting the unstimulated tube removes day variance but adds noise | Supported in principle: modelling stimulated and unstimulated counts together beats subtraction, ratios and Fisher's test (the "frequency logit stim/neg" setting follows this) | Finak et al. 2014, MIMOSA (10.1093/biostatistics/kxt024); Lin et al. 2015, COMPASS (10.1038/nbt.3187) |
+| "Patient" partly reflects sample quality (negative control on lineage, viability and scatter markers) | Supported: time to freezing, thawing, resting and viability change ICS stimulated-vs-unstimulated readouts without changing the cells themselves | Bull et al. 2007 (10.1016/j.jim.2007.02.003); Weinberg et al. 2009 (10.1128/CVI.00342-08); Kutscher et al. 2013 (10.1371/journal.pone.0076215); Horton et al. 2007 (10.1016/j.jim.2007.03.002) |
+| Gating counts as a technical factor | Supported: gating was the largest controllable source of ICS variability between laboratories. Here one person gated every tube, so the low batch share of the frequencies may not carry over to multi-analyst gating | Maecker et al. 2005 (10.1186/1471-2172-6-13); Welters et al. 2012 (10.1007/s00262-012-1282-9) |
+| Comparing linear and arcsinh MFI, %, arcsinh % and logit, each with and without subtraction, by biological against batch share | No direct precedent found. Transformation studies judge gating quality or variance stabilisation, not this split; the arcsinh cofactor matters per channel | Finak et al. 2010 (10.1186/1471-2105-11-546); Azad et al. 2016, flowVS (10.1186/s12859-016-1083-9) |
+| Lineage and viability markers used as a negative control for the patient factor | No direct precedent found; closest are viability-dye controls and spiked reference samples | Horton et al. 2007; Schuyler et al. 2019 (10.3389/fimmu.2019.02367) |
+
+## Answer 1: do the data need correcting?
+
+Each technical contrast (every acquisition day, the instrument, every operator) is tested in three layers: technical markers of the unstimulated tubes (A), the background of the unstimulated tubes (BG) and the endpoints (B). Rule 1: the effect exceeds the noise between tubes of the same sample (layer A) or the tube-level residual of the endpoint model (layers BG and B) with posterior probability of at least `r if (!is.null(cfg)) cfg$replicate_noise_prob else 0.95`. Rule 2: removing the effect changes responder calls. A correction is warranted only when both hold (CLSI H62; O'Hara et al. 2011 for intermediate precision across operators, days and instruments).
+
+```{r answer1}
+if (!is.null(dec)) {
+  cs1 <- correction_summary(dec)
+  knitr::kable(cs1, caption = "Technical contrasts per term and layer: detected above noise (rule 1) and flipping responder calls (rule 2)", row.names = FALSE)
+}
+```
+
+```{r answer1-line, results="asis"}
+if (!is.null(dec)) {
+  fl <- dec[grepl("^detected", dec$verdict) & dec$positivity_flips %in% seq_len(1e6), ]
+  if (!nrow(fl)) cat("**No correction needed.** No technical effect both exceeds the noise and changes a responder call. Keep the technical factors as covariates in downstream models.\n\n")
+  else { cat(sprintf("**Correction to consider for %d contrast(s)**, each flipping responder calls:\n\n", nrow(fl)))
+    for (i in seq_len(nrow(fl))) cat(sprintf("- %s %s = %s (layer %s): %d call(s)\n", fl$response[i], fl$term[i], fl$level[i], fl$layer[i], fl$positivity_flips[i]))
+    cat("\nFlipping calls on a single response may also be handled by flagging those calls rather than correcting values.\n\n") }
+}
+```
+
+## Answer 2: should the unstimulated tube be subtracted?
+
+The same endpoints prepared in different ways, each fitted with every factor: as percentages, arcsinh or logit, each plain and with the unstimulated tube subtracted (for logit: the stimulated counts over the neg as an offset, the MIMOSA idea of modelling both together). The responder call is not one of these settings: it is a decision made from the data, compared separately below. A representation is better when its unwanted share falls and its wanted share does not (the batch-removal against biological-conservation trade-off of Luecken et al. 2022). Shares are of the between-tube variance on each representation's own scale.
+
+```{r answer2, results="asis"}
+if (!is.null(vp)) {
+  st2 <- subtraction_table(vp)
+  if (!is.null(st2)) {
+    st2$alternative <- rep_label[st2$alternative]
+    print(knitr::kable(st2[, -2], digits = 2, caption = paste("Question 2 per readout, against the gated counts on the logit scale (engine:", vp_engine, ")"), row.names = FALSE))
+    cat("\n"); print(knitr::kable(as.data.frame.matrix(table(st2$alternative, st2$verdict)), caption = "Readouts per verdict"))
+  }
+}
+```
+
+### All combinations of gating level and data setting
+
+Two choices shape every readout: where in the gating hierarchy it is taken (no gate, live cells or the CD4 or CD8 gate for intensities; the manual FlowJo cytokine gate for frequencies) and how it is prepared (scale, and whether the unstimulated tube is subtracted). Every combination is fitted with every factor. The biological share sums patient, weeks since vaccination, prior vaccination and cocktail (used or not, which pool); the batch share sums acquisition day, instrument and operator. Values are medians over the cytokine readouts of each combination; the lineage, viability and scatter markers are negative controls and are only shown per readout.
+
+A combination is dropped when it has more batch than biological variance, or when another combination has at least as much biology and at most as much batch.
+
+```{r grid-combinations, fig.width=15, fig.height=5.5, results="asis"}
+if (!is.null(vp)) {
+  print(plot_combinations(vp))
+  gs <- partition_grid(vp, summary = TRUE); gs$setting <- gsub("\n", " ", gs$setting)
+  print(knitr::kable(gs[, c("kind", "gating", "setting", "biological_pct", "batch_pct", "unexplained_pct", "bio_minus_batch", "n_readouts", "verdict", "better")],
+        digits = 1, row.names = FALSE, caption = "Median percent of variance per combination and its verdict (partition_grid_summary.csv; per readout in partition_grid.csv)"))
+}
+```
+
+```{r grid-paired, fig.width=15, fig.height=6}
+if (!is.null(vp)) { print(plot_partition_paired(vp, "freq")); print(plot_partition_paired(vp, "mfi")) }
+```
+
+```{r grid-full, fig.width=13, fig.height=6}
+if (!is.null(vp)) { print(plot_partition_full(vp, "freq")); print(plot_partition_full(vp, "mfi")) }
+```
+
+The markers measured on all live cells (CD4, CD8, live/dead, cell size and granularity) are a negative control for the subtraction: the peptide is not expected to change them, so after "stimulated minus unstimulated" their biological share should be close to zero and their remaining batch share shows what subtraction cannot remove. They appear in the per-readout figures.
+
+### Do the two fitting engines agree?
+
+Every model was fitted twice: with brms (Bayesian, the source of every figure above) and with lme4 (classical, fast). Points on the diagonal mean both engines attribute the same share to that source.
+
+```{r grid-engines, fig.width=14, fig.height=11, results="asis"}
+ea <- plot_engine_agreement(out)
+if (!is.null(ea)) { print(ea$plot); print(knitr::kable(ea$table, digits = 2, row.names = FALSE,
+  caption = "Agreement per setting: correlation of the shares and median / largest difference in percentage points")) }
+```
+
+```{r grid-readout, fig.width=15, fig.height=24}
+if (!is.null(vp)) { print(plot_partition_paired(vp, "freq", by_readout = TRUE)); print(plot_partition_paired(vp, "mfi", by_readout = TRUE)) }
+```
+
+```{r answer2-calls, fig.width=11, fig.height=5, results="asis"}
+if (!is.null(agree)) print(knitr::kable(agree, digits = 2, caption = "Positive calls per rule and agreement (Cohen's kappa). Lab rule: subtracted frequency and fold over neg; Fisher: one-sided exact test, BH q < 0.05 (Horton et al. 2007); MIMOSA: Finak et al. 2014", row.names = FALSE))
+if (!is.null(calls)) {
+  calls$agreement <- ifelse(calls$lab & calls$fisher, "both", ifelse(calls$lab, "lab only", ifelse(calls$fisher, "Fisher only", "neither")))
+  print(ggplot(calls, aes(pmax(neg_pct, 1e-3), pmax(pct, 1e-3), colour = agreement)) + geom_abline(linetype = 2, colour = "#9a9a94") +
+    geom_point(alpha = .6, size = 1.2) + scale_x_log10() + scale_y_log10() + facet_wrap(~response, ncol = 4) +
+    scale_colour_manual(values = c(both = "#2a78d6", "lab only" = "#eda100", "Fisher only" = "#e34948", neither = "#c9c9c4")) + thm +
+    theme(axis.text.x = element_text(angle = 0)) + labs(x = "matched neg %", y = "stimulated %", colour = NULL,
+    title = "Stimulated against unstimulated frequency, by calling rule (after Finak et al. 2014)"))
+}
+```
+
+## Answer 3: where do the differences between tubes come from?
+
+Share of the between-tube variance per factor, for every readout and representation, from one model per readout with all factors (variance partition after Hoffman & Schadt 2016; the cytometry precedent is the multicentre mixed model of Finak et al. 2016). Unwanted factors in red, wanted in blue. Fixed factors contribute the variance of their part of the prediction, random factors their variance (Nakagawa et al. 2017). Instrument and operator are largely nested in acquisition day and calendar period, so the split among the three unwanted factors is approximate; their total is robust (see the comparison without operator below).
+
+The figures for this question are in "All settings compared" above (per setting and per readout). Totals with 95 percent intervals:
+
+```{r answer3-totals}
+if (!is.null(vp)) {
+  tw <- reshape(vp[vp$factor %in% c("total_unwanted", "total_wanted"), c("readout", "representation", "factor", "share", "lo", "hi")],
+                idvar = c("readout", "representation"), timevar = "factor", direction = "wide")
+  knitr::kable(tw, digits = 2, caption = "Batch (unwanted) and biological (wanted) totals with 95 percent intervals", row.names = FALSE)
+}
+```
+
+```{r answer3-guard}
+if (!is.null(vp_all) && any(vp_all$variant != "full")) {
+  g <- vp_all[vp_all$factor %in% c("total_unwanted", "total_wanted", "acq_day", "instrument", unlist(cfg$design$technical)), ]
+  gw <- reshape(g[, c("readout", "representation", "variant", "factor", "share")], idvar = c("readout", "representation", "factor"), timevar = "variant", direction = "wide")
+  names(gw) <- sub("^share\\.", "", names(gw))
+  knitr::kable(gw[gw$factor %in% c("total_unwanted", "acq_day"), ], digits = 2, row.names = FALSE,
+               caption = "Confounding guard (lme4): unwanted total and day share with and without operator. A day share that grows by what operator loses shows the two cannot be separated")
+}
+```
+
+## Acquisition audit: what else differs between tubes, and what can be modelled
+
+Step 11b reads every FCS keyword, the FlowJo workspaces and the gate counts. A source can only be a separate term of the variance partition if no other term already determines it; otherwise the model cannot tell the two apart and gives one of them all the variance. The overlap figure shows, for every pair, how much knowing one factor determines the other.
+
+| Source | Overlap | How it is used |
+|---|---|---|
+| Detector voltages, compensation matrix, CS&T setup | almost fully determined by the acquisition day | not a model term: they explain why days differ (figure: voltages over time) |
+| Instrument, operator | largely determined by the day and the calendar period | model terms; their split from the day is approximate, the batch total is robust |
+| Visit (one patient at one week) | determines day, week and patient | its own category, neither batch nor biology: it holds both sample handling and visit-level biology |
+| Sample quality (viability, live cells) | measured on the visit's unstimulated tube; mostly explained by day and visit | technical term at the visit level (the peptide does not change viability) |
+| Gate position | determined by the day and the voltages, and set after looking at the data | not a model term (it would count the day twice and adjust for a consequence of the data); shown as a diagnostic |
+| Counting noise | computed from the cell counts, independent of every factor | split out of the unexplained variance |
+
+```{r audit, fig.width=10, fig.height=8, results="asis"}
+fo <- rd("factor_overlap.csv")
+if (!is.null(fo)) { M <- as.matrix(fo[, -1]); rownames(M) <- fo[[1]]; colnames(M) <- names(read.csv(file.path(out, "factor_overlap.csv"), check.names = FALSE))[-1]; print(plot_factor_overlap(M)) }
+ft <- rd("flowjo_transformations.csv")
+if (!is.null(ft)) {
+  fl <- ft[ft$transform != "linear", ]
+  tab <- aggregate(cbind(samples = filename) ~ parameter + transform + settings, fl, function(x) length(unique(x)))
+  print(knitr::kable(tab[order(tab$parameter, -tab$samples), ], row.names = FALSE,
+    caption = "FlowJo display transformations of the fluorescence channels: samples per setting (a display setting changes where a gate is drawn, not the data)"))
+}
+```
+
+```{r audit-voltages, fig.width=13, fig.height=6}
+acq_a <- rd("acquisition_settings.csv"); tt_a <- read.csv(file.path(out, "tubes.csv"), stringsAsFactors = FALSE)
+if (!is.null(acq_a) && any(grepl("^V_", names(acq_a)))) print(plot_voltages(acq_a, tt_a))
+gp_a <- rd("gate_positions.csv"); if (!is.null(gp_a)) print(plot_gate_positions(gp_a, tt_a))
+```
+
+## Technical precision against clinical targets
+
+Technical CV implied by the unwanted variance on the log-like scales (arcsinh MFI, logit of a frequency): sqrt(exp(v) - 1). Targets: CV at most 25 percent, at most 30 to 35 percent for rare events (CLSI H62; O'Hara et al. 2011). Inter-laboratory ICS precision for orientation: about 70 percent CV for responses at or below 0.1 percent and about 20 percent above 0.5 percent (Maecker et al. 2005, Table 2).
+
+```{r precision, results="asis"}
+if (!is.null(vp)) {
+  lv <- vp[vp$representation %in% c("mfi_asinh", "freq_raw", "freq_ratio") & vp$factor == "total_unwanted", ]
+  lv$technical_cv <- technical_cv(lv$variance)
+  lv$target <- ifelse(lv$technical_cv <= .25, "within 25 %", ifelse(lv$technical_cv <= .35, "within 35 % (rare events)", "above 35 %"))
+  if (!is.null(fqp <- rd("gated_frequencies.csv"))) {
+    med <- aggregate(pct ~ readout, transform(fqp[!fqp$is_neg, ], readout = paste(parent, gate, sep = ":")), median); names(med)[2] <- "median_stim_pct"
+    lv <- merge(lv, med, by = "readout", all.x = TRUE)
+  }
+  lv$representation <- rep_label[lv$representation]
+  print(knitr::kable(lv[, intersect(c("readout", "representation", "median_stim_pct", "share", "technical_cv", "target"), names(lv))], digits = 3, row.names = FALSE,
+                     caption = "Technical CV implied by the unwanted variance (instrument, day, operator) against the CLSI H62 / O'Hara targets"))
+}
+```
+
+```{r levey-jennings, fig.width=11, fig.height=6}
+ns_all <- rd("neg_summaries.csv")
+if (!is.null(ns_all) && !is.null(tt) && !is.null(cfg)) {
+  op <- setdiff(design_technical_factors(cfg), "instrument")[1]
+  nt <- merge(ns_all[ns_all$marker %in% cfg$technical_markers, ], tt[tt$is_neg %in% TRUE, intersect(c("filename", "acq_day", "instrument", op), names(tt))], by = "filename")
+  nt$operator <- if (!is.na(op) && op %in% names(nt)) nt[[op]] else "not recorded"
+  dm <- aggregate(median ~ marker + acq_day + instrument + operator, nt, mean)
+  lim <- do.call(rbind, lapply(split(dm, dm$marker), function(x) data.frame(marker = x$marker[1], m = mean(x$median), s = sd(x$median))))
+  print(ggplot(dm, aes(acq_day, median)) + geom_hline(data = lim, aes(yintercept = m), colour = "#52514e") +
+    geom_hline(data = lim, aes(yintercept = m - 2 * s), linetype = 2, colour = "#9a9a94") + geom_hline(data = lim, aes(yintercept = m + 2 * s), linetype = 2, colour = "#9a9a94") +
+    geom_line(aes(group = 1), colour = "#c9c9c4") + geom_point(aes(colour = instrument, shape = factor(operator)), size = 2.2) +
+    facet_wrap(~marker, scales = "free_y", ncol = 3) + scale_colour_manual(values = pal_instr) + thm +
+    labs(x = "acquisition day", y = "mean of neg-tube medians", colour = NULL, shape = "operator",
+         title = "Levey-Jennings view of the unstimulated tubes: day mean and +/- 2 SD (after Perfetto et al. 2012)"))
+}
+```
+
 
 ## Design
 
@@ -72,6 +298,9 @@ if (!is.null(tt)) {
 ```{r}
 knitr::kable(as.data.frame.matrix(table(tt$acq_day, tt$instrument)), caption = "Tubes per acquisition day and instrument")
 knitr::kable(rd("bridge_report.csv"), caption = "Patients bridging days and instruments")
+tf <- rd("technical_factors.csv")
+if (!is.null(tf) && any(tf$factor != "instrument"))
+  knitr::kable(tf, caption = "Technical factors against acquisition days (from check_design.R): a level whose days are never shared with another level is estimated only from day-to-day differences")
 ```
 
 ## Biological effect: weeks since first vaccination
@@ -146,17 +375,18 @@ Every effect is shown in units of the same-day replicate noise of that response,
 
 ```{r, fig.width=11, fig.height=9}
 if (!is.null(dec)) {
-  di <- dec[dec$term == "instrument" & is.finite(dec$z), ]
+  di <- dec[dec$term != "day" & is.finite(dec$z), ]
+  di$contrast <- ifelse(di$term == "instrument", as.character(di$level), paste0(di$term, ": ", di$level))
   di$response <- factor(di$response, rev(unique(di$response[order(di$layer, di$z)])))
   print(ggplot(di, aes(z, response, colour = verdict, shape = verdict)) +
     geom_vline(xintercept = 0, colour = "#52514e") + geom_vline(xintercept = c(-1, 1), linetype = 2, colour = "#9a9a94") +
     geom_errorbarh(aes(xmin = z_lo, xmax = z_hi), height = 0, linewidth = .5) + geom_point(size = 2.5) +
-    facet_grid(layer_f ~ level, scales = "free_y", space = "free_y") +
+    facet_grid(layer_f ~ contrast, scales = "free_y", space = "free_y") +
     scale_x_continuous(trans = scales::pseudo_log_trans(sigma = 1), breaks = c(-30, -10, -3, -1, 0, 1, 3, 10, 30, 100)) +
     scale_colour_manual(values = pal_verdict, drop = FALSE) + scale_shape_manual(values = shape_verdict, drop = FALSE) +
     thm + theme(axis.text.x = element_text(angle = 0, hjust = .5)) +
-    labs(x = "instrument effect, in replicate-SD units (posterior mean and 95% interval; pseudo-log axis)", y = NULL, colour = NULL, shape = NULL,
-         title = "Instrument contrast against the reference, every response"))
+    labs(x = "technical effect, in replicate-SD units (posterior mean and 95% interval; pseudo-log axis)", y = NULL, colour = NULL, shape = NULL,
+         title = "Instrument and other technical contrasts against their reference, every response"))
 }
 ```
 
@@ -189,7 +419,7 @@ if (!is.null(dec)) {
 ```
 
 ```{r}
-knitr::kable(dec[dec$term == "instrument", setdiff(names(dec), c("layer_f", "z", "z_lo", "z_hi"))], digits = 3, caption = "Instrument contrast, every response", row.names = FALSE)
+knitr::kable(dec[dec$term != "day", setdiff(names(dec), c("layer_f", "z", "z_lo", "z_hi"))], digits = 3, caption = "Instrument and other technical contrasts, every response", row.names = FALSE)
 knitr::kable(dec[dec$term == "day" & grepl("^detected", dec$verdict), setdiff(names(dec), c("layer_f", "z", "z_lo", "z_hi"))], digits = 3, caption = "Acquisition days with an effect above replicate noise", row.names = FALSE)
 ```
 
@@ -200,7 +430,7 @@ Layer BG: cytokine background in the neg tubes, as gate counts (`parent:gate`, l
 ```{r, fig.width=11, fig.height=6}
 bg <- if (!is.null(dec)) dec[dec$layer == "BG", ] else NULL
 if (!is.null(bg) && nrow(bg)) {
-  print(knitr::kable(bg[bg$term == "instrument", setdiff(names(bg), c("layer_f", "z", "z_lo", "z_hi"))], digits = 3, caption = "Background: instrument contrasts", row.names = FALSE))
+  print(knitr::kable(bg[bg$term != "day", setdiff(names(bg), c("layer_f", "z", "z_lo", "z_hi"))], digits = 3, caption = "Background: instrument and other technical contrasts", row.names = FALSE))
   print(knitr::kable(bg[bg$term == "day" & grepl("^detected", bg$verdict), setdiff(names(bg), c("layer_f", "z", "z_lo", "z_hi"))], digits = 3, caption = "Background: days above replicate noise", row.names = FALSE))
 } else cat("no layer BG decisions (background fits not run)\n")
 fq <- rd("gated_frequencies.csv")
@@ -265,48 +495,6 @@ if (!is.null(cm)) {
 } else cat("controls_summary.csv not present (rerun steps 5 and 9)\n")
 ```
 
-## Neg-tube distributions over time
-
-Raw layer A signal: the median of each technical marker in every neg tube, by acquisition day and instrument, then the Earth Mover's Distance of each tube to the pooled reference-instrument negs of the same patient.
-
-```{r, fig.width=11, fig.height=5}
-ns_all <- rd("neg_summaries.csv")
-if (!is.null(ns_all) && !is.null(cfg)) {
-  nt <- merge(ns_all[ns_all$marker %in% cfg$technical_markers, ], tt[tt$is_neg %in% TRUE, c("filename", "acq_day", "instrument")], by = "filename")
-  print(ggplot(nt, aes(acq_day, median, colour = instrument)) + geom_point(alpha = .8, size = 2) +
-    facet_wrap(~marker, scales = "free_y", ncol = 5) + scale_colour_manual(values = pal_instr, drop = FALSE) + thm +
-    labs(x = "acquisition day", y = "neg tube median (arcsinh units; scatter: raw units)", colour = NULL, title = "Technical markers in the neg tubes"))
-}
-e <- rd("neg_emd.csv")
-if (!is.null(e)) {
-  e <- merge(e, tt, by = "filename")
-  print(ggplot(e, aes(acq_day, emd, colour = instrument)) + geom_point(alpha = .8, size = 2) + facet_wrap(~marker, scales = "free_y", ncol = 5) +
-    scale_colour_manual(values = pal_instr, drop = FALSE) + thm + labs(x = "acquisition day", y = "EMD to reference negs", colour = NULL, title = "Distance of every neg tube to its reference"))
-}
-```
-
-## Day effects, all fitters
-
-```{r, fig.width=11, fig.height=7}
-if (!is.null(eff) && nrow(eff)) {
-  key <- c("model", "layer", "response", "term", "level")
-  d <- eff[eff$term == "day" & eff$layer == "A" & grepl(":median$", eff$response), ]
-  if (nrow(d)) {
-    sp <- split(d$value, d[key], drop = TRUE)
-    s <- do.call(rbind, lapply(names(sp), function(k) {
-      v <- sp[[k]]; parts <- strsplit(k, ".", fixed = TRUE)[[1]]
-      data.frame(model = parts[1], response = parts[3], level = parts[5], m = mean(v),
-                 lo = unname(quantile(v, .025)), hi = unname(quantile(v, .975)))
-    }))
-    print(ggplot(s, aes(level, m, colour = model)) +
-      geom_pointrange(aes(ymin = lo, ymax = hi), position = position_dodge(.6), size = .3) +
-      geom_hline(yintercept = 0, linetype = 2) +
-      facet_wrap(~response, scales = "free_y") + scale_colour_manual(values = c("#2a78d6", "#eb6834", "#1baf7a", "#eda100")) + thm +
-      labs(x = "acquisition day", y = "effect on neg-tube median (arcsinh units; scatter: raw units)", colour = NULL))
-  }
-}
-```
-
 ## Gate-position drift (were shifts hand-corrected by the analyst?)
 
 ```{r, fig.width=10, fig.height=4}
@@ -338,24 +526,25 @@ if (!is.null(lv)) {
 }
 ```
 
-## Fitter agreement and BayesFlow acceptance
+## Fitting engines: brms against hand-written Stan, and BayesFlow
 
-Each point is one day or instrument effect: the primary fitter's posterior mean against another fitter's. Agreement means the second mean lies inside the primary 95 percent interval.
+The correction question was fitted with brms and, as an independent implementation of the same model, with a hand-written Stan program. BayesFlow (amortised inference with neural networks) was tried on 2026-09-21 and 2026-09-24 and failed its acceptance checks both times (agreement with brms 0.94 and 0.76 against a gate of 0.95; its simulator did not reproduce the real unstimulated tubes). Its simulators know only instrument and day, not operator or the curved time term, so it was not rerun.
 
-```{r, fig.width=10, fig.height=4.5}
-fa <- rd("fitter_agreement.csv")
-if (!is.null(fa)) {
-  fa$agree_f <- ifelse(fa$agree %in% TRUE, "inside 95% interval", "outside")
-  sd_a <- (fa$hi - fa$lo) / 3.92; fa$za <- fa$mean / sd_a; fa$zb <- fa$mean_b / sd_a   # both in units of the primary posterior SD
-  print(ggplot(fa, aes(za, zb, colour = agree_f, shape = agree_f)) + geom_abline(colour = "#52514e") + geom_point(alpha = .7, size = 1.8) +
-    facet_grid(layer ~ model_b) + scale_colour_manual(values = c("inside 95% interval" = "#2a78d6", "outside" = "#e34948")) +
-    scale_shape_manual(values = c("inside 95% interval" = 16, "outside" = 17)) + thm + theme(axis.text.x = element_text(angle = 0, hjust = .5)) +
-    labs(x = paste(unique(fa$model_a)[1], "posterior mean, in units of its posterior SD"), y = "other fitter posterior mean, same units", colour = NULL, shape = NULL))
-  knitr::kable(agreement_table(fa))
-}
-for (v in c("v1", "v2")) { r <- rd(sprintf("bf_%s_recovery.csv", v)); if (!is.null(r)) print(knitr::kable(merge(r, rd(sprintf("bf_%s_sbc.csv", v))), digits = 3, caption = paste("BayesFlow", v))) }
-p <- rd("bf_v2_ppc.csv"); if (!is.null(p)) cat(sprintf("BayesFlow v2 posterior predictive: %.2f of real neg medians inside the 90%% band\n", mean(tolower(p$inside_90) == "true")))
-tm <- list.files(out, "bf_v._timing.json", full.names = TRUE); for (f in tm) cat(basename(f), ":", readLines(f), "\n")
+```{r engines-stan, fig.width=12, fig.height=9, results="asis"}
+es <- plot_engine_stan(out)
+if (!is.null(es)) { print(es$plot); print(knitr::kable(es$table, caption = "Stan estimate inside the brms 95 percent interval, per term", row.names = FALSE)) }
+```
+
+### BayesFlow results of the earlier run
+
+```{r engines-bayesflow, fig.width=12, fig.height=7, results="asis"}
+bh <- plot_bayesflow_history(out)
+if (!is.null(bh)) {
+  cat(sprintf("Full BayesFlow run of %s, on the model of that date (instrument and day only; no operator, straight-line week). v1 learns from tube summaries, v2 from single cells. Pass thresholds: calibration (SBC) and coverage for at least 90 percent of parameters, agreement with brms at least 0.95, and for v2 at least 85 percent of real tube medians inside the simulated 90 percent band.\n\n", bh$date))
+  print(bh$plot)
+  acc <- bh$acceptance; names(acc) <- c("variant", "calibration (SBC) ok", "coverage ok", "agreement with brms", "simulated tubes match real (v2)", "median recovery R2", "pass")
+  print(knitr::kable(acc, digits = 2, row.names = FALSE, caption = paste("BayesFlow acceptance checks, run of", bh$date)))
+} else cat("No earlier BayesFlow results in this results folder.\n")
 ```
 
 ## QC and exclusions

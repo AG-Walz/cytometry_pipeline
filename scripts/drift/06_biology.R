@@ -13,17 +13,17 @@ tt <- read.csv(file.path(a$out, "tubes.csv"), stringsAsFactors = FALSE)
 check_design(cfg, tt)
 ref <- cfg$reference_instrument
 unit <- cfg$design$unit
-day_term <- setdiff(unlist(cfg$design$technical), "instrument")[1]
+day_term <- design_day_term(cfg)
 if (is.na(day_term)) stop("the design names no day term among `technical`; nothing to leave out", call. = FALSE)
 
 fit_glmer <- function(d, f, what) tryCatch(
   lme4::glmer(f, data = d, family = binomial, control = lme4::glmerControl(optimizer = "bobyqa")),
   error = function(e) { cat("   ", what, "failed:", conditionMessage(e), "\n"); NULL })
-# instrument is dropped from the formula when the subset holds a single instrument
+# a technical factor (instrument, operator, ...) is dropped from the formula when the subset holds one level
 lodo_formula <- function(d) {
   c2 <- cfg
-  if ("instrument" %in% unlist(c2$design$technical) && nlevels(droplevels(d$instrument)) < 2)
-    c2$design$technical <- setdiff(unlist(c2$design$technical), "instrument")
+  one <- Filter(function(v) nlevels(droplevels(factor(d[[v]]))) < 2, design_technical_factors(cfg))
+  c2$design$technical <- setdiff(unlist(c2$design$technical), one)
   biology_formula(c2)
 }
 

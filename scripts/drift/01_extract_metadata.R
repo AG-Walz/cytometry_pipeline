@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # Step 1: tube table (biology from a sample sheet or the file names, FCS technical keywords) and bridge report.
-# With --sample_sheet the group_* columns of the sheet must be the config's design.protected_fixed
-# (00_init_sheet.R writes a matching config); rows marked exclude stay in tubes.csv and are listed in
+# With --sample_sheet the group_* columns of the sheet must be the config's design.protected_fixed and
+# every tech_* column must be listed in design.technical (00_init_sheet.R writes a matching config); rows marked exclude stay in tubes.csv and are listed in
 # excluded_manual.csv, which steps 4 and 5 honour through excluded_tubes().
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
 usage <- "01_extract_metadata.R --fcs_dir DIR --out DIR --config FILE [--sample_sheet CSV]"
@@ -16,6 +16,11 @@ if (!is.null(sheet)) {
     stop("the sheet's group_* columns [", paste(groups, collapse = ", "), "] differ from design.protected_fixed [",
          paste(pf, collapse = ", "), "] in ", a$config,
          "; regenerate the config with 00_init_sheet.R or edit design.protected_fixed", call. = FALSE)
+  # a technical term without a tech_* column must come from the FCS header (operator is $OP); check_design() verifies it
+  techs <- setdiff(sheet_design(sheet)$technical, c("acq_day", "instrument"))
+  if (length(unused <- setdiff(techs, unlist(cfg$design$technical))))
+    stop("the sheet's tech_* column(s) [", paste(unused, collapse = ", "), "] are not in design.technical in ", a$config,
+         "; add them after acq_day and instrument, or they would be ignored", call. = FALSE)
 }
 tt <- build_tube_table(a$fcs_dir, cfg, sheet)
 bad <- tt[is.na(tt$patient), "filename"]

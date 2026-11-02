@@ -61,7 +61,7 @@ check("default design: endpoint without biology", fstr(design_formula(cfg_min, "
       "count | trials(parent_count) ~ 1 + instrument + (1 | patient) + (1 | acq_day) + (1 | cocktail)")
 cfg2 <- cfg; cfg2$design$protected_fixed <- c("prior_vacc", "sex"); cfg2$design$technical <- c("acq_day", "run", "instrument")
 check("several protected and technical terms", fstr(design_formula(cfg2, "background_intensity", "brms")) ==
-      "y ~ 1 + instrument + prior_vacc + sex + week_c + (1 | patient) + (1 | acq_day) + (1 | run)")
+      "y ~ 1 + run + instrument + prior_vacc + sex + week_c + (1 | patient) + (1 | acq_day)")
 check("unknown class refused", inherits(try(design_formula(cfg, "nonsense"), silent = TRUE), "try-error"))
 check("design_fixed_vars per class", identical(design_fixed_vars(cfg, "technical"), "instrument") &&
       identical(design_fixed_vars(cfg, "background_intensity"), c("instrument", "prior_vacc", "week_c")) &&
@@ -128,6 +128,56 @@ fb <- layer_b_frame(gf, cfg, ref = "Canto")
 check("layer_b_frame: stimulated rows, response, relevelled instrument", nrow(fb) == 2 && all(fb$response %in% c("CD4:IFNg", "CD8:IFNg")) && levels(fb$instrument)[1] == "Canto")
 fb_old <- layer_b_frame(gf)
 check("layer_b_frame without cfg keeps prior_vacc factor and week_c", is.factor(fb_old$prior_vacc) && "week_c" %in% names(fb_old))
+
+# --- extra technical factors (tech_* columns of the sample sheet, e.g. operator) ------------
+cat("technical factors\n")
+cfg_op <- cfg; cfg_op$design$technical <- c("acq_day", "instrument", "operator")
+cfg_op$design$reference_levels <- list(operator = "Patrick")
+check("day term and fixed technical factors", design_day_term(cfg_op) == "acq_day" &&
+        identical(design_technical_factors(cfg_op), c("instrument", "operator")) &&
+        identical(design_technical_factors(list(design = list(technical = c("instrument", "acq_day")))), "instrument") &&
+        is.na(design_day_term(list(design = list(technical = character(0))))))
+check("operator is fixed, day the only technical random intercept",
+      fstr(design_formula(cfg_op, "technical", "brms")) == "y ~ 1 + instrument + operator + (1 | patient) + (1 | acq_day)" &&
+        grepl("^count \\| trials\\(parent_count\\) ~ 1 \\+ instrument \\+ operator \\+ prior_vacc \\+ week_c \\+ \\(1 \\+ week_c \\| patient\\) \\+ \\(1 \\| acq_day\\) \\+ \\(1 \\| cocktail\\)$",
+              fstr(design_formula(cfg_op, "endpoint", "brms"))))
+check("design_fixed_vars lists the technical factors first", identical(design_fixed_vars(cfg_op, "endpoint"), c("instrument", "operator", "prior_vacc", "week_c")))
+dfo <- df; dfo$operator <- c("Anna", "Patrick", "Yacine", "Patrick")
+fro <- design_frame(dfo, cfg_op, ref = "Canto")
+check("operator relevelled to reference_levels, instrument to ref", levels(fro$operator)[1] == "Patrick" && levels(fro$instrument)[1] == "Canto")
+check("without reference_levels the first level in sort order", levels(design_frame(dfo, list(design = cfg_op$design[names(cfg_op$design) != "reference_levels"]))$operator)[1] == "Anna")
+ft <- fixed_terms_table(fro, design_fixed_vars(cfg_op, "endpoint"))
+dr <- matrix(seq_len(3 * nrow(ft)), nrow = 3, dimnames = list(NULL, ft$coef))
+sp <- split_fixed_draws(dr, ft, design_technical_factors(cfg_op))
+check("split_fixed_draws: operator goes to technical, not to covariates",
+      identical(names(sp$technical), "operator") && identical(colnames(sp$technical$operator), c("Anna", "Yacine")) &&
+        !"operator" %in% names(sp$covariates) && all(c("prior_vacc", "week_c") %in% names(sp$covariates)) &&
+        identical(colnames(sp$instrument), c("Aurora", "Symph")))
+check("split_fixed_draws without the technical argument keeps operator as a covariate (old behaviour)",
+      "operator" %in% names(split_fixed_draws(dr, ft)$covariates))
+el <- effects_long("brms", "B", "CD4:IFNg", sp$instrument, matrix(0, 3, 1, dimnames = list(NULL, "d1")), technical_draws = sp$technical)
+check("effects_long writes operator rows with term = operator", identical(sort(unique(el$term)), c("day", "instrument", "operator")) &&
+        identical(unique(el$level[el$term == "operator"]), c("Anna", "Yacine")) && sum(el$term == "operator") == 6)
+# matched neg level through neg_filename, NA when pooled negs disagree
+tto <- data.frame(filename = c("n1", "n2", "n3"), operator = c("Anna", "Anna", "Patrick"), stringsAsFactors = FALSE)
+fbo <- data.frame(neg_filename = c("n1", "n1,n2", "n1,n3", NA), neg_instrument = "Canto", neg_acq_day = "d1", stringsAsFactors = FALSE)
+check("matched_neg_level", identical(matched_neg_level(fbo, "operator", tto), c("Anna", "Anna", NA, NA)) &&
+        identical(matched_neg_level(fbo, "instrument", tto), fbo$neg_instrument) && identical(matched_neg_level(fbo, "day", tto), fbo$neg_acq_day))
+# overlap of a technical factor with acquisition days
+tov <- data.frame(patient = c(1, 1, 2, 2, 3), acq_day = c("d1", "d2", "d1", "d3", "d3"), instrument = "Canto",
+                  operator = c("Anna", "Patrick", "Yacine", "Patrick", "Patrick"), stringsAsFactors = FALSE)
+ov <- technical_factor_overlap(tov, cfg_op)
+check("technical_factor_overlap: shared days and multi-level subjects",
+      identical(ov$level[ov$factor == "operator"], c("Anna", "Patrick", "Yacine")) &&
+        identical(ov$n_shared_days[ov$factor == "operator"], c(1L, 0L, 1L)) &&
+        identical(ov$n_days[ov$factor == "operator"], c(1L, 2L, 1L)) && all(ov$n_subjects_multi_level[ov$factor == "operator"] == 2L))
+# a step 5 table without the new column gets it from tubes.csv
+to <- file.path(tmp, "op"); dir.create(to)
+write.csv(gf, file.path(to, "gated_frequencies.csv"), row.names = FALSE)
+tubes_op <- unique(gf[, "filename", drop = FALSE]); tubes_op$operator <- "Anna"
+write.csv(tubes_op, file.path(to, "tubes.csv"), row.names = FALSE)
+fbt <- read_layer_b(to, "Canto", cfg_op)
+check("read_layer_b backfills a missing design column from tubes.csv", nrow(fbt) == 2 && is.factor(fbt$operator) && all(fbt$operator == "Anna"))
 
 unlink(tmp, recursive = TRUE)
 cat(sprintf("\n%d passed, %d failed\n", n_pass, n_fail))

@@ -44,7 +44,8 @@ markers:
 # never the R code. Every name is a column of tubes.csv.
 design:
   unit: patient                     # repeated-measures unit: random intercept in every model
-  technical: [acq_day, instrument]  # acq_day: random intercept; instrument: fixed factor against reference_instrument
+  technical: {{technical}}  # acq_day: random intercept; instrument and the tech_* columns of the sample sheet: fixed factors (drift to detect)
+  # reference_levels: {operator: NAME}  # contrast level of a tech_* factor; without it the first level in sort order
   protected_fixed: {{protected_fixed}}  # the group_* columns of the sample sheet (prefix stripped); regenerate the config if they change
   time: week                        # per-unit slope, centred and in years; background and endpoint classes only
   stimulation: cocktail             # random intercept; endpoint class only
@@ -96,3 +97,25 @@ reference_instrument: "FACSCantoII"
 quantiles: [0.10, 0.50, 0.90]
 n_cells_summary: 20000         # subsample per tube for summaries and EMD
 seed: 20260921
+
+# Step 16 (scripts/drift/16_compass.R, docs/plans/compass_plan_2026-10-14.md): Boolean cytokine subsets,
+# COMPASS (Lin et al. 2015) and the two-sided subset model. Every field is optional; defaults shown.
+compass:
+  parents: [CD4, CD8]               # default: names of parent_populations
+  markers: [IFNg, IL2, TNFa, CD107a] # default: cytokine_markers; 2^M Boolean subsets
+  category_filter: {min_count: 5, min_tubes: 2}   # COMPASS filter: subset kept if > min_count cells in > min_tubes tubes
+  low_info_parent: 1000             # tubes with fewer parent events (stimulated or matched neg) are flagged, not dropped
+  iterations: 10000                 # COMPASS MCMC iterations per replication
+  replications: 8
+  seeds: [100, 200, 300]            # one COMPASS fit per seed; FS/PFS correlation across seeds is reported
+  visit_column: visit               # tubes.csv column holding the visit label (MTB: "V3W315")
+  dose_regex: "^V(\\d+)"              # vaccine dose number from the visit label
+  reference_dose: 1                 # visit the time contrasts are taken against
+  late_doses: [3, 4]                # "late" visits of hypotheses H1 to H3
+  weeks_df: 3                       # natural-spline df on log(1 + week) for --time weeks
+  chains: 4
+  iter: 2000
+  warmup: 1000
+  threads: 2                        # within-chain threads (cmdstanr)
+  adapt_delta: 0.9
+  seed: 20261014

@@ -8,6 +8,28 @@
 #   design_power()        lme4 (requireNamespace), tens of glmer fits
 #   separability_verdict() combines the two into one label
 
+#' How each fixed technical factor (instrument, operator, ...) sits against the
+#' acquisition days: one row per factor and level with n_tubes, n_days, n_shared_days
+#' (days that also carry another level of the factor) and n_subjects. A level whose
+#' days are never shared is estimated only from the difference between its days and
+#' the other levels' days, so it is confounded with whatever else changed on those
+#' days (calendar time, reagent lots); `n_subjects_multi_level` (same for every row
+#' of a factor) counts subjects measured at more than one level.
+technical_factor_overlap <- function(tt, cfg) {
+  day <- design_day_term(cfg)
+  rows <- lapply(intersect(design_technical_factors(cfg), names(tt)), function(f) {
+    lv_per_day <- tapply(tt[[f]], tt[[day]], function(x) length(unique(x)))
+    multi <- sum(tapply(tt[[f]], tt$patient, function(x) length(unique(x))) > 1L)
+    do.call(rbind, lapply(sort(unique(as.character(tt[[f]]))), function(l) {
+      d <- tt[tt[[f]] %in% l, ]; days <- unique(as.character(d[[day]]))
+      data.frame(factor = f, level = l, n_tubes = nrow(d), n_days = length(days),
+                 n_shared_days = sum(lv_per_day[days] > 1L), n_subjects = length(unique(d$patient)),
+                 n_subjects_multi_level = multi, stringsAsFactors = FALSE)
+    }))
+  })
+  do.call(rbind, rows)
+}
+
 #' Within-unit share of the variance of `week` explained by `acq_day`.
 #' Per patient, SS_p = sum (week - patient mean)^2 and SS_pd = sum over that
 #' patient's days of (week - patient-day mean)^2; the index is
@@ -70,7 +92,7 @@ fit_simulated_endpoint <- function(d, cfg) {
        error = function(e) NULL)
   if (is.null(m)) return(list(week = NA_real_, day_sd = NA_real_, instr = NA_real_, converged = FALSE))
   vc <- as.data.frame(lme4::VarCorr(m))
-  day_term <- setdiff(unlist(cfg$design$technical), "instrument")[1]
+  day_term <- design_day_term(cfg)
   dv <- vc$vcov[vc$grp == day_term & is.na(vc$var2) & vc$var1 %in% "(Intercept)"]
   fe <- lme4::fixef(m); ic <- grep("^instrument", names(fe))
   list(week = unname(fe["week_c"]), day_sd = sqrt(dv[1]),

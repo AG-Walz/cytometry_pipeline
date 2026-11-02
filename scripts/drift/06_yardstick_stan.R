@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # Step 6b: the same models written by hand in Stan (scripts/drift/stan/), fitted with cmdstanr.
-# A software cross-check of 06_yardstick_brms.R. The fixed effects (instrument dummies and the
+# A software cross-check of 06_yardstick_brms.R. The fixed effects (technical factor dummies and the
 # protected covariates from the config `design` block) enter through one design matrix X; the
 # gaussian program serves layer A and BG intensity, the beta-binomial program layer BG counts
 # (no stimulation term) and layer B. Writes effects_stan_<layer>.csv and covariates_stan.csv.
@@ -15,7 +15,7 @@ check_design(cfg, tt)
 ref <- cfg$reference_instrument
 layers <- if (a$layer == "AB") c("A", "B") else trimws(strsplit(a$layer, ",")[[1]])   # "AB" kept for old calls
 stan_dir <- file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "stan")
-unit <- cfg$design$unit; day_term <- setdiff(unlist(cfg$design$technical), "instrument")[1]
+unit <- cfg$design$unit; day_term <- design_day_term(cfg)
 eff <- list(); covs <- list()
 
 # Fixed-effects design matrix of one response frame (no intercept) and the table mapping its
@@ -38,15 +38,16 @@ run <- function(model, data, ft, days) {
   as_plain <- function(x, nm) matrix(as.numeric(x), nrow = nrow(x), dimnames = list(NULL, nm))
   c_d <- as_plain(fit$draws("c_d", format = "matrix"), days)
   beta <- if (nrow(ft)) as_plain(fit$draws("beta", format = "matrix"), ft$coef) else matrix(0, nrow(c_d), 0)
-  fx <- split_fixed_draws(beta, ft)
+  fx <- split_fixed_draws(beta, ft, design_technical_factors(cfg))
   # the beta-binomial program carries the population-level time slope outside beta
   if ("mu_week" %in% fit$metadata()$stan_variables && !is.null(cfg$design$time))
     fx$covariates$week_c <- as.numeric(fit$draws("mu_week", format = "matrix"))
-  list(instrument = fx$instrument, covariates = fx$covariates, c_d = c_d,
+  list(instrument = fx$instrument, technical = fx$technical, covariates = fx$covariates, c_d = c_d,
        n_divergent = sum(fit$sampler_diagnostics(format = "matrix")[, "divergent__"]))
 }
 keep <- function(r, layer, response, scale = 1) {
-  eff[[length(eff) + 1L]] <<- effects_long("stan", layer, response, r$instrument * scale, r$c_d * scale)
+  eff[[length(eff) + 1L]] <<- effects_long("stan", layer, response, r$instrument * scale, r$c_d * scale,
+                                           technical_draws = lapply(r$technical, function(m) m * scale))
   covs[[length(covs) + 1L]] <<- covariates_long("stan", layer, response, lapply(r$covariates, function(m) m * scale))
   if (r$n_divergent > 0) cat("  ", r$n_divergent, "divergent transitions\n")
 }

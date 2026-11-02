@@ -12,7 +12,7 @@ need_packages("lme4")
 tt <- read.csv(file.path(a$out, "tubes.csv"), stringsAsFactors = FALSE)
 check_design(cfg, tt)
 ref <- cfg$reference_instrument
-unit <- cfg$design$unit; day_term <- setdiff(unlist(cfg$design$technical), "instrument")[1]
+unit <- cfg$design$unit; day_term <- design_day_term(cfg)
 rows <- list(); checks <- list()
 try_fit <- function(expr) tryCatch(expr, error = function(e) { cat("   skipped:", conditionMessage(e), "\n"); NULL })
 fit_lmer <- function(d, class) try_fit(lme4::lmer(design_formula(cfg, class, "lme4", "value"), data = d, REML = TRUE))

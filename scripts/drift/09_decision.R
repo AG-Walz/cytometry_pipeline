@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 # Step 9: combine posteriors with the decision rule (plan section 3). For every layer A statistic,
-# layer BG (neg background) response and layer B response, for every instrument contrast and each
-# acquisition day:
+# layer BG (neg background) response and layer B response, for every technical contrast (instrument,
+# operator, ...: the fixed technical factors of the design) and each acquisition day:
 #   rule 1: P(|effect| > replicate SD) >= replicate_noise_prob  -> "detected"
 #   rule 2: removing the effect flips positivity calls (layers B and BG counts)  -> "correct"
 # Also compares every fitter (brms, stan, bayesflow_v1, bayesflow_v2) against brms.
@@ -18,14 +18,27 @@ cat("posteriors found from:", paste(models, collapse = ", "), "\n")
 if (!a$primary %in% models) stop("primary model ", a$primary, " has no effects file")
 prim <- eff[eff$model == a$primary, ]
 
-# replicate noise
+# replicate noise. Technical markers (layer A): SD across the tubes of the same sample (patient, day,
+# visit), the peptide being irrelevant to them. Counts (layers B and BG): the tube-level residual SD of
+# the lme4 fit (observation-level term, after patient, week, pool and the technical terms), because
+# tubes of one sample carry different patient-specific pools and so are not replicates; the
+# same-sample empirical-logit SD is the fallback when step 6c has not run.
 # empirical logit with a half-count continuity correction: neg gates often hold 0 events, and a
 # clipped logit of 0 percent (about -14) would swamp the replicate SD with the clipping constant
 elogit <- function(k, n) qlogis((k + 0.5) / (n + 1))
 rep_by <- function(d, value) do.call(rbind, lapply(split(d, d$response), function(x) data.frame(
-  response = x$response[1], replicate_sd = replicate_sd(value(x), x$patient_day), stringsAsFactors = FALSE)))
+  response = x$response[1], replicate_sd = replicate_sd(value(x), same_sample(x)), stringsAsFactors = FALSE)))
+lme_path <- file.path(a$out, "lme4_variance_components.csv")
+lme_vc <- if (file.exists(lme_path)) read.csv(lme_path, stringsAsFactors = FALSE) else NULL
+resid_sd <- function(layer, resp) {
+  if (is.null(lme_vc)) return(NA)
+  v <- lme_vc$var_resid[lme_vc$layer == layer & lme_vc$response == resp]
+  if (length(v) && is.finite(v[1])) sqrt(v[1]) else NA
+}
 rep_a <- layer_a_replicate_sd(read_layer_a(a$out, cfg, tt))   # NA when step 4 ran on negs only
-fb <- read_layer_b(a$out)
+fb <- read_layer_b(a$out, cfg = cfg)
+day_col <- design_day_term(cfg)
+tube_level <- function(df, term) as.character(df[[if (term == "day") day_col else term]])
 rep_b <- rep_by(fb, function(x) elogit(x$count, x$parent_count))
 # layer BG: negs of the same patient-day (several exist where two visits were acquired together)
 fq <- read.csv(file.path(a$out, "gated_frequencies.csv"), stringsAsFactors = FALSE)
@@ -53,40 +66,43 @@ for (key in names(prim_idx)) {
   db <- fb[fb$response == resp, ]
   if (layer == "A") {
     mk <- sub(":.*$", "", resp); st <- sub("^.*:", "", resp)
-    rs <- rep_a$replicate_sd[rep_a$marker == mk & rep_a$statistic == st]
-    if (!length(rs) || is.na(rs)) rs <- sigma_fallback("A", resp)
+    rs <- rep_a$replicate_sd[rep_a$marker == mk & rep_a$statistic == st]; src <- "same-sample tubes"
+    if (!length(rs) || is.na(rs)) { rs <- sigma_fallback("A", resp); src <- "brms residual" }
     flips <- NA
   } else if (layer == "BG" && sub(":.*$", "", resp) %in% names(cfg$parent_populations)) {   # neg counts
-    rs <- lookup(rep_bg_count, resp)
+    rs <- resid_sd("BG", resp); src <- "lme4 tube residual"
+    if (is.na(rs)) { rs <- lookup(rep_bg_count, resp); src <- "same-sample negs" }
     # stimulated rows whose matched neg sits on the affected day / instrument
-    which_neg <- if (term == "instrument") db$neg_instrument %in% lev else db$neg_acq_day %in% lev
+    which_neg <- matched_neg_level(db, term, tt) %in% lev
     flips <- count_background_flips(db, mean(d$value), which_neg, cfg$positivity$min_subtracted_pct, cfg$positivity$min_fold_over_neg)
   } else if (layer == "BG") {   # neg cytokine median intensity
-    rs <- lookup(rep_bg_int, resp)
-    if (is.na(rs)) rs <- sigma_fallback("BG", resp)
+    rs <- lookup(rep_bg_int, resp); src <- "same-sample negs"
+    if (is.na(rs)) { rs <- sigma_fallback("BG", resp); src <- "brms residual" }
     flips <- NA
   } else {
-    rs <- lookup(rep_b, resp)
-    which <- if (term == "instrument") db$instrument == lev else db$acq_day == lev
+    rs <- resid_sd("B", resp); src <- "lme4 tube residual"
+    if (is.na(rs)) { rs <- lookup(rep_b, resp); src <- "same-sample tubes" }
+    which <- tube_level(db, term) %in% lev
     flips <- count_positivity_flips(db, mean(d$value), which, cfg$positivity$min_subtracted_pct, cfg$positivity$min_fold_over_neg)
   }
   dec <- drift_decision(d$value, rs, flips, cfg$replicate_noise_prob)
   sel <- if (layer == "BG") tt$is_neg else rep(TRUE, nrow(tt))
-  n_tubes <- if (term == "instrument") sum(sel & tt$instrument == lev) else sum(sel & tt$acq_day == lev)
-  rows[[length(rows) + 1L]] <- cbind(layer = layer, response = resp, term = term, level = lev, n_tubes = n_tubes, dec)
+  n_tubes <- sum(sel & tube_level(tt, term) %in% lev)
+  rows[[length(rows) + 1L]] <- cbind(layer = layer, response = resp, term = term, level = lev, n_tubes = n_tubes, dec,
+                                     noise_source = src)
 }
 decisions <- do.call(rbind, rows)
 decisions <- decisions[order(decisions$layer, decisions$term, -abs(decisions$effect_mean)), ]
 write_table(decisions, file.path(a$out, "decisions.csv"))
 
 # headline
-cat("\n=== Instrument contrast ===\n")
-print(decisions[decisions$term == "instrument", c("layer", "response", "effect_mean", "ci_low", "ci_high", "p_exceeds_noise", "positivity_flips", "verdict")], row.names = FALSE)
+cat("\n=== Technical contrasts (instrument and other technical factors) ===\n")
+print(decisions[decisions$term != "day", c("layer", "response", "term", "level", "effect_mean", "ci_low", "ci_high", "p_exceeds_noise", "positivity_flips", "verdict")], row.names = FALSE)
 cat("\n=== Days detected above replicate noise ===\n")
 dd <- decisions[decisions$term == "day" & grepl("^detected", decisions$verdict), ]
 if (nrow(dd)) print(dd[, c("layer", "response", "level", "n_tubes", "effect_mean", "positivity_flips", "verdict")], row.names = FALSE) else cat("none\n")
 cat("\n=== Background (neg) shifts ===\n")
-bg <- decisions[decisions$layer == "BG" & (decisions$term == "instrument" | grepl("^detected", decisions$verdict)), ]
+bg <- decisions[decisions$layer == "BG" & (decisions$term != "day" | grepl("^detected", decisions$verdict)), ]
 if (nrow(bg)) { print(bg[, c("response", "term", "level", "n_tubes", "effect_mean", "p_exceeds_noise", "positivity_flips", "verdict")], row.names = FALSE)
 } else cat(if (any(decisions$layer == "BG")) "no background effect above replicate noise\n" else "no layer BG effects (step 6 background fits not run)\n")
 
