@@ -32,6 +32,7 @@ This guide covers every statistical, clustering, dimensionality reduction, trans
 |--------|------------|-----------|
 | **UMAP** | 2D visualization of cell populations | [umap.md](methods/umap.md) |
 | **PCA** | Variance structure, batch effect QC, noise reduction | [pca.md](methods/pca.md) |
+| **Gate-anchored UMAP layout** | UMAP in which every combination of FlowJo gate calls forms its own island | [gate-anchored-layout.md](methods/gate-anchored-layout.md) |
 
 ### Data Transformation
 

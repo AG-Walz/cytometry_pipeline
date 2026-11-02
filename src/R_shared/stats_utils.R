@@ -202,14 +202,71 @@ run_pca <- function(expr_matrix, n_components = 2, scale = TRUE) {
 #' @param n_components Number of output dimensions
 #' @param metric Distance metric
 #' @param seed Random seed
-#' @return Matrix of UMAP coordinates
+#' @param y Optional labels for supervised UMAP (a factor for categories).
+#'   Either one per row of expr_matrix or one per FITTED row; NULL = unsupervised.
+#' @param target_weight uwot's weight of `y` against the data (0 = data only,
+#'   1 = labels only). Used only when `y` is given.
+#' @param fit_idx Optional sorted, distinct row indices to fit on; the other
+#'   rows are projected with umap_transform. Takes precedence over `subsample`.
+#' @param transform_threads Threads for the projection's neighbour search
+#'   (default: n_threads). The search gives the same neighbours at any thread
+#'   count and the projection's optimiser stays serial, so this changes only
+#'   the speed, never the coordinates.
+#' @param fit_matrix Optional matrix with the same columns as expr_matrix (e.g.
+#'   supercell means) to fit on instead of rows of expr_matrix; every row of
+#'   expr_matrix is then projected. Unsupervised only; excludes fit_idx.
+#' @param model Optional model from an earlier fit with the same data and
+#'   settings (uwot::load_uwot): the fit is skipped and the cells are only
+#'   projected, as a resumed run does.
+#' @param on_fit Optional function(model), called once the model is fitted and
+#'   before any cell is projected (e.g. to save it: on a cohort the projection
+#'   takes most of an hour, and a failure there must not cost the fit).
+#' @return Matrix of UMAP coordinates. When a model was fitted on a subset
+#'   (subsample, fit_idx or fit_matrix) it rides along as attr(, "model"), so a
+#'   caller can save it (uwot::save_uwot) and project further cells later.
 run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
                      n_components = 2, metric = "euclidean", seed = 42,
                      n_threads = 1L, progress = FALSE, verbose = FALSE,
-                     init = "auto", subsample = 0L, chunk = 250000L) {
+                     init = "auto", subsample = 0L, chunk = 250000L,
+                     y = NULL, target_weight = 0.5, fit_idx = NULL,
+                     transform_threads = NULL, fit_matrix = NULL,
+                     on_fit = NULL, model = NULL) {
   set.seed(seed)
   n_threads <- max(1L, as.integer(n_threads))
   n_obs <- nrow(expr_matrix)
+
+  # A caller-chosen fit set (e.g. one balanced across populations) replaces the
+  # random subsample. Checked here because a duplicated or unsorted index would
+  # not fail in uwot: it would silently give some cells two coordinates and
+  # leave others to the projection.
+  if (!is.null(fit_idx)) {
+    fit_idx <- as.integer(fit_idx)
+    if (!length(fit_idx) || anyNA(fit_idx) || any(fit_idx < 1L) ||
+        any(fit_idx > n_obs) || anyDuplicated(fit_idx) ||
+        is.unsorted(fit_idx)) {
+      stop("run_umap: fit_idx must be sorted, distinct row indices between 1 ",
+           "and ", n_obs, ".", call. = FALSE)
+    }
+  }
+  # A separate fit matrix (supercell means) stands in for the cells: the model
+  # is fitted on its rows and every cell is projected. Its columns must be the
+  # cells' columns in the same order, or the projection would mix markers up.
+  if (!is.null(fit_matrix)) {
+    if (!is.null(fit_idx) || !is.null(y)) {
+      stop("run_umap: fit_matrix cannot be combined with fit_idx or y.",
+           call. = FALSE)
+    }
+    if (!identical(colnames(fit_matrix), colnames(expr_matrix)) ||
+        nrow(fit_matrix) < 2L || !all(is.finite(fit_matrix))) {
+      stop("run_umap: fit_matrix must be finite, have at least 2 rows and ",
+           "the same columns as expr_matrix, in the same order.", call. = FALSE)
+    }
+  }
+  # The rows the model is fitted on, which is what the init rule below is
+  # about: a spectral init on a 100k fit set is cheap however many cells are
+  # projected afterwards. Equal to n_obs whenever fit_idx is not given.
+  n_fit <- if (!is.null(fit_matrix)) nrow(fit_matrix)
+           else if (is.null(fit_idx)) n_obs else length(fit_idx)
 
   # ---------------------------------------------------------------------------
   # WHY THIS FUNCTION IS MORE THAN A CALL TO uwot::umap
@@ -250,10 +307,14 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
   # 300,000 is set below the size at which convergence was observed to fail,
   # not at it. The switch is announced, because it changes the embedding.
   SPECTRAL_LIMIT <- 300000L
+  # Projection onto a given model fits nothing, so there is no start to pick.
+  if (!is.null(model) && is.null(fit_matrix) && is.null(fit_idx)) {
+    n_fit <- min(n_fit, SPECTRAL_LIMIT)
+  }
   if (identical(init, "auto")) {
-    init <- if (n_obs > SPECTRAL_LIMIT) "pca" else "spectral"
+    init <- if (n_fit > SPECTRAL_LIMIT) "pca" else "spectral"
     if (init == "pca") {
-      message("uwot: ", n_obs, " cells is past the ", SPECTRAL_LIMIT,
+      message("uwot: ", n_fit, " cells is past the ", SPECTRAL_LIMIT,
               " point where spectral initialisation stops paying for itself ",
               "(it is single-threaded); using init = \"pca\". Pass ",
               "init = \"spectral\" to force it.")
@@ -285,13 +346,43 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
     base_args$batch <- TRUE
   }
   if (!is.null(cb)) base_args$epoch_callback <- cb
+  # A PCA start is SCALED. Unscaled, it is the data's own principal component
+  # scores: on FlowJo values (0-256) the points start ~100 units apart, the
+  # gradients are tiny at that distance, and the optimisation ends with a map
+  # of specks scattered over a range of 200 (2026-10-14, MTB: 405,521
+  # supercells, which crossed SPECTRAL_LIMIT into "pca"). uwot's own advice is
+  # to scale it; "range" gives the 0-10 box the spectral start is put in.
+  if (identical(init, "pca")) base_args$init_sdev <- "range"
 
   subsample <- suppressWarnings(as.integer(subsample))
   if (is.na(subsample)) subsample <- 0L
 
+  # Supervision only enters the FIT: umap_transform places new cells by their
+  # data alone, which is what lets a supervised model project cells it never
+  # saw. `y` may be given per row of the matrix or per fitted row.
+  fit_args <- function(rows) {
+    if (is.null(y)) return(base_args)
+    yy <- if (length(y) == length(rows)) y
+          else if (length(y) == n_obs) y[rows]
+          else stop("run_umap: y has ", length(y), " entries; expected ",
+                    n_obs, " (one per row) or ", length(rows),
+                    " (one per fitted row).", call. = FALSE)
+    c(base_args, list(y = yy, target_weight = target_weight))
+  }
+
   # --- the whole matrix, when it is small enough to be worth it ---------------
-  if (subsample <= 0L || subsample >= n_obs) {
-    return(do.call(uwot::umap, c(list(X = expr_matrix), base_args)))
+  # (checked for a degenerate spread like every other fit, below)
+  # A model given with no fit set of its own is a map from another run: every
+  # row is projected onto it, nothing is fitted.
+  project_only <- !is.null(model) && is.null(fit_matrix) && is.null(fit_idx)
+  fit_all <- if (!is.null(fit_matrix) || project_only) FALSE
+             else if (is.null(fit_idx)) subsample <= 0L || subsample >= n_obs
+             else n_fit == n_obs
+  if (fit_all) {
+    coords <- do.call(uwot::umap, c(list(X = expr_matrix),
+                                    fit_args(seq_len(n_obs))))
+    .warn_spread(coords)
+    return(coords)
   }
 
   # --- fit on a subsample, project the rest ----------------------------------
@@ -304,23 +395,60 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
   # This is a different estimator, not an approximation of the full run: the
   # fitted cells get an exact embedding and the rest get an out-of-sample
   # projection onto it. It is said out loud for that reason.
-  message("uwot: fitting on a ", subsample, "-cell subsample of ", n_obs,
-          ", then projecting the remaining ", n_obs - subsample, ".")
-  idx <- sort(sample.int(n_obs, subsample))
-  model <- do.call(uwot::umap, c(list(X = expr_matrix[idx, , drop = FALSE],
-                                      ret_model = TRUE), base_args))
+  # Said only when a fit happens; a resumed run says it reuses the model.
+  say <- function(...) if (is.null(model)) message(...)
+  if (project_only) {
+    idx <- integer(0)
+  } else if (!is.null(fit_matrix)) {
+    say("uwot: fitting on ", n_fit, " supplied rows (e.g. supercells), ",
+        "then projecting all ", n_obs, " cells onto them.")
+    idx <- integer(0)
+  } else if (is.null(fit_idx)) {
+    say("uwot: fitting on a ", subsample, "-cell subsample of ", n_obs,
+        ", then projecting the remaining ", n_obs - subsample, ".")
+    idx <- sort(sample.int(n_obs, subsample))
+  } else {
+    say("uwot: fitting on the ", n_fit, " chosen cells of ", n_obs,
+        ", then projecting the remaining ", n_obs - n_fit, ".")
+    idx <- fit_idx
+  }
+  if (is.null(model)) {
+    model <- do.call(uwot::umap, c(list(
+      X = if (is.null(fit_matrix)) expr_matrix[idx, , drop = FALSE] else fit_matrix,
+      ret_model = TRUE), fit_args(idx)))
+    if (is.function(on_fit)) on_fit(model)
+  } else if (!project_only) {
+    if (nrow(model$embedding) != (if (length(idx)) length(idx) else n_fit)) {
+      stop("run_umap: the given model was fitted on ", nrow(model$embedding),
+           " rows, not on this fit set of ", n_fit, ".", call. = FALSE)
+    }
+    message("uwot: reusing the saved model; projecting only.")
+  } else {
+    message("uwot: projecting all ", n_obs, " cells onto the given model.")
+  }
+
+  .warn_spread(model$embedding)
 
   coords <- matrix(NA_real_, nrow = n_obs, ncol = n_components)
-  coords[idx, ] <- model$embedding
+  if (length(idx)) coords[idx, ] <- model$embedding
 
   rest <- setdiff(seq_len(n_obs), idx)
+  t_threads <- max(1L, as.integer(if (is.null(transform_threads)) n_threads
+                                  else transform_threads))
   # Chunked so the transform reports progress and so a 7-million-row projection
   # does not have to be resident all at once.
   chunks <- split(rest, ceiling(seq_along(rest) / max(1L, as.integer(chunk))))
   for (i in seq_along(chunks)) {
     rows <- chunks[[i]]
     coords[rows, ] <- uwot::umap_transform(
-      expr_matrix[rows, , drop = FALSE], model, n_threads = n_threads,
+      expr_matrix[rows, , drop = FALSE], model,
+      n_threads = t_threads,
+      # Threaded optimisation only for a model fitted in batch mode: batch
+      # updates do not depend on the thread count, Hogwild ones do.
+      n_sgd_threads = if (isTRUE(model$batch)) t_threads else 0,
+      # Seeded per chunk, so a projection resumed from a saved model gives the
+      # coordinates the uninterrupted run would have.
+      seed = seed + i,
       verbose = FALSE)
     if (isTRUE(progress) && exists("emit_progress", mode = "function")) {
       emit_progress("embed", i, length(chunks), "projecting")
@@ -333,7 +461,23 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
     stop("umap: ", sum(!stats::complete.cases(coords)), " cell(s) were left ",
          "without coordinates by the subsample projection.", call. = FALSE)
   }
+  attr(coords, "model") <- model
   coords
+}
+
+# A UMAP layout with spread 1 spans a few tens of units. Far more means the
+# optimisation never pulled the points together (a badly scaled start), and
+# every plot drawn from it would be specks; said loudly rather than plotted
+# silently.
+.warn_spread <- function(embedding) {
+  width <- max(apply(embedding, 2, function(v) diff(range(v, finite = TRUE))))
+  if (is.finite(width) && width > 100) {
+    warning("umap: the layout spans ", round(width), " units, where a normal ",
+            "one spans a few tens: the optimisation did not converge, and the ",
+            "plots will show scattered specks. Try init = \"spectral\" on a ",
+            "smaller fit set.", call. = FALSE)
+  }
+  invisible(width)
 }
 
 #' Calculate summary statistics for expression data grouped by cluster

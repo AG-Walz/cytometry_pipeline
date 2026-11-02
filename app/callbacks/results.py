@@ -103,9 +103,65 @@ def _grid(plots: list[results_scan.Plot]):
     return html.Div(children)
 
 
+def _split_panel(results: results_scan.Results, column: str):
+    """One split column: all levels side by side, each level, the fold-change maps."""
+    levels = results.split_level.get(column) or []
+    diffs = results.split_diff.get(column) or []
+    panel = results.split_panel.get(column)
+    children = []
+    if panel is not None:
+        children += [_card(panel), dmc.Space(h=10)]
+    if levels:
+        children += [dmc.Text("Each level", size="xs", c="dimmed", mb=4),
+                     _grid(levels), dmc.Space(h=10)]
+    if diffs:
+        children += [dmc.Text("Change in frequency against the reference level", size="xs",
+                              c="dimmed", mb=4),
+                     _grid(diffs)]
+    return html.Div(children)
+
+
+def _data_files(results: results_scan.Results):
+    """The run's tables, as plain download links."""
+    return dmc.Group(
+        [
+            dmc.Anchor(
+                f"{p.name} ({results_scan.human_size(_size(p))})",
+                href=f"/plot/download?path={quote(str(p))}",
+                size="xs",
+                target="_blank",
+            )
+            for p in results.data_files
+        ],
+        gap="md",
+    )
+
+
+def _data_section(results: results_scan.Results) -> list:
+    """The "Data files" heading and links, or [] when there are none."""
+    if not results.data_files:
+        return []
+    return [
+        dmc.Divider(label="Data files", labelPosition="left"),
+        dmc.Space(h=8),
+        _data_files(results),
+        dmc.Space(h=16),
+    ]
+
+
+def _size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
 def register_callbacks() -> None:
     @callback(
         Output("gallery", "children"),
+        Output("split-header", "children"),
+        Output("split-accordion", "children"),
+        Output("gallery-rest", "children"),
         Output("per-marker-header", "children"),
         Output("marker-accordion", "children"),
         Output("annot-accordion", "children"),
@@ -119,9 +175,11 @@ def register_callbacks() -> None:
         Input("filter-sample", "value"),
         Input("marker-accordion", "value"),
         Input("annot-accordion", "value"),
+        Input("split-accordion", "value"),
     )
     def render_gallery(directory, _generation, _refresh, marker_filter,
-                       sample_filter, open_markers, open_annotations):
+                       sample_filter, open_markers, open_annotations,
+                       open_splits):
         """Render the gallery for ``directory``.
 
         The accordions' ``value`` props are inputs so that only the panels the
@@ -131,6 +189,7 @@ def register_callbacks() -> None:
         """
         open_markers = set(open_markers or [])
         open_annotations = set(open_annotations or [])
+        open_splits = set(open_splits or [])
         directory = (directory or "").strip()
         if not directory:
             return (
@@ -139,6 +198,9 @@ def register_callbacks() -> None:
                     color="gray",
                     variant="light",
                 ),
+                None,
+                [],
+                None,
                 None,
                 [],
                 [],
@@ -157,13 +219,19 @@ def register_callbacks() -> None:
         sample_options = [{"value": s, "label": s} for s in results.samples]
 
         if results.is_empty:
-            note = (
-                "This folder does not exist."
-                if not Path(directory).is_dir()
-                else "No plot files in this folder."
-            )
+            # The gate layout writes its tables before any plot, so a run
+            # whose plotting failed leaves a folder of data files only.
+            if not Path(directory).is_dir():
+                note = "This folder does not exist."
+            elif results.data_files:
+                note = "No plot files in this folder; its data files are below."
+            else:
+                note = "No plot files in this folder."
             return (
                 dmc.Alert(note, color="gray", variant="light"),
+                None,
+                [],
+                html.Div(_data_section(results)),
                 None,
                 [],
                 [],
@@ -190,6 +258,38 @@ def register_callbacks() -> None:
             sections.append(dmc.Space(h=8))
             sections.append(_grid(results.overview))
             sections.append(dmc.Space(h=16))
+
+        # Split by metadata, straight after the overview: one collapsed panel
+        # per column, built only once opened (a column can have dozens of
+        # levels, and each level has a plot and a fold-change map). Hidden by a
+        # sample filter, like the annotation plots: neither is per sample.
+        split_items = []
+        if not sample_filter:
+            for column in results.split_columns:
+                n_levels = len(results.split_level.get(column) or [])
+                n_diffs = len(results.split_diff.get(column) or [])
+                label = f"{column} — {n_levels} level(s)" + (
+                    f", {n_diffs} fold-change map(s)" if n_diffs else "")
+                split_items.append(
+                    dmc.AccordionItem(
+                        [
+                            dmc.AccordionControl(label),
+                            dmc.AccordionPanel(
+                                _split_panel(results, column)
+                                if column in open_splits
+                                else dmc.Text("Opening…", size="xs", c="dimmed")
+                            ),
+                        ],
+                        value=column,
+                    )
+                )
+        split_header = (
+            html.Div([dmc.Divider(label="Split by metadata",
+                                  labelPosition="left"),
+                      dmc.Space(h=8)])
+            if split_items else None
+        )
+        gallery_top, sections = sections, []
 
         # Sample annotations (patient, timepoint, …): the "coloured by" plot for
         # every column, then each column's levels in its own collapsed panel.
@@ -284,6 +384,9 @@ def register_callbacks() -> None:
             sections.append(dmc.Divider(label="Other files", labelPosition="left"))
             sections.append(dmc.Space(h=8))
             sections.append(_grid(results.other))
+            sections.append(dmc.Space(h=16))
+
+        sections += _data_section(results)
 
         # The per-marker accordion lives outside #gallery so its open set can
         # drive which panels are built; only its header travels with the rest.
@@ -299,6 +402,9 @@ def register_callbacks() -> None:
         )
 
         return (
+            html.Div(gallery_top),
+            split_header,
+            split_items,
             html.Div(sections),
             header,
             per_marker_items,

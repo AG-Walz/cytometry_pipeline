@@ -6,12 +6,12 @@ import datetime as _dt
 from pathlib import Path
 
 import dash_mantine_components as dmc
-from dash import ALL, Input, Output, State, callback, ctx, html, no_update
+from dash import ALL, Input, Output, State, callback, ctx, dcc, html, no_update
 
 from app import config
 from app.callbacks import common
 from app.components import health
-from app.services import fs_tree, gating, rscript, session_state
+from app.services import fs_tree, gating, results_scan, rscript, session_state
 
 #: Last state written to the session file, so it is only rewritten on a change.
 _last_saved: dict | None = None
@@ -29,6 +29,11 @@ SUBPOP_HELP = {
     "deepest": (
         "Deepest gate by path depth; siblings at equal depth collapse to "
         "'(multiple)'."
+    ),
+    "combinations": (
+        "Each cell takes its combination of gate calls (e.g. 'CD4+ | IFNy+ "
+        "TNFa+'), as the gate layout labels it. Marker layout only; colours "
+        "only, the embedding still uses the marker values."
     ),
     "none": "Skip the subpopulation plot entirely.",
 }
@@ -143,6 +148,84 @@ def register_callbacks() -> None:
         changed = [
             f"{k}: {v}" for k, v in zip(keys, values)
             if v is not None and v != config.DEFAULTS[k]
+        ]
+        if not changed:
+            return None
+        return dmc.Group(
+            [dmc.Badge(c, color="blue", variant="light", size="sm", tt="none")
+             for c in changed],
+            gap="xs",
+        )
+
+    @callback(
+        Output("gates-wrap", "style"),
+        Output("in-normalize", "disabled"),
+        Output("in-downsample", "disabled"),
+        Output("layout-hint", "children"),
+        Output("fit-wrap", "style"),
+        Input("in-layout", "value"),
+    )
+    def layout_controls(layout):
+        """Show the settings that apply to the chosen layout, and say why.
+
+        Disabled rather than hidden: a normalisation chosen earlier stays
+        visible, and run_argv drops it from the gate layout's command for the
+        same reason it is greyed out here.
+        """
+        gates = layout == "gates"
+        hint = dmc.Text(
+            "Normalisation and downsampling do not apply here: the gate "
+            "layout builds its features from the gates and samples cells per "
+            "combination instead.",
+            size="xs", c="dimmed", mb=8,
+        ) if gates else None
+        hidden = {"display": "none"}
+        return ({} if gates else hidden), gates, gates, hint, \
+            (hidden if gates else {})
+
+    @callback(
+        Output("fit-random-wrap", "style"),
+        Output("fit-supercell-wrap", "style"),
+        Output("fit-supercell-max-wrap", "style"),
+        Input("in-fit-subset", "value"),
+    )
+    def fit_subset_controls(fit_subset):
+        """Show the settings of the chosen fit set only."""
+        hidden = {"display": "none"}
+        supercell = fit_subset == "supercell"
+        shown = {} if supercell else hidden
+        return (hidden if supercell else {}), shown, shown
+
+    @callback(
+        Output("in-mindist", "value", allow_duplicate=True),
+        Input("in-layout", "value"),
+        State("in-mindist", "value"),
+        prevent_initial_call=True,
+    )
+    def layout_min_dist(layout, current):
+        """Swap min_dist to the chosen layout's tuned value.
+
+        Only while it still holds the OTHER layout's value: a min_dist the user
+        typed is theirs and stays. R has the same per-layout default, but the
+        app always passes the form's value, so the form has to follow.
+        """
+        values = config.LAYOUT_MIN_DIST
+        target = values.get(layout)
+        others = {v for k, v in values.items() if k != layout}
+        if target is None or current not in others:
+            return no_update
+        return target
+
+    @callback(
+        Output("gates-badge", "children"),
+        *[Input(cid, "value") for cid in common.GATE_COMPONENTS],
+    )
+    def gates_badge(*values):
+        """Name non-default gate settings on the collapsed header (see params_badge)."""
+        changed = [
+            f"{label.lower()}: {v}"
+            for (key, label), v in zip(common.GATE_PARAMS, values)
+            if v is not None and v != config.DEFAULTS[key]
         ]
         if not changed:
             return None
@@ -704,8 +787,12 @@ def register_callbacks() -> None:
         Input({"comp": "fb-input", "bid": "fcs"}, "value"),
     )
     def check_metadata(metadata, fcs_dir):
-        """Validate the table and show it: first column = FCS file name, and
-        every FCS file in the folder must have exactly one row."""
+        """Validate the table and show it: the ID column holds FCS file names,
+        and every FCS file in the folder must have exactly one row.
+
+        The ID column is the one R keys on (common.metadata_id_column), so a
+        table with "filename" in its third column is checked on that column,
+        as R will read it."""
         import pandas as pd
 
         path = (metadata or "").strip()
@@ -717,23 +804,28 @@ def register_callbacks() -> None:
             return _alert(f"Could not read the metadata: {exc}"), "No metadata uploaded.", [], []
 
         key = lambda n: Path(str(n)).name.lower().removesuffix(".fcs")  # noqa: E731
+        id_col = common.metadata_id_column([str(c) for c in df.columns])
         problems = []
         if df.shape[1] < 2:
             problems.append("At least two columns are needed: the file name plus one annotation.")
         if any(c.startswith("Unnamed:") or not c.strip() for c in df.columns):
             problems.append("Every column needs a header.")
-        keys = [key(v) for v in df.iloc[:, 0]]
+        keys = [key(v) for v in df[id_col]] if id_col else []
         if "" in keys:
-            problems.append("The first column has empty file names.")
+            problems.append(f"The '{id_col}' column has empty file names.")
         dups = sorted({k for k in keys if keys.count(k) > 1} - {""})
         if dups:
             problems.append(f"Duplicate file names: {', '.join(dups[:5])}.")
-        fcs, _ = fs_tree.find_files((fcs_dir or "").strip(), (".fcs",))
+        # No folder means no coverage check: find_files("") would search the
+        # app's working directory (the repo) and report its test files.
+        fcs_dir = (fcs_dir or "").strip()
+        fcs, _ = fs_tree.find_files(fcs_dir, (".fcs",)) if fcs_dir else ([], False)
         missing = sorted(Path(f).name for f in fcs if key(f) not in set(keys))
         if missing:
             problems.append(f"{len(missing)} of {len(fcs)} FCS file(s) have no metadata row: "
                             + ", ".join(missing[:5]) + ("…" if len(missing) > 5 else ""))
-        title = f"{Path(path).name}: {len(df)} row(s), {df.shape[1] - 1} annotation column(s)."
+        title = (f"{Path(path).name}: {len(df)} row(s) keyed on '{id_col}', "
+                 f"{df.shape[1] - 1} annotation column(s).")
         note = (_alert(_problem_list(problems), color="red", title="Metadata problems")
                 if problems else
                 _alert(title + (f" All {len(fcs)} FCS file(s) covered." if fcs else
@@ -746,23 +838,38 @@ def register_callbacks() -> None:
         Output("in-annotate", "data"),
         Output("in-annotate", "value"),
         Output("annotate-preview", "children"),
+        Output("in-split-by", "data"),
+        Output("in-split-by", "value"),
+        Output("in-filter-col", "data"),
+        Output("in-filter-col", "value"),
+        Output("store-annot-preview", "data"),
         Input({"comp": "fb-input", "bid": "meta"}, "value"),
         Input("in-pattern", "value"),
         Input("store-inspect", "data"),
         State("in-annotate", "value"),
+        State("in-split-by", "value"),
+        State("in-filter-col", "value"),
     )
-    def fill_annotations(metadata, pattern, inspect, current):
+    def fill_annotations(metadata, pattern, inspect, current, current_split,
+                         current_filter):
         """Offer the annotation columns, and show what they will resolve to.
 
-        Done in Python rather than by asking R: a CSV header is a single line
-        and a regex is a regex, so the picker can be populated and the match
-        rate shown instantly instead of after a workspace load.
+        Asks R (--annotation_preview), which resolves the table exactly as a
+        run would; see rscript.describe_annotations. The same columns feed the
+        split and filter pickers, and the levels R found go into
+        store-annot-preview for the filter values, the level-order hint and
+        the run validation.
         """
         samples = (inspect or {}).get("samples") or []
         columns, preview = rscript.describe_annotations(
             (metadata or "").strip(), (pattern or "").strip(), samples)
 
         kept = [c for c in (current or []) if c in set(columns)]
+        options = [{"value": c, "label": c} for c in columns]
+        split = [c for c in (current_split or []) if c in set(columns)]
+        filter_col = current_filter if current_filter in set(columns) else ""
+        store = {"columns": columns,
+                 "level_values": preview.get("level_values") or {}}
         note = None
         if preview.get("error"):
             note = _alert(preview["error"], color="red")
@@ -793,7 +900,151 @@ def register_callbacks() -> None:
                    if preview.get("total") else ""),
                 color="green",
             )
-        return [{"value": c, "label": c} for c in columns], kept, note
+        return options, kept, note, options, split, options, filter_col, store
+
+    @callback(
+        Output("in-split-by", "disabled"),
+        Output("in-level-order", "disabled"),
+        Output("in-filter-col", "disabled"),
+        Output("in-filter-mode", "disabled"),
+        Output("in-filter-values", "disabled"),
+        Output("meta-source-note", "children"),
+        Input({"comp": "fb-input", "bid": "meta"}, "value"),
+        Input("in-pattern", "value"),
+        Input("in-split-by", "value"),
+    )
+    def metadata_controls(metadata, pattern, split_by):
+        """Split and filter read the annotations: no source, nothing to pick.
+
+        The level order only orders split plots, so it waits for a split.
+        run_argv applies the same two rules, so a disabled control is never
+        one whose value still reaches the command.
+        """
+        source = common.has_metadata_source(
+            {"sample_metadata": metadata, "sample_pattern": pattern})
+        note = None if source else dmc.Text(
+            "Upload metadata or enter a name pattern above to split or "
+            "filter by it.", size="xs", c="dimmed", mb=6)
+        off = not source
+        return off, off or not split_by, off, off, off, note
+
+    @callback(
+        Output("in-filter-values", "data"),
+        Output("in-filter-values", "value"),
+        Input("in-filter-col", "value"),
+        Input("store-annot-preview", "data"),
+        State("in-filter-values", "value"),
+    )
+    def fill_filter_values(column, preview, current):
+        """The chosen column's levels, as R resolved them for the loaded samples.
+
+        Before a load R has no samples to resolve, so it reports no levels; a
+        remembered selection is then kept and shown as is rather than wiped,
+        and pruned once the levels are known.
+        """
+        current = list(current or [])
+        if not column:
+            return [], []
+        levels = ((preview or {}).get("level_values") or {}).get(column) or []
+        if levels:
+            kept = [v for v in current if v in set(levels)]
+        else:
+            kept, levels = current, current
+        return [{"value": v, "label": v} for v in levels], kept
+
+    @callback(
+        Output("filter-echo", "children"),
+        Input("in-filter-col", "value"),
+        Input("in-filter-values", "value"),
+        Input("in-filter-mode", "value"),
+        Input({"comp": "fb-input", "bid": "meta"}, "value"),
+        Input("in-pattern", "value"),
+    )
+    def echo_filter(column, values, mode, metadata, pattern):
+        form = {"filter_column": column, "filter_values": values,
+                "filter_mode": mode, "sample_metadata": metadata,
+                "sample_pattern": pattern}
+        spec = common.filter_spec(form)
+        if not spec or not common.has_metadata_source(form):
+            return None
+        return dmc.Text(
+            [dmc.Text("--filter ", span=True, c="dimmed", size="xs"),
+             dmc.Text(spec, span=True, size="xs", fw=600)],
+            mt=4, style={"wordBreak": "break-all"},
+        )
+
+    @callback(
+        Output("level-order-hint", "children"),
+        Input("in-split-by", "value"),
+        Input("in-level-order", "value"),
+        Input("store-annot-preview", "data"),
+    )
+    def level_order_hint(split_by, level_order, preview):
+        """The levels of each split column in R's default order, ready to copy.
+
+        Natural order, as R would draw them, without "Unassigned", which R
+        leaves out of the split plots. Also flags levels in the typed order
+        that do not exist: R only warns about those, and a typo there quietly
+        changes which level is the reference.
+        """
+        split_by = list(split_by or [])
+        values = (preview or {}).get("level_values") or {}
+        if not split_by:
+            return None
+        lines, notes = [], []
+        for column in split_by:
+            levels = sorted((v for v in values.get(column) or []
+                             if v != common.UNASSIGNED),
+                            key=results_scan.natural_key)
+            if levels:
+                lines.append(f"{column}={','.join(levels)}")
+            if any("," in v or ";" in v for v in levels):
+                notes.append(f"Some levels of '{column}' contain ',' or ';' "
+                             "and cannot be written in the level order.")
+        order, _ = common.parse_level_order(level_order or "")
+        for column, wanted in order.items():
+            known = values.get(column) or []
+            unknown = [v for v in wanted if known and v not in known]
+            if unknown:
+                notes.append(f"Not a level of '{column}': "
+                             + ", ".join(unknown) + ".")
+        if not lines and not notes:
+            return dmc.Text("Levels appear once the workspaces are loaded.",
+                            size="xs", c="dimmed", mt=4)
+        children = []
+        if lines:
+            children += [
+                dmc.Text("Detected levels (default order):", size="xs",
+                         c="dimmed", mt=6),
+                dmc.Code("\n".join(lines), block=True,
+                         style={"whiteSpace": "pre-wrap",
+                                "wordBreak": "break-word", "fontSize": "11px"}),
+            ]
+        if notes:
+            children.append(dmc.Text(" ".join(notes), size="xs", c="orange",
+                                     mt=4))
+        return html.Div(children)
+
+    @callback(
+        Output("btn-meta-template", "disabled"),
+        Input("store-inspect", "data"),
+    )
+    def template_availability(inspect):
+        return not (inspect or {}).get("samples")
+
+    @callback(
+        Output("dl-meta-template", "data"),
+        Output("template-note", "children"),
+        Input("btn-meta-template", "n_clicks"),
+        State("store-inspect", "data"),
+        State("in-pattern", "value"),
+        prevent_initial_call=True,
+    )
+    def download_template(_clicks, inspect, pattern):
+        """A metadata CSV with one row per loaded sample, ready to fill in."""
+        text, note = common.metadata_template(inspect, pattern or "")
+        warning = dmc.Text(note, size="xs", c="orange", mt=4) if note else None
+        return dcc.send_string(text, "metadata_template.csv"), warning
 
     # -- markers -----------------------------------------------------------
 
@@ -835,28 +1086,37 @@ def register_callbacks() -> None:
         Output("output-echo", "children"),
         Input({"comp": "fb-input", "bid": "outparent"}, "value"),
         Input("in-outname", "value"),
+        Input("sw-resume", "checked"),
     )
-    def echo_output(parent, name):
+    def echo_output(parent, name, resume):
         form = {"output_parent": parent, "output_name": name}
         path = common.output_dir_of(form)
         if not path:
             return _alert("Choose a parent directory and a folder name.",
                           color="yellow")
         exists = Path(path).exists()
-        return dmc.Box(
-            [
-                dmc.Text(path, size="sm", fw=600,
-                         style={"wordBreak": "break-all"}),
-                dmc.Text(
-                    "Directory already exists — files with matching names will "
-                    "be overwritten."
-                    if exists
-                    else "Will be created by the run.",
-                    size="xs",
-                    c="orange" if exists else "dimmed",
-                ),
-            ]
-        )
+        children = [
+            dmc.Text(path, size="sm", fw=600, style={"wordBreak": "break-all"}),
+            dmc.Text(
+                "Directory already exists — files with matching names will "
+                "be overwritten."
+                if exists
+                else "Will be created by the run.",
+                size="xs",
+                c="orange" if exists else "dimmed",
+            ),
+        ]
+        saved = common.saved_steps(path)
+        if saved:
+            children.append(dmc.Text(
+                ("Saved steps here: " + ", ".join(saved) + ". Those whose "
+                 "settings match are reused; the run continues from the "
+                 "first that does not.")
+                if resume else
+                ("Saved steps here (" + ", ".join(saved) + ") will be "
+                 "recomputed: Reuse saved steps is off."),
+                size="xs", c="blue" if resume else "orange"))
+        return dmc.Box(children)
 
     @callback(
         Output("format-warning", "children"),
@@ -957,6 +1217,15 @@ def register_callbacks() -> None:
         Output("store-popmap", "data", allow_duplicate=True),
         Output("subpop-mode", "value"),
         Output("in-outname", "value", allow_duplicate=True),
+        Output("in-layout", "value"),
+        *[Output(cid, "value") for cid in common.GATE_COMPONENTS],
+        *[Output(cid, "value") for cid in common.FIT_COMPONENTS],
+        Output("in-split-by", "value", allow_duplicate=True),
+        Output("in-level-order", "value"),
+        Output("in-filter-col", "value", allow_duplicate=True),
+        Output("in-filter-values", "value", allow_duplicate=True),
+        Output("in-filter-mode", "value"),
+        Output("sw-resume", "checked"),
         Input("btn-reset", "n_clicks"),
         State({"comp": "fb-input", "bid": ALL}, "value"),
         prevent_initial_call=True,
@@ -970,7 +1239,7 @@ def register_callbacks() -> None:
             d["normalize"],
             d["downsample"],
             d["n_neighbors"],
-            d["min_dist"],
+            config.FORM_START.get("min_dist", d["min_dist"]),
             d["metric"],
             d["seed"],
             d["point_size"],
@@ -984,4 +1253,13 @@ def register_callbacks() -> None:
             dict(d["population_map"]),
             d["subpop_mode"],
             "",
+            config.FORM_START["layout"],
+            *[d[key] for key, _ in common.GATE_PARAMS],
+            *[d[key] for key, _ in common.FIT_PARAMS],
+            [],
+            "",
+            "",
+            [],
+            d["filter_mode"],
+            d["resume"],
         )

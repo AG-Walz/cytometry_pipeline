@@ -61,6 +61,8 @@ dependencies:
   - r-progress
   - r-uwot
   - r-pheatmap
+  - r-rann         # Exact kNN for the UMAP separation metrics (--layout gates)
+  - r-ggrastr      # Rasterised points in SVG/PDF UMAP plots
 
   # Bioconductor packages — install via BiocManager inside R if conda
   # resolution fails (see install_extra_packages_windows.R)

@@ -42,11 +42,13 @@ required_cran <- c(
 )
 
 optional_cran <- c(
-  "ggforce", "performance", "destiny"
+  "ggforce", "performance", "destiny",
+  "RANN", "ggrastr"
 )
 
 optional_github <- c(
-  "Rphenograph"
+  "Rphenograph",
+  "SuperCellCyto"   # umap_from_flowjo.R --fit_subset supercell
 )
 
 # --- Check function ---

@@ -515,14 +515,17 @@ def register_callbacks() -> None:
             new_results = output_dir
             if status == DONE:
                 tab = "results"
-                # Samples the run had to leave out are the one thing a
-                # finished run still has to say.
+                # The runner can take back a FAILED verdict it reached from a
+                # log read too early (see Runner._refresh_detached); the alert
+                # that verdict raised must go with it, or a finished run keeps
+                # saying it stopped. Samples the run had to leave out are the
+                # one thing a finished run still has to say.
                 left_out = _left_out_warning(snap.get("log") or "")
                 run_feedback = _left_out_alert(left_out) if left_out else None
             else:
                 # A failed run leaves the gallery empty, and an empty gallery on
                 # its own reads as "nothing happened". Say what stopped it, in
-                # step 4 under the Run button: in step 1 nobody at step 4
+                # step 4 next to the Run button: in step 1 nobody at step 4
                 # sees it.
                 if status == CANCELLED:
                     run_feedback = _alert("Run cancelled.", color="orange")

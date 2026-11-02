@@ -37,7 +37,18 @@ EXTENSION_PREFERENCE = (".png", ".svg", ".pdf")
 #: render inline, and one such <img> freezes the whole gallery.
 MAX_INLINE_SVG_BYTES = 8 * 1024 * 1024
 
-SUBPOP_MODES = ("furthest", "cd4cd8", "direct", "deepest", "none")
+#: Non-plot outputs offered for download in the gallery: cells.csv.gz,
+#: combination_frequencies_<col>.csv, separation_metrics.csv, run_info.json and
+#: friends. ".gz" is the suffix of "cells.csv.gz".
+DATA_EXTENSIONS = (".csv", ".tsv", ".json", ".gz")
+
+SUBPOP_MODES = ("furthest", "cd4cd8", "direct", "deepest", "combinations",
+                "none")
+#: --layout values, in the order the form lists them.
+LAYOUTS = (
+    ("gates", "Gate-separated islands (recommended)"),
+    ("markers", "Marker values"),
+)
 NORMALIZE_METHODS = ("none", "zscore", "minmax")
 # uwot's supported distance metrics.
 UMAP_METRICS = ("euclidean", "cosine", "manhattan", "hamming", "correlation")
@@ -73,15 +84,50 @@ DEFAULTS: dict = {
     "sample_pattern": "",
     "annotate": [],
     "markers": [],
+    # Plots split by a metadata column, the order of its levels ("col=a,b;
+    # col2=c"; the first level is the reference of the fold-change maps), and
+    # one "keep only samples where" clause, which run_params turns into
+    # --filter "col=a,b" or "col!=a,b".
+    "split_by": [],
+    "level_order": "",
+    "filter_column": "",
+    "filter_values": [],
+    "filter_mode": "include",
     "subpop_mode": "furthest",
     "explicit_subpop": False,
     "subpop_select": [],
+    # R's default is "markers"; the form starts on "gates" (FORM_START below).
+    # run_argv passes --layout always, so the omission rule cannot turn the
+    # form's choice back into R's default.
+    "layout": "markers",
+    # Gate layout only. Keep these equal to the R defaults: they are what
+    # run_argv compares against to decide whether a flag is needed.
+    "gate_gap": 2,
+    "gate_tier_ratio": 2,
+    "gate_softness": 4,
+    "supervise": 0,
+    "cells_per_combination": 2000,
+    "min_combination_cells": 50,
+    # Size of the balanced fit set in the gate layout; 0 there means 100000.
+    "umap_subsample": 0,
+    # Markers layout only: what UMAP is fitted on before every cell is
+    # projected (--fit_subset): "random" cells (random_fit_cells of them, sent
+    # as --umap_subsample; 0 = all) or SuperCellCyto "supercell" means.
+    "fit_subset": "random",
+    "random_fit_cells": 0,
+    "supercell_gamma": 20,
+    "supercell_k_knn": 5,
+    # At most this many supercells are fitted on; R raises gamma to match.
+    "supercell_max": 100000,
     "normalize": "none",
     "downsample": 0,
     # Worker processes for the per-file plots, which are ~90% of a run.
     # 0 = decide automatically (all cores but one, capped by the cgroup quota).
     "n_cores": 0,
     "n_neighbors": 15,
+    # R resolves an omitted --min_dist per layout (0.1 markers, 0.25 gates);
+    # run_argv always passes the form's value, so this is the markers value
+    # and the one the layout switch swaps against.
     "min_dist": 0.1,
     "metric": "euclidean",
     "seed": 42,
@@ -92,12 +138,27 @@ DEFAULTS: dict = {
     "output_formats": ["png"],
     "output_parent": "",
     "output_name": "",
+    # Reuse the steps an earlier run into the same folder saved (R's default);
+    # off passes --no_resume.
+    "resume": True,
     # Folder the Results tab shows. Set by the last finished run, or by hand.
     "results_dir": "",
     # FCS-names tab. The folder only. The write mode is deliberately NOT
     # remembered: a refresh must never bring the app back pre-armed to apply.
     "fcs_sync_dir": "",
 }
+
+#: Where the form deliberately starts somewhere other than the R default. Used
+#: for a fresh session and by Reset form; a remembered choice still wins.
+FORM_START: dict = {
+    "layout": "gates",
+    # The gate layout's tuned min_dist (rounder islands). The layout switch
+    # swaps 0.1 and 0.25 while the user has not set a value of their own.
+    "min_dist": 0.25,
+}
+
+#: min_dist each layout starts from; see FORM_START and steps.layout_min_dist.
+LAYOUT_MIN_DIST: dict = {"markers": 0.1, "gates": 0.25}
 
 
 def rscript_command() -> list[str]:

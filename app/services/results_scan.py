@@ -8,26 +8,48 @@ them as::
     umap_<pop>_by_subpopulation.<ext>
     umap_<pop>_marker_<M>_ALL.<ext>
     umap_<pop>_marker_<M>_file_<sample>.<ext>
+    umap_<pop>_by_combination.<ext>        (gate layout)
+    umap_<pop>_split_<col>_<level>.<ext>   (--split_by)
+    umap_<pop>_split_<col>_panel.<ext>
+    umap_<pop>_diff_<col>_<level>.<ext>
 
 and then replaces every character outside ``[A-Za-z0-9_.-]`` with ``_``. That
 sanitising means the marker and sample names recovered here are the *sanitised*
 ones — good enough to label and filter by, but not identical to the originals.
 Anything that does not match falls into "other" rather than being dropped, so
 the gallery can never quietly hide a file the run produced.
+
+The split plots are the exception to reading names: ``<col>_<level>`` cannot be
+split back apart when a column name has an underscore, and a long name is
+truncated to 100 characters. So the run writes ``plot_index.json`` (file stem,
+kind, column, level, reference per plot), and when it is there it decides those
+plots' kind, column, level and order. The name rules stay as the fallback for a
+folder without one.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.config import (
+    DATA_EXTENSIONS,
     EXTENSION_PREFERENCE,
     MAX_INLINE_SVG_BYTES,
     PLOT_EXTENSIONS,
     PREVIEW_EXTENSIONS,
 )
+
+PLOT_INDEX = "plot_index.json"
+#: Folders of a run that hold no results: the resume checkpoints and the
+#: app's own run log.
+SKIP_DIRS = {"checkpoints", "_run"}
+#: Index kinds the gallery files by the index; any other kind (marker plots,
+#: the overview plots) is filed by its name as before.
+INDEX_KINDS = ("combination", "split", "split_panel", "diff")
 
 
 @dataclass
@@ -40,6 +62,9 @@ class Plot:
     marker: str = ""
     sample: str = ""
     variants: dict[str, Path] = field(default_factory=dict)
+    #: Position in plot_index.json, which is the order R drew the levels in.
+    #: None when the plot is not in an index.
+    rank: int | None = None
 
     @property
     def preview(self) -> Path | None:
@@ -99,6 +124,15 @@ class Results:
     annot_all: dict[str, Plot] = field(default_factory=dict)
     annot_level: dict[str, dict[str, Plot]] = field(default_factory=dict)
     annotations: list[str] = field(default_factory=list)
+    #: Metadata splits, per column (``Plot.marker`` = column, ``Plot.sample``
+    #: = level, as for annotations): the side-by-side panel, the per-level
+    #: plots and the fold-change maps, each list in the order R drew them.
+    split_panel: dict[str, Plot] = field(default_factory=dict)
+    split_level: dict[str, list[Plot]] = field(default_factory=dict)
+    split_diff: dict[str, list[Plot]] = field(default_factory=dict)
+    split_columns: list[str] = field(default_factory=list)
+    #: CSV/JSON outputs (cells.csv.gz, run_info.json, ...), for download.
+    data_files: list[Path] = field(default_factory=list)
     other: list[Plot] = field(default_factory=list)
     markers: list[str] = field(default_factory=list)
     samples: list[str] = field(default_factory=list)
@@ -115,8 +149,149 @@ class Results:
         return bool(self.formats & set(PREVIEW_EXTENSIONS))
 
 
-def _classify(stem: str) -> tuple[str, str, str, str]:
-    """Map a file stem to ``(section, marker, sample, title)``."""
+def natural_key(value: str) -> list:
+    """Sort key that compares digit runs as numbers ("W5" < "W12" < "W110").
+
+    Same order as natural_order() in src/visualization/umap_gate_layout.R,
+    which is the order R draws split levels in unless told otherwise.
+    """
+    return [("", float(t)) if t.isdigit() else (t.lower(), float("-inf"))
+            for t in re.findall(r"[0-9]+|[^0-9]+", str(value))]
+
+
+def _text(value) -> str:
+    """One index field as text; jsonlite may write a scalar as [x], NA as null."""
+    if isinstance(value, list):
+        value = value[0] if value else None
+    return "" if value is None else str(value)
+
+
+def read_plot_index(directory: str | os.PathLike) -> dict[str, dict]:
+    """``{stem: {kind, column, level, reference, rank}}`` from plot_index.json.
+
+    {} when there is no index or it cannot be read; the gallery then files
+    everything by name. Accepts what jsonlite writes for a data.frame: an array
+    of row objects (NA fields left out, or null), or an object of columns,
+    either of them optionally under a "plots" key.
+    """
+    try:
+        doc = json.loads((Path(directory) / PLOT_INDEX).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if isinstance(doc, dict) and isinstance(doc.get("plots"), (list, dict)):
+        doc = doc["plots"]
+    if isinstance(doc, dict):
+        cols = {k: v for k, v in doc.items() if isinstance(v, list)}
+        n = max((len(v) for v in cols.values()), default=0)
+        rows = [{k: (v[i] if i < len(v) else None) for k, v in cols.items()}
+                for i in range(n)]
+    elif isinstance(doc, list):
+        rows = [r for r in doc if isinstance(r, dict)]
+    else:
+        return {}
+
+    index: dict[str, dict] = {}
+    for rank, row in enumerate(rows):
+        stem = Path(_text(row.get("file"))).name
+        if Path(stem).suffix.lower() in PLOT_EXTENSIONS:
+            stem = Path(stem).stem
+        if not stem or stem in index:
+            continue
+        entry = {k: _text(row.get(k))
+                 for k in ("kind", "column", "level", "reference")}
+        entry["rank"] = rank
+        index[stem] = entry
+    return index
+
+
+def _split_token(stem: str) -> str:
+    """"_split_" or "_diff_" when the name says this is a split plot, else "".
+
+    Whichever of the four family tokens comes first after the population
+    wins, so a marker or annotation plot whose own marker or level happens to
+    contain "_split_" stays with the markers or annotations.
+    """
+    hits = {t: stem.find(t) for t in ("_split_", "_diff_", "_marker_", "_annot_")}
+    hits = {t: i for t, i in hits.items() if i >= 0}
+    if not hits:
+        return ""
+    first = min(hits, key=hits.get)
+    return first if first in ("_split_", "_diff_") else ""
+
+
+def _column_and_level(tail: str, columns: list[str]) -> tuple[str, str]:
+    """Split "<col>_<level>" using the columns known from the folder.
+
+    The longest known column that prefixes the tail wins (so
+    "prior_peptide_vaccination_yes" is not read as column "prior"); without
+    one, the first "_" separates them, which is right for any column name
+    without an underscore.
+    """
+    for column in sorted(columns, key=len, reverse=True):
+        if tail.startswith(column + "_"):
+            return column, tail[len(column) + 1:]
+    column, _, level = tail.partition("_")
+    return column, level
+
+
+def _split_columns(stems: list[str], data_names: list[str]) -> list[str]:
+    """Sanitised split column names the folder itself spells out in full."""
+    columns = set()
+    for stem in stems:
+        if _split_token(stem) == "_split_" and stem.endswith("_panel"):
+            columns.add(stem.split("_split_", 1)[1][: -len("_panel")])
+    for name in data_names:
+        m = re.match(r"^combination_frequencies_(.+)\.csv$", name)
+        if m:
+            columns.add(m.group(1))
+    return sorted(c for c in columns if c)
+
+
+def _classify_indexed(entry: dict) -> tuple[str, str, str, str] | None:
+    """``(section, column, level, title)`` from a plot_index.json entry."""
+    kind, column = entry.get("kind"), entry.get("column") or ""
+    level, reference = entry.get("level") or "", entry.get("reference") or ""
+    if kind == "combination":
+        return "combination", "", "", "Coloured by gate combination"
+    if not column:
+        return None
+    if kind == "split_panel":
+        return "split_panel", column, "", f"{column}: all levels"
+    if kind == "split":
+        return "split_level", column, level, f"{column}: {level}"
+    if kind == "diff":
+        against = f" vs {reference}" if reference else ", change"
+        return "split_diff", column, level, f"{column}: {level}{against}"
+    return None
+
+
+def _classify(stem: str, entry: dict | None = None,
+              split_columns: list[str] | None = None) -> tuple[str, str, str, str]:
+    """Map a file stem to ``(section, marker, sample, title)``.
+
+    ``entry`` is the stem's plot_index.json row, which decides when it names
+    one of INDEX_KINDS. The split and combination names are tested before the
+    older suffix rules: a level called "by_file" must not make a split plot an
+    overview.
+    """
+    if entry and entry.get("kind") in INDEX_KINDS:
+        indexed = _classify_indexed(entry)
+        if indexed:
+            return indexed
+    if stem.endswith("_by_combination"):
+        return "combination", "", "", "Coloured by gate combination"
+    token = _split_token(stem)
+    if token:
+        tail = stem.split(token, 1)[1]
+        if token == "_split_" and tail.endswith("_panel"):
+            column = tail[: -len("_panel")]
+            return "split_panel", column, "", f"{column}: all levels"
+        column, level = _column_and_level(tail, split_columns or [])
+        if token == "_split_":
+            return "split_level", column, level, f"{column}: {level}"
+        return ("split_diff", column, level,
+                f"{column}: {level}, change against the reference")
+
     if stem.endswith("_by_file"):
         return "overview", "", "", "Coloured by source file"
     if stem.endswith("_by_workspace"):
@@ -149,11 +324,20 @@ def _classify(stem: str) -> tuple[str, str, str, str]:
     return "other", "", "", stem
 
 
-def scan(output_dir: str | os.PathLike) -> Results:
-    """Group every plot file in ``output_dir`` for display.
+def _run_files(directory: Path) -> list[Path]:
+    """Every file of a run, in its subfolders too (overview/, splits/<col>/,
+    data/, ...; runs before 2026-10-15 were flat), minus SKIP_DIRS."""
+    found: list[Path] = []
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+        found.extend(Path(root) / f for f in files)
+    return sorted(found, key=lambda p: p.name.lower())
 
-    Non-recursive: the R script writes flat into the output directory.
-    """
+
+def scan(output_dir: str | os.PathLike) -> Results:
+    """Group every plot file of the run in ``output_dir`` for display, and
+    list its data files. Plots are identified by file name wherever they sit:
+    the names are unique within a run."""
     directory = Path(output_dir)
     results = Results(directory=directory)
     if not directory.is_dir():
@@ -164,23 +348,34 @@ def scan(output_dir: str | os.PathLike) -> Results:
     order: list[str] = []
 
     try:
-        entries = sorted(directory.iterdir(), key=lambda p: p.name.lower())
+        entries = _run_files(directory)
     except OSError:
         return results
 
+    plot_files: list[Path] = []
     for path in entries:
         if not path.is_file():
             continue
         ext = path.suffix.lower()
-        if ext not in PLOT_EXTENSIONS:
-            continue
+        if ext in PLOT_EXTENSIONS:
+            plot_files.append(path)
+        elif ext in DATA_EXTENSIONS:
+            results.data_files.append(path)
+
+    index = read_plot_index(directory)
+    columns = _split_columns([p.stem for p in plot_files],
+                             [p.name for p in results.data_files])
+    for path in plot_files:
+        ext = path.suffix.lower()
         results.n_files += 1
         results.formats.add(ext)
         stem = path.stem
         if stem not in plots:
-            section, marker, sample, title = _classify(stem)
+            entry = index.get(stem)
+            section, marker, sample, title = _classify(stem, entry, columns)
             plots[stem] = Plot(
-                key=stem, title=title, section=section, marker=marker, sample=sample
+                key=stem, title=title, section=section, marker=marker, sample=sample,
+                rank=entry["rank"] if entry else None,
             )
             order.append(stem)
         plots[stem].variants[ext] = path
@@ -188,8 +383,14 @@ def scan(output_dir: str | os.PathLike) -> Results:
     for stem in order:
         plot = plots[stem]
         section = plot.section
-        if section == "overview":
+        if section in ("overview", "combination"):
             results.overview.append(plot)
+        elif section == "split_panel":
+            results.split_panel[plot.marker] = plot
+        elif section == "split_level":
+            results.split_level.setdefault(plot.marker, []).append(plot)
+        elif section == "split_diff":
+            results.split_diff.setdefault(plot.marker, []).append(plot)
         elif section == "marker_all":
             results.marker_all[plot.marker] = plot
         elif section == "marker_file":
@@ -208,11 +409,32 @@ def scan(output_dir: str | os.PathLike) -> Results:
         samples.update(per_sample)
     results.samples = sorted(samples)
 
-    # Sample, then workspace, then subpopulation reads more naturally than
-    # alphabetical — it goes from the finest grouping to the coarsest.
+    # Split plots in the order R drew them (the index order, which follows
+    # --level_order); without an index, natural order of the level.
+    def _split_rank(plot: Plot) -> tuple:
+        return (plot.rank is None, plot.rank or 0, natural_key(plot.sample))
+
+    for per_column in (results.split_level, results.split_diff):
+        for plots_ in per_column.values():
+            plots_.sort(key=_split_rank)
+    split_plots = list(results.split_panel.values()) + [
+        p for d in (results.split_level, results.split_diff)
+        for ps in d.values() for p in ps]
+    first_rank: dict[str, tuple] = {}
+    for plot in split_plots:
+        rank = (plot.rank is None, plot.rank or 0)
+        first_rank[plot.marker] = min(first_rank.get(plot.marker, rank), rank)
+    results.split_columns = sorted(first_rank,
+                                   key=lambda c: (first_rank[c], natural_key(c)))
+
+    # The gate combinations first: in the gate layout that is the figure the
+    # run is for. Then sample, workspace, subpopulation, which reads more
+    # naturally than alphabetical: from the finest grouping to the coarsest.
     _overview_order = ("_by_file", "_by_workspace", "_by_subpopulation")
 
     def _overview_rank(plot: Plot) -> int:
+        if plot.section == "combination":
+            return -1
         for i, suffix in enumerate(_overview_order):
             if plot.key.endswith(suffix):
                 return i
