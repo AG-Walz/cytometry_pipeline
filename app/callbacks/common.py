@@ -215,6 +215,12 @@ def validate_run(form: dict, inspect: dict) -> list[str]:
         problems.append("No FCS directory selected (step 1).")
     elif not Path(fcs_dir).is_dir():
         problems.append(f"FCS directory does not exist: {fcs_dir}")
+    # Same rule as validate_inspect. The field's placeholder reads "1", so a
+    # cleared field looks set, and without this the run went out with
+    # --group '' and R rejected it in every workspace.
+    if not str(form.get("group") or "").strip():
+        problems.append("No sample group set (step 1, Advanced): enter an "
+                        "index such as 1, or a name.")
 
     picked = {w: p for w, p in (form.get("population_map") or {}).items() if p}
     pop_map = population_map_of(form)
