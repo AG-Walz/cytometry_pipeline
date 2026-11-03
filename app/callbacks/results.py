@@ -13,8 +13,9 @@ from pathlib import Path
 from urllib.parse import quote
 
 import dash_mantine_components as dmc
-from dash import ALL, Input, Output, callback, ctx, html, no_update
+from dash import ALL, Input, Output, State, callback, ctx, html, no_update
 
+from app.callbacks import common
 from app.services import results_scan, serving
 
 #: Cards rendered eagerly per marker section before the browser would suffer.
@@ -178,8 +179,17 @@ def _settings_section(results: results_scan.Results) -> list:
         dmc.Group(
             [dmc.Anchor(p.name, href=f"/plot/download?path={quote(str(p))}",
                         size="xs", target="_blank")
-             for p in results.settings_files],
+             for p in results.settings_files]
+            + ([dmc.Tooltip(
+                dmc.Button("Use these settings", id="btn-load-settings",
+                           size="compact-xs", variant="light"),
+                label=("Puts this run's settings into the form (layout, "
+                       "normalisation, UMAP and plot settings). The workspace, "
+                       "population and markers stay as they are."),
+                multiline=True, w=280, withArrow=True)]
+               if (s.get("options") or {}) else []),
             gap="md"),
+        html.Div(id="load-settings-note"),
         dmc.Space(h=16),
     ]
     return children
@@ -206,7 +216,38 @@ def _size(path: Path) -> int:
         return 0
 
 
+def _load_settings_outputs():
+    return [Output(cid, prop, allow_duplicate=True)
+            for name, cid, prop in common.FORM_FIELDS
+            if name in _LOADABLE]
+
+
+#: Form keys "Use these settings" can set (common.form_from_settings).
+_LOADABLE = sorted({*common._SETTINGS_TO_FORM.values(), "output_formats",
+                    "resume", "umap_subsample", "random_fit_cells"})
+
+
 def register_callbacks() -> None:
+    @callback(
+        *_load_settings_outputs(),
+        Output("load-settings-note", "children"),
+        Input("btn-load-settings", "n_clicks"),
+        State({"comp": "fb-input", "bid": "results"}, "value"),
+        prevent_initial_call=True,
+    )
+    def load_settings(clicks, directory):
+        """Put a finished run's recorded settings back into the form."""
+        names = [n for n, _, _ in common.FORM_FIELDS if n in _LOADABLE]
+        if not clicks or not directory:
+            return [no_update] * (len(names) + 1)
+        info = results_scan.scan(directory).settings
+        values = common.form_from_settings(info.get("options") or {})
+        note = dmc.Text(
+            f"Loaded {len(values)} setting(s) from {Path(directory).name} "
+            "into the form: check step 3, then run.", size="xs", c="blue",
+            mt=4)
+        return [values.get(n, no_update) for n in names] + [note]
+
     @callback(
         Output("gallery", "children"),
         Output("split-header", "children"),
@@ -291,6 +332,17 @@ def register_callbacks() -> None:
             )
 
         sections: list = []
+
+        # A map that failed is said above the plots, where it is seen.
+        if results.embedding.get("suspect"):
+            reasons = results.embedding.get("reasons") or []
+            if isinstance(reasons, str):
+                reasons = [reasons]
+            sections.append(dmc.Alert(
+                dmc.Stack([dmc.Text(r, size="sm") for r in reasons], gap=4),
+                title="This embedding looks wrong",
+                color="orange", variant="light"))
+            sections.append(dmc.Space(h=10))
 
         if not results.has_preview:
             sections.append(

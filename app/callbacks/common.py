@@ -56,6 +56,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("supercell_max", "in-sc-max", "value"),
     ("normalize", "in-normalize", "value"),
     ("normalize_umap", "in-colour-scale", "value"),
+    ("clip_quantile", "in-clip", "value"),
     ("gate_separation", "in-gate-separation", "value"),
     ("downsample", "in-downsample", "value"),
     ("n_cores", "in-cores", "value"),
@@ -248,6 +249,152 @@ def workspace_problem(wsp: str) -> str:
     return f"Workspace path does not exist: {wsp}"
 
 
+#: Settings shown in "Changed from the defaults" (step 4), with how they read.
+#: Paths, population and markers are the run's inputs, not settings, and are
+#: left out. Gate- and fit-set settings only count in their own layout.
+SETTING_LABELS = (
+    ("layout", "Layout"),
+    ("normalize", "Normalisation"),
+    ("normalize_umap", "Colour scale"),
+    ("clip_quantile", "Clip extremes"),
+    ("gate_separation", "Gate separation"),
+    ("downsample", "Downsample"),
+    ("n_neighbors", "n_neighbors"),
+    ("min_dist", "min_dist"),
+    ("metric", "Metric"),
+    ("seed", "Seed"),
+    ("n_cores", "CPU cores"),
+    ("point_size", "Point size"),
+    ("point_alpha", "Point alpha"),
+    ("plot_width", "Plot width"),
+    ("plot_height", "Plot height"),
+    ("output_formats", "Formats"),
+    ("subpop_mode", "Subpopulations"),
+    ("match_mode", "FCS matching"),
+    ("group", "Sample group"),
+    ("allow_missing_samples", "Missing FCS allowed"),
+    ("resume", "Reuse saved steps"),
+)
+_MARKERS_ONLY = {"normalize", "gate_separation", "downsample"}
+
+
+def _same(a, b) -> bool:
+    """Equal as the user sees it: 15 == 15.0, ["png"] == ("png",), "" == None."""
+    if a in ("", None) and b in ("", None):
+        return True
+    if isinstance(a, (list, tuple)) or isinstance(b, (list, tuple)):
+        return sorted(map(str, a or [])) == sorted(map(str, b or []))
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return str(a) == str(b)
+
+
+def changed_settings(form: dict) -> list[tuple[str, object, object]]:
+    """(label, value, default) for every setting that differs from its default.
+
+    Remembered sessions carry values over from earlier runs; a point size of
+    0.1 or n_neighbors of 80 chosen once kept coming back unnoticed (J445,
+    2026-11-03). Saying them out loud next to the Run button is the fix.
+    """
+    layout = form.get("layout") or config.FORM_START["layout"]
+    defaults = {**config.DEFAULTS, **config.FORM_START,
+                "min_dist": config.LAYOUT_MIN_DIST.get(layout, 0.1)}
+    keys = list(SETTING_LABELS)
+    if layout == "gates":
+        keys += list(GATE_PARAMS)
+    else:
+        fit = form.get("fit_subset") or config.DEFAULTS["fit_subset"]
+        keys += [kv for kv in FIT_PARAMS
+                 if kv[0] == "fit_subset"
+                 or (fit == "supercell") == kv[0].startswith("supercell")]
+    out = []
+    for key, label in keys:
+        if layout == "gates" and key in _MARKERS_ONLY:
+            continue
+        value = form.get(key)
+        if key not in defaults or _same(value, defaults[key]):
+            continue
+        out.append((label, value, defaults[key]))
+    return out
+
+
+#: Cells per sample in a quick preview (markers layout), and per gate
+#: combination per sample (gates layout).
+PREVIEW_CELLS_PER_SAMPLE = 1000
+PREVIEW_CELLS_PER_COMBINATION = 200
+
+
+def preview_params(params: dict) -> dict:
+    """The same run, small: a few minutes instead of an hour.
+
+    Every setting is kept, so the preview shows what the full run will look
+    like; only the number of cells drops (the fit set follows the usual rule:
+    up to 300,000 random cells, so 354 samples x 1,000 cells still fit fast),
+    plots are PNG only, and it goes to "<output>_preview" so it never
+    overwrites or resumes the full run.
+    """
+    p = dict(params)
+    p["output_dir"] = str(params["output_dir"]).rstrip("/") + "_preview"
+    p["downsample"] = PREVIEW_CELLS_PER_SAMPLE
+    p["fit_subset"] = "random"
+    p["cells_per_combination"] = PREVIEW_CELLS_PER_COMBINATION
+    p["output_formats"] = ["png"]
+    return p
+
+
+#: A run's settings record (_run/settings.json "options", R option names) ->
+#: form keys. Only settings: the workspace, FCS folder, population and markers
+#: are the run's inputs and stay as they are in the form.
+_SETTINGS_TO_FORM = {
+    "layout": "layout", "normalize_data": "normalize",
+    "normalize_umap": "normalize_umap", "clip_quantile": "clip_quantile",
+    "gate_separation": "gate_separation", "downsample": "downsample",
+    "n_neighbors": "n_neighbors", "min_dist": "min_dist", "metric": "metric",
+    "seed": "seed", "n_cores": "n_cores", "point_size": "point_size",
+    "point_alpha": "point_alpha", "plot_width": "plot_width",
+    "plot_height": "plot_height", "subpop_mode": "subpop_mode",
+    "match_mode": "match_mode", "group": "group",
+    "allow_missing_samples": "allow_missing_samples",
+    "marker_aliases": "marker_aliases", "fit_subset": "fit_subset",
+    "supercell_gamma": "supercell_gamma", "supercell_k_knn": "supercell_k_knn",
+    "supercell_max": "supercell_max", "gate_gap": "gate_gap",
+    "gate_tier_ratio": "gate_tier_ratio", "gate_softness": "gate_softness",
+    "supervise": "supervise", "cells_per_combination": "cells_per_combination",
+    "min_combination_cells": "min_combination_cells",
+}
+
+
+def form_from_settings(options: dict) -> dict:
+    """Form values from a run's recorded options (settings.json "options").
+
+    Every option R saw is in the record, defaults included, so this sets the
+    form to exactly that run -- not to that run's defaults read with today's.
+    """
+    out: dict = {}
+    for opt, key in _SETTINGS_TO_FORM.items():
+        if opt in options:
+            out[key] = options[opt]
+    if "clip_quantile" in out:
+        out["clip_quantile"] = str(out["clip_quantile"] or 0)
+    if "normalize" in options and options.get("normalize"):
+        out["normalize"] = options["normalize"]          # deprecated alias
+    if "output_formats" in options:
+        fm = options["output_formats"] or ""
+        out["output_formats"] = [f.strip() for f in str(fm).split(",") if f.strip()]
+    if "no_resume" in options:
+        out["resume"] = not bool(options["no_resume"])
+    if "umap_subsample" in options:
+        sub = options["umap_subsample"]
+        if (out.get("layout") or options.get("layout")) == "gates":
+            out["umap_subsample"] = 0 if sub in (None, -1) else sub
+        else:
+            out["random_fit_cells"] = (config.DEFAULTS["random_fit_cells"]
+                                       if sub in (None, -1) else sub)
+    return {k: v for k, v in out.items()
+            if any(name == k for name, _, _ in FORM_FIELDS)}
+
+
 def form_states() -> list[State]:
     return [State(cid, prop) for _, cid, prop in FORM_FIELDS]
 
@@ -364,6 +511,7 @@ def run_params(form: dict, populations: list[str],
         **{key: form.get(key) for key, _ in FIT_PARAMS},
         "normalize": form.get("normalize"),
         "normalize_umap": form.get("normalize_umap"),
+        "clip_quantile": form.get("clip_quantile"),
         "gate_separation": form.get("gate_separation"),
         "downsample": form.get("downsample"),
         "n_cores": form.get("n_cores"),

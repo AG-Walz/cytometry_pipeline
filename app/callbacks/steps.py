@@ -9,6 +9,7 @@ import dash_mantine_components as dmc
 from dash import ALL, Input, Output, State, callback, ctx, dcc, html, no_update
 
 from app import config
+from app.components.hint import hint as hint_text
 from app.callbacks import common
 from app.components import health
 from app.services import fs_tree, gating, results_scan, rscript, session_state
@@ -127,6 +128,36 @@ def register_callbacks() -> None:
         return dmc.Group(badges, gap="xs")
 
     @callback(
+        Output("changed-settings", "children"),
+        *common.form_inputs(),
+    )
+    def changed_settings_box(*values):
+        """Step 4: every setting that differs from its default, in one place."""
+        changed = common.changed_settings(common.as_dict(values))
+        if not changed:
+            return dmc.Text("All settings at their defaults.", size="xs",
+                            c="dimmed")
+
+        def show(v):
+            if v in (None, ""):
+                return "auto"
+            if isinstance(v, (list, tuple)):
+                return ", ".join(map(str, v)) or "none"
+            return str(v)
+
+        return dmc.Stack([
+            dmc.Text("Changed from the defaults", size="sm", fw=500),
+            dmc.Group([
+                dmc.Tooltip(
+                    dmc.Badge(f"{label}: {show(v)}", color="blue",
+                              variant="light", size="sm", tt="none"),
+                    label=f"Default: {show(d)}", withArrow=True)
+                for label, v, d in changed], gap="xs"),
+            dmc.Text("Reset form (top right) puts them all back.", size="xs",
+                     c="dimmed"),
+        ], gap=4)
+
+    @callback(
         Output("params-badge", "children"),
         Input("in-metric", "value"),
         Input("in-seed", "value"),
@@ -174,9 +205,9 @@ def register_callbacks() -> None:
         """
         gates = layout == "gates"
         hint = dmc.Text(
-            "Normalisation and downsampling do not apply here: the gate "
-            "layout builds its features from the gates and samples cells per "
-            "combination instead.",
+            hint_text("Normalisation and downsampling do not apply here.",
+                      "The gate layout builds its features from the gates "
+                      "and samples cells per combination instead."),
             size="xs", c="dimmed", mb=8,
         ) if gates else None
         hidden = {"display": "none"}
@@ -1145,6 +1176,7 @@ def register_callbacks() -> None:
         Output("cmd-preview", "children"),
         Output("run-validation", "children"),
         Output("btn-run", "disabled"),
+        Output("btn-preview", "disabled"),
         *common.form_inputs(),
         Input("store-inspect", "data"),
         Input("poll", "n_intervals"),
@@ -1185,7 +1217,8 @@ def register_callbacks() -> None:
 
         from app.services.runner import RUNNER
 
-        return command, feedback, bool(problems) or RUNNER.busy
+        blocked = bool(problems) or RUNNER.busy
+        return command, feedback, blocked, blocked
 
     # -- theme and reset ---------------------------------------------------
 
@@ -1202,6 +1235,7 @@ def register_callbacks() -> None:
         Output("sw-allow-missing", "checked"),
         Output("in-normalize", "value"),
         Output("in-colour-scale", "value"),
+        Output("in-clip", "value"),
         Output("in-gate-separation", "value"),
         Output("in-downsample", "value"),
         Output("in-neighbors", "value"),
@@ -1240,6 +1274,7 @@ def register_callbacks() -> None:
             d["allow_missing_samples"],
             d["normalize"],
             d["normalize_umap"],
+            d["clip_quantile"],
             d["gate_separation"],
             d["downsample"],
             d["n_neighbors"],

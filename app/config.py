@@ -66,6 +66,14 @@ GATE_SEPARATION_MARKS = (
     (2.5, "Gate islands"),
 )
 
+#: Clip extreme values (--clip_quantile): value -> label.
+CLIP_CHOICES = (
+    ("0", "Off"),
+    ("0.001", "0.1% on each side"),
+    ("0.005", "0.5% on each side"),
+    ("0.01", "1% on each side"),
+)
+
 #: Marker colour scales, value -> label. "same" is R's default (--normalize_umap).
 COLOUR_SCALES = (
     ("same", "Same as the embedding"),
@@ -146,6 +154,8 @@ DEFAULTS: dict = {
     # Scale of the marker colours: "same" follows the embedding's
     # normalisation (R's default), or one of NORMALIZE_METHODS to override.
     "normalize_umap": "same",
+    # --clip_quantile, as text for the Select: "0" = off.
+    "clip_quantile": "0",
     # Markers layout: gate columns' weight (--gate_separation). 0 = off.
     "gate_separation": 0.0,
     "downsample": 0,
@@ -159,8 +169,9 @@ DEFAULTS: dict = {
     "min_dist": 0.1,
     "metric": "euclidean",
     "seed": 42,
-    "point_size": 0.4,
-    "point_alpha": 0.6,
+    # None = automatic: R sizes the points for the number of cells drawn.
+    "point_size": None,
+    "point_alpha": None,
     "plot_width": 10.0,
     "plot_height": 8.0,
     "output_formats": ["png"],
@@ -189,9 +200,11 @@ FORM_START: dict = {
     "min_dist": 0.1,
 }
 
-#: Bumped when FORM_START changes in a way a remembered session should follow.
+#: Bumped when a default changes in a way a remembered session should follow.
 #: 2: the start moved from the gate layout to marker values (2026-11-03).
-FORM_START_VERSION = 2
+#: 3: point size / alpha became automatic; a remembered 0.4 / 0.6 was the old
+#:    default, which the command already omitted, i.e. it already meant "auto".
+FORM_START_VERSION = 3
 
 #: min_dist each layout starts from; see FORM_START and steps.layout_min_dist.
 LAYOUT_MIN_DIST: dict = {"markers": 0.1, "gates": 0.25}

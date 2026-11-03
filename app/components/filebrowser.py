@@ -17,6 +17,7 @@ from pathlib import Path
 
 import dash_mantine_components as dmc
 from dash import (
+
     MATCH,
     Input,
     Output,
@@ -29,6 +30,7 @@ from dash import (
     no_update,
 )
 
+from app.components.hint import hint
 from app.services import fs_tree
 
 
@@ -68,8 +70,7 @@ def browser_field(
                 [
                     dmc.TextInput(
                         id=_id("fb-input", bid),
-                        label=label,
-                        description=description,
+                        label=hint(label, description),
                         placeholder=placeholder,
                         value=value,
                         style={"flex": 1},

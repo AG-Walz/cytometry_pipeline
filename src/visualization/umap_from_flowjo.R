@@ -849,6 +849,49 @@ normalize_columns <- function(m, method) {
   m
 }
 
+# Clip each marker to its [q, 1 - q] quantiles over the pooled gated cells.
+# A handful of extreme values (J445: CD4 down to -400 on a 0-256 scale) pull
+# cells far from the map, stretch its axes and squeeze the colour scale; at
+# q = 0.001 the 0.1% most extreme cells on each side are set to the 0.1% /
+# 99.9% value. 0 leaves the values alone.
+clip_columns <- function(m, q) {
+  q <- as.numeric(q)
+  if (!length(q) || !is.finite(q) || q <= 0) return(m)
+  for (j in seq_len(ncol(m))) {
+    lim <- stats::quantile(m[, j], c(q, 1 - q), na.rm = TRUE, names = FALSE)
+    m[, j] <- pmin(pmax(m[, j], lim[1]), lim[2])
+  }
+  m
+}
+
+# Supercells average about `gamma` similar cells of a sample. A gated
+# population that is rare (J445: CD4/IL2, 326 of 2.86M cells) is then merged
+# into supercells of its common neighbours and gets no region of its own in
+# the fit; its cells are projected onto the continuum. Gate separation above 0
+# keeps supercells within a gate (they are grouped on the gate columns too),
+# so the warning is only for gate_separation 0.
+#
+# @return The warning text, or NULL when there is nothing to warn about.
+supercell_rare_warning <- function(labels, gamma, gate_separation = 0,
+                                   rare_share = 0.01) {
+  if (isTRUE(gate_separation > 0) || !length(labels)) return(NULL)
+  labels <- as.character(labels)
+  labels <- labels[!is.na(labels) & !labels %in% c("(none)", "(multiple)")]
+  if (!length(labels)) return(NULL)
+  n <- sort(table(labels))
+  rare <- n[n / sum(n) < rare_share]
+  if (!length(rare)) return(NULL)
+  show <- utils::head(rare, 3)
+  paste0(
+    length(rare), " gated population(s) are rare (under ", 100 * rare_share,
+    "% of gated cells, e.g. ",
+    paste(sprintf("%s: %d", names(show), as.integer(show)), collapse = ", "),
+    "). Supercells of about ", round(gamma), " cells average them into their ",
+    "common neighbours, so they get no region of their own. To keep them: fit ",
+    "on random cells, or set --gate_separation above 0 (the supercells then ",
+    "stay within a gate).")
+}
+
 # The marker colour scale a run uses. "same" (the default) follows the scale
 # the embedding was computed on, so the colours show exactly the values the
 # map was built from: FlowJo values for a plain run, z-scores for a z-scored
@@ -1156,6 +1199,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
                              subpop_levels = TRUE,
                              subpop_levels_select = NULL,
                              downsample = 0L, seed = 42L,
+                             clip_quantile = 0,
                              list_populations = FALSE,
                              allow_missing_samples = FALSE,
                              population_map = NULL,
@@ -2277,6 +2321,14 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # colour by any scale exactly. The same object as combined_matrix unless the
   # embedding is normalised.
   raw_matrix <- combined_matrix
+  if (isTRUE(clip_quantile > 0)) {
+    cat(sprintf(paste0("Clipping each marker to its %.2f%%-%.2f%% range ",
+                       "(--clip_quantile %g) for the embedding and the colours; ",
+                       "cells.csv.gz keeps the unclipped values.\n"),
+                100 * clip_quantile, 100 * (1 - clip_quantile), clip_quantile))
+    combined_matrix <- clip_columns(combined_matrix, clip_quantile)
+    colour_matrix <- combined_matrix
+  }
   if (normalize_data != "none") {
     cat(sprintf(
       "Normalising %d markers for the EMBEDDING (method=%s) from the concatenated gated cells...\n",
@@ -2385,7 +2437,7 @@ write_gate_run_info <- function(path, parameters, seed, embed_threads,
                                 tiers = NULL, decisions = NULL, filled = NULL,
                                 n_cells, n_fit, n_samples,
                                 samples_left_out, combinations,
-                                supercells = NULL) {
+                                supercells = NULL, embedding = NULL) {
   if (!requireNamespace("jsonlite", quietly = TRUE)) {
     message("run_info.json not written: install jsonlite.")
     return(invisible(NULL))
@@ -2430,7 +2482,9 @@ write_gate_run_info <- function(path, parameters, seed, embed_threads,
     cells = n_cells, fit_cells = n_fit, samples = n_samples,
     samples_left_out = I(samples_left_out),
     combinations = as.list(combinations),
-    supercells = supercells)
+    supercells = supercells,
+    # embedding_check(): whether the map is fit to look at, and why not.
+    embedding = embedding)
   # The full settings (every option, inputs, host) live in the run's settings
   # record, written when the run started; see R_shared/run_record.R.
   settings <- file.path(dirname(path), "_run", "settings.json")
@@ -2537,7 +2591,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              pair_by = NULL,
                              umap_model = NULL,
                              nn_method = NULL,
-                             gate_separation = 0) {
+                             gate_separation = 0,
+                             clip_quantile = 0) {
   require(ggplot2)
   if (!requireNamespace("viridis", quietly = TRUE)) {
     stop("Package 'viridis' is required for marker colour scales.")
@@ -2607,6 +2662,12 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     warning("--fit_subset supercell is ignored in the gates layout, which fits ",
             "on a set balanced across gate combinations.", call. = FALSE)
     fit_subset <- "random"
+  }
+  clip_quantile <- suppressWarnings(as.numeric(clip_quantile))
+  if (!length(clip_quantile) || is.na(clip_quantile) || clip_quantile < 0 ||
+      clip_quantile >= 0.5) {
+    stop("--clip_quantile must be at least 0 and below 0.5 (e.g. 0.001).",
+         call. = FALSE)
   }
   gate_separation <- suppressWarnings(as.numeric(gate_separation))
   if (!length(gate_separation) || is.na(gate_separation) || gate_separation < 0) {
@@ -2761,6 +2822,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     subpop_levels = subpop_levels,
     subpop_levels_select = subpop_levels_select,
     downsample = downsample, seed = seed,
+    clip_quantile = clip_quantile,
     list_populations = list_populations,
     allow_missing_samples = allow_missing_samples,
     population_map = population_map, match_mode = match_mode,
@@ -3026,6 +3088,9 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                 format(round(difftime(Sys.time(), sc_started), 1))))
     sc_fit$seconds <- as.numeric(difftime(Sys.time(), sc_started, units = "secs"))
     sc_fit$gamma_used <- gamma_used
+    rare_note <- supercell_rare_warning(combined_subpop, gamma_used,
+                                        gate_separation)
+    if (!is.null(rare_note)) cat("WARNING: ", rare_note, "\n", sep = "")
     # Saved at once: an hour of a cohort run goes into these, and nothing after
     # this point (the embedding, the plots) may cost them.
     make_outdir(output_dir)
@@ -3157,6 +3222,11 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   }
   stopifnot(nrow(umap_coords) == nrow(combined_matrix))
   rm(embed_matrix)
+  emb_check <- embedding_check(umap_coords)
+  if (isTRUE(emb_check$suspect)) {
+    cat("WARNING: this embedding looks wrong. ",
+        paste(emb_check$reasons, collapse = " "), "\n", sep = "")
+  }
   # The random fit set (--umap_subsample) goes through run_dimred(), which
   # has no hook to save the model early; it comes back attached to the
   # coordinates and is saved now. Any model already saved is not written twice.
@@ -3291,12 +3361,14 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
         normalize_umap = ext$normalize_umap,
         # The scale of the value_<marker> columns in cells.csv.gz.
         values_scale = saved_values$scale,
-        gate_separation = gate_separation),
+        gate_separation = gate_separation,
+        clip_quantile = clip_quantile),
       seed = seed, embed_threads = embed_cores, sigma = sigma,
       gate_markers = gate_markers, extra_markers = extra_markers,
       tiers = gl$tiers, decisions = gl$decisions, filled = gl$filled,
       n_cells = nrow(umap_df), n_fit = length(fit_idx),
       n_samples = length(sample_labels),
+      embedding = emb_check,
       samples_left_out = names(ext$sample_keep)[!ext$sample_keep],
       combinations = sort(tapply(gl$weight, gl$combination, sum),
                           decreasing = TRUE))
@@ -3362,7 +3434,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
         normalize_umap = ext$normalize_umap,
         # The scale of the value_<marker> columns in cells.csv.gz.
         values_scale = saved_values$scale,
-        gate_separation = gate_separation),
+        gate_separation = gate_separation,
+        clip_quantile = clip_quantile),
       seed = seed, embed_threads = embed_cores,
       gate_markers = use_markers,
       n_cells = nrow(umap_df),
@@ -3370,6 +3443,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
               else if (umap_subsample > 0) min(umap_subsample, nrow(umap_df))
               else nrow(umap_df),
       n_samples = length(sample_labels),
+      embedding = emb_check,
       samples_left_out = names(ext$sample_keep)[!ext$sample_keep],
       combinations = sort(table(combined_subpop), decreasing = TRUE),
       supercells = if (is.null(sc_fit)) NULL else list(
@@ -3400,8 +3474,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     colour_matrix = ext$colour_matrix,
     subpop_by_level = if (gates_layout) list() else ext$subpop_by_level %||% list(),
     normalize = ext$normalize_data, normalize_umap = ext$normalize_umap,
-    point_size = point_size %||% 0.4,
-    point_alpha = point_alpha %||% 0.6, plot_width = plot_width,
+    point_size = point_size, point_alpha = point_alpha, plot_width = plot_width,
     plot_height = plot_height, output_formats = output_formats)
 
   gate_index <- NULL
@@ -3470,7 +3543,7 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
                                     colour_matrix = NULL,
                                     normalize_umap = NULL,
                                     subpop_by_level = list(),
-                                    point_size = 0.4, point_alpha = 0.6,
+                                    point_size = NULL, point_alpha = NULL,
                                     plot_width = 10, plot_height = 8,
                                     output_formats = list(pdf = FALSE,
                                                           png = FALSE,
@@ -3503,8 +3576,23 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
 
   # --- 7. Plotting. ----------------------------------------------------------
   make_outdir(output_dir)
-  pt_size  <- point_size
-  pt_alpha <- point_alpha
+  # Point size and alpha: given, or chosen for the number of cells drawn
+  # (auto_point_size() / auto_point_alpha() in umap_style.R, the rule the
+  # styled plots already use). A fixed 0.4 was right for a hundred thousand
+  # cells and a solid smear at three million; a fixed small size left a small
+  # sample's plot nearly empty. Per-sample plots are sized for their own count.
+  .auto_size  <- if (exists("auto_point_size", mode = "function")) auto_point_size
+                 else function(n) 0.4
+  .auto_alpha <- if (exists("auto_point_alpha", mode = "function")) auto_point_alpha
+                 else function(n) 0.6
+  auto_size  <- is.null(point_size)
+  auto_alpha <- is.null(point_alpha)
+  pt_size  <- if (auto_size) .auto_size(nrow(umap_df)) else point_size
+  pt_alpha <- if (auto_alpha) .auto_alpha(nrow(umap_df)) else point_alpha
+  cat(sprintf("Points: size %.2f%s, alpha %.2f%s for %s cells.\n",
+              pt_size, if (auto_size) " (auto)" else "",
+              pt_alpha, if (auto_alpha) " (auto)" else "",
+              format(nrow(umap_df), big.mark = ",")))
 
   # Capped so a deep gate path cannot crowd out the sample tag that follows it
   # in the per-file plot names. A full boolean gate name runs past 60 characters
@@ -3896,7 +3984,8 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
       df_f <- df_f[draw_order_by_value(df_f$expr), , drop = FALSE]
 
       p_f <- ggplot(df_f, aes(x = UMAP1, y = UMAP2, color = expr)) +
-        geom_point(size = pt_size, alpha = pt_alpha) +
+        geom_point(size = if (auto_size) .auto_size(length(rows)) else pt_size,
+                   alpha = if (auto_alpha) .auto_alpha(length(rows)) else pt_alpha) +
         viridis::scale_color_viridis(name = paste0(marker, norm_tag),
                                      limits = marker_limits,
                                      oob = scales::squish) +
@@ -3989,6 +4078,10 @@ replot_from_saved <- function(run_dir, output_dir = run_dir, n_cores = 1L,
      else embed_scale)
   target <- if (is.null(normalize_umap)) par$normalize_umap %||% embed_scale
             else resolve_colour_scale(normalize_umap, embed_scale)
+  # The run's clipping (--clip_quantile) applied to the unclipped saved values.
+  if (identical(values_scale, "none") && isTRUE(par$clip_quantile > 0)) {
+    values <- clip_columns(values, par$clip_quantile)
+  }
   coloured <- colour_values_for(values, values_scale, target)
   colour_matrix <- coloured$matrix
   normalize_umap <- coloured$scale
@@ -4022,7 +4115,7 @@ replot_from_saved <- function(run_dir, output_dir = run_dir, n_cores = 1L,
     subpop_mode_tag = par$subpop_mode %||% "", n_cores = n_cores,
     colour_matrix = colour_matrix, subpop_by_level = list(),
     normalize = "none", normalize_umap = normalize_umap,
-    point_size = point_size %||% 0.4, point_alpha = point_alpha %||% 0.6,
+    point_size = point_size, point_alpha = point_alpha,
     plot_width = plot_width, plot_height = plot_height,
     output_formats = output_formats)
 

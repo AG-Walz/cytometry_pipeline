@@ -1271,6 +1271,26 @@ v <- c(3, NA, -1, 10, 0)
 eq("marker values: NA first, then low to high (high on top)",
    v[draw_order_by_value(v)], c(NA, -1, 0, 3, 10))
 
+# --- clipping -----------------------------------------------------------------
+cat("\n-- clipping ---------------------------------------------------------\n")
+cm <- cbind(A = c(-400, 1:998, 9000), B = rep(5, 1000))
+cl <- clip_columns(cm, 0.001)
+ok("q = 0 leaves the values alone", identical(clip_columns(cm, 0), cm))
+ok("the extremes are pulled to the cut-offs, the rest is untouched",
+   min(cl[, "A"]) > -400 && max(cl[, "A"]) < 9000 &&
+     identical(cl[2:999, "A"], cm[2:999, "A"]))
+ok("a constant marker stays constant", all(cl[, "B"] == 5))
+
+# --- supercells and rare gates -------------------------------------------------
+cat("\n-- supercells and rare gates ----------------------------------------\n")
+labs <- c(rep("CD4", 9000), rep("CD8", 950), rep("CD4/IL2", 50), rep("(none)", 500))
+w <- supercell_rare_warning(labs, gamma = 29)
+ok("rare gated populations are named", is.character(w) && grepl("CD4/IL2: 50", w))
+ok("...not with gate separation above 0", is.null(supercell_rare_warning(labs, 29, 0.75)))
+ok("...not when no gate is rare", is.null(supercell_rare_warning(c(rep("a", 50), rep("b", 50)), 29)))
+ok("catch-alls do not count as gates",
+   is.null(supercell_rare_warning(c(rep("a", 500), rep("(none)", 2)), 29)))
+
 # --- gate separation ----------------------------------------------------------
 cat("\n-- gate separation --------------------------------------------------\n")
 m <- cbind(A = c(0, 2, 4, 6), B = c(10, 30, 50, 70))   # MADs 2.97 and 29.7

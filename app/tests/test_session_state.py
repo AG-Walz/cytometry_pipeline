@@ -41,6 +41,18 @@ class FormStart(unittest.TestCase):
         session_state.save({"layout": "gates", "min_dist": 0.25})
         self.assertEqual(session_state.load()["layout"], "gates")
 
+    def test_old_point_defaults_become_automatic(self):
+        self.write({"layout": "markers", "form_start_version": 2,
+                    "point_size": 0.4, "point_alpha": 0.6})
+        state = session_state.load()
+        self.assertIsNone(state["point_size"])
+        self.assertIsNone(state["point_alpha"])
+        self.assertEqual(state["layout"], "markers")   # v2 choice kept
+
+    def test_a_chosen_point_size_is_kept(self):
+        self.write({"layout": "markers", "form_start_version": 2, "point_size": 0.1})
+        self.assertEqual(session_state.load()["point_size"], 0.1)
+
     def test_gates_is_not_labelled_recommended(self):
         labels = dict(config.LAYOUTS)
         self.assertNotIn("recommend", labels["gates"].lower())

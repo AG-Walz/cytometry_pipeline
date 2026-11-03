@@ -43,5 +43,21 @@ class SettingsRecord(unittest.TestCase):
         self.assertTrue(results._data_section(results_scan.scan(self.run)))
 
 
+class EmbeddingCheck(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.run = Path(self.tmp.name)
+
+    def test_suspect_embedding_is_read(self):
+        (self.run / "run_info.json").write_text(json.dumps(
+            {"embedding": {"suspect": True, "reasons": ["The map is 550 units wide"]}}))
+        r = results_scan.scan(self.run)
+        self.assertTrue(r.embedding["suspect"])
+
+    def test_no_run_info_means_no_verdict(self):
+        self.assertEqual(results_scan.scan(self.run).embedding, {})
+
+
 if __name__ == "__main__":
     unittest.main()

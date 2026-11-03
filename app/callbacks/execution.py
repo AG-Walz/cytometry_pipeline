@@ -417,6 +417,36 @@ def register_callbacks() -> None:
         return None, params["output_dir"]
 
     @callback(
+        Output("run-feedback", "children", allow_duplicate=True),
+        Output({"comp": "fb-input", "bid": "results"}, "value",
+               allow_duplicate=True),
+        Input("btn-preview", "n_clicks"),
+        *common.form_states(),
+        State("store-inspect", "data"),
+        prevent_initial_call=True,
+    )
+    def start_preview(_clicks, *values):
+        """Quick preview: the same settings on ~1,000 cells per sample."""
+        form = common.as_dict(values)
+        inspect = values[len(common.FORM_FIELDS)] or {}
+        populations = inspect.get("populations") or []
+        if common.validate_run(form, inspect) or RUNNER.busy:
+            return no_update, no_update
+        params = common.preview_params(
+            common.run_params(form, populations, inspect))
+        session_state.save(common.session_snapshot(form, populations))
+        ok, message = RUNNER.start_detached(
+            rscript.run_argv(params), cwd=str(config.REPO_ROOT),
+            output_dir=params["output_dir"], kind="run",
+            meta={"output_dir": params["output_dir"], "preview": True},
+        )
+        if not ok:
+            return _alert(f"Could not start the preview: {message}"), no_update
+        return _alert(f"Preview running into {params['output_dir']} "
+                      f"(about {common.PREVIEW_CELLS_PER_SAMPLE:,} cells per "
+                      "sample).", color="blue"), params["output_dir"]
+
+    @callback(
         Output("run-start-sink", "children", allow_duplicate=True),
         Input("btn-cancel", "n_clicks"),
         prevent_initial_call=True,

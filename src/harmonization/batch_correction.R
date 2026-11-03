@@ -37,6 +37,23 @@ if (!exists("shared_dir")) shared_dir <- cyto_shared_dir()
 source(file.path(shared_dir, "io_utils.R"))
 source(file.path(shared_dir, "flowframe_utils.R"))
 
+# Harmony's matrix entry point moved: HarmonyMatrix() (harmony < 2) was removed
+# in harmony 2.x, where RunHarmony() takes a cells x features matrix directly.
+# Uses whichever this installation has. do_pca = TRUE (HarmonyMatrix only)
+# becomes an explicit PCA before RunHarmony.
+.harmony_on_matrix <- function(mat, meta_data, vars_use, do_pca = FALSE, ...) {
+  ns <- getNamespaceExports("harmony")
+  if ("HarmonyMatrix" %in% ns) {
+    return(harmony::HarmonyMatrix(mat, meta_data = meta_data,
+                                  vars_use = vars_use, do_pca = do_pca, ...))
+  }
+  if (isTRUE(do_pca)) {
+    mat <- stats::prcomp(mat, center = TRUE, scale. = TRUE)$x
+  }
+  harmony::RunHarmony(mat, meta_data = meta_data, vars_use = vars_use,
+                      verbose = FALSE, ...)
+}
+
 #' Run Harmony batch correction on concatenated expression data
 #'
 #' @param flow_frames Named list of flowFrame objects (must be homogenized)
@@ -87,13 +104,8 @@ run_batch_correction <- function(flow_frames, sample_names, batch_labels,
   meta <- data.frame(batch = batch_vec, sample = sample_vec)
 
   cat("Running Harmony batch correction...\n")
-  corrected <- harmony::HarmonyMatrix(
-    combined,
-    meta_data = meta,
-    vars_use = "batch",
-    do_pca = do_pca,
-    ...
-  )
+  corrected <- .harmony_on_matrix(combined, meta_data = meta,
+                                  vars_use = "batch", do_pca = do_pca, ...)
   cat("Batch correction complete.\n")
 
   list(

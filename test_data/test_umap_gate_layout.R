@@ -1362,6 +1362,17 @@ if (requireNamespace("uwot", quietly = TRUE)) {
                                       progress = TRUE)))
   eq("...the serial optimiser keeps uwot's own count", epochs_seen, 200L)
   rm(emit_progress)
+  # embedding_check(): what run_info.json and the app's results report.
+  set.seed(3)
+  normal <- matrix(rnorm(2000), ncol = 2) * 5
+  ok("embedding_check(): a normal map is not suspect",
+     identical(embedding_check(normal)$suspect, FALSE))
+  ok("...a map hundreds of units wide is (did not converge)",
+     isTRUE(embedding_check(normal * 40)$suspect) &&
+       grepl("did not converge", embedding_check(normal * 40)$reasons[1]))
+  far <- embedding_check(rbind(normal, c(400, 0)))
+  ok("...a few far-off cells are reported as such, not as non-convergence",
+     isTRUE(far$suspect) && far$outliers == 1L && grepl("far outside", far$reasons[1]))
   ok(".warn_spread(): warns on a layout hundreds of units wide, not on a normal one",
      inherits(tryCatch(.warn_spread(cbind(c(-150, 150), c(0, 1))),
                        warning = function(w) w), "warning") &&

@@ -12,13 +12,17 @@ from dash import dash_table, dcc, html
 
 from app import config
 from app.components.filebrowser import browser_field
+from app.components.hint import hint, hint_icon
 from app.services import rscript
 
 POLL_MS = 700
 
 
 def _number(id_: str, label: str, value, **kwargs) -> dmc.NumberInput:
-    return dmc.NumberInput(id=id_, label=label, value=value, **kwargs)
+    # The explanation goes behind an info icon on the label (hint), not under it.
+    help_text = kwargs.pop("description", None)
+    return dmc.NumberInput(id=id_, label=hint(label, help_text), value=value,
+                           **kwargs)
 
 
 def _step_data(state: dict) -> list:
@@ -82,40 +86,37 @@ def _step_data(state: dict) -> list:
                             [
                                 dmc.TextInput(
                                     id="in-group",
-                                    label="Sample group",
-                                    value=str(state["group"]),
-                                    description=(
+                                    label=hint("Sample group", (
                                         "Index or name. 1 is “All Samples” in "
                                         "most workspaces; prefer the name "
                                         "across several, since the index can "
                                         "differ. The Log lists each "
                                         "workspace's groups."
-                                    ),
+                                    )),
+                                    value=str(state["group"]),
                                     placeholder="1",
                                 ),
                                 dmc.Space(h=12),
                                 dmc.Switch(
                                     id="sw-allow-missing",
-                                    label="Load anyway when FCS files are missing",
-                                    description=(
+                                    label=hint("Load anyway when FCS files are missing", (
                                         "Drops the samples whose .fcs file is "
                                         "missing instead of failing the run. "
                                         "The Log names every one."
-                                    ),
+                                    )),
                                     checked=state["allow_missing_samples"],
                                 ),
                                 dmc.Space(h=12),
                                 dmc.RadioGroup(
                                     id="in-match-mode",
                                     value=state["match_mode"],
-                                    label="Match samples to files",
-                                    description=(
+                                    label=hint("Match samples to files", (
                                         "Renamed files no longer match by "
                                         "name; “by content” falls back to the "
                                         "$FIL keyword inside each file plus "
                                         "its event count, which a rename "
                                         "cannot change."
-                                    ),
+                                    )),
                                     children=dmc.Stack(
                                         [
                                             dmc.Radio(
@@ -138,24 +139,22 @@ def _step_data(state: dict) -> list:
                                 # would leave this unmounted on a fresh page.
                                 dmc.TextInput(
                                     id="in-marker-aliases",
-                                    label="Marker aliases",
-                                    value=state["marker_aliases"],
-                                    description=(
+                                    label=hint("Marker aliases", (
                                         "written=used, separated by “;”. "
                                         "Reconciles one marker spelled two "
                                         "ways. Data health suggests these."
-                                    ),
+                                    )),
+                                    value=state["marker_aliases"],
                                     placeholder="INFy=IFN;TNFa=TNF",
                                 ),
                                 dmc.Space(h=12),
                                 dmc.Switch(
                                     id="sw-recover-markers",
-                                    label="Recover marker names from the channel",
-                                    description=(
+                                    label=hint("Recover marker names from the channel", (
                                         "On: files with no $PnS names borrow "
                                         "them from files that have them, "
                                         "matched on detector."
-                                    ),
+                                    )),
                                     checked=state["recover_markers"],
                                 ),
                             ]
@@ -243,11 +242,10 @@ def _step_gates(state: dict) -> list:
         dmc.Space(h=6),
         dmc.Switch(
             id="sw-per-wsp",
-            label="Pick the population separately in each workspace",
-            description=(
+            label=hint("Pick the population separately in each workspace", (
                 "For workspaces that name the same gate differently. A "
                 "workspace left unset is excluded from the UMAP."
-            ),
+            )),
             checked=bool(state.get("population_map")),
         ),
         dmc.Space(h=8),
@@ -262,8 +260,7 @@ def _step_gates(state: dict) -> list:
             # a colour-parsing one, which points nowhere near the cause.
             children=dmc.Select(
                 id="sel-wsp",
-                label="Workspace",
-                description="Clicking a gate below sets this workspace's population.",
+                label=hint("Workspace", "Clicking a gate below sets this workspace's population."),
                 data=[],
                 value="",
                 searchable=True,
@@ -301,8 +298,7 @@ def _step_gates(state: dict) -> list:
         dmc.Space(h=10),
         dmc.Switch(
             id="sw-explicit",
-            label="Choose an explicit gate set instead of a mode",
-            description="Tick gates under the population (--subpop_select).",
+            label=hint("Choose an explicit gate set instead of a mode", "Tick gates under the population (--subpop_select)."),
             checked=state["explicit_subpop"],
         ),
         dmc.Space(h=10),
@@ -326,8 +322,7 @@ def _step_gates(state: dict) -> list:
         dmc.Space(h=10),
         dmc.MultiSelect(
             id="in-markers",
-            label="Markers to use",
-            description="Empty = every marker common to all samples.",
+            label=hint("Markers to use", "Empty = every marker common to all samples."),
             data=[],
             value=state["markers"],
             searchable=True,
@@ -342,18 +337,24 @@ def _step_gates(state: dict) -> list:
         # Uploaded rather than browsed: the file is stored as a comma CSV under
         # the app cache and its path lands in the hidden input below, which
         # keeps the id the form, the session file and the R argv already use.
-        dcc.Upload(
-            id="up-meta",
-            accept=".csv,.tsv,.txt,.xlsx",
-            children=dmc.Button("Upload metadata (CSV or XLSX)",
-                                variant="default", fullWidth=True),
+        dmc.Group(
+            [
+                dcc.Upload(
+                    id="up-meta",
+                    accept=".csv,.tsv,.txt,.xlsx",
+                    children=dmc.Button("Upload metadata (CSV or XLSX)",
+                                        variant="default", fullWidth=True),
+                    style={"flex": 1},
+                ),
+                hint_icon(
+                    "Optional. R keys the table on the first of these columns "
+                    "it has: sample_id, sample, sampleID, sample_name, "
+                    "filename, file (none: the first column). Put the FCS file "
+                    "names there, usually as filename. Every other column "
+                    "becomes an annotation."),
+            ],
+            gap="xs", wrap="nowrap",
         ),
-        dmc.Text("R keys the table on the first of these columns it has: "
-                 "sample_id, sample, sampleID, sample_name, filename, file "
-                 "(none: the first column). Put the FCS file names there, "
-                 "usually as filename. Every other column becomes an "
-                 "annotation. Optional.",
-                 size="xs", c="dimmed", mt=4),
         dmc.TextInput(id={"comp": "fb-input", "bid": "meta"},
                       value=state["sample_metadata"], style={"display": "none"}),
         # Disabled until a load: the rows are the loaded samples' file names.
@@ -366,8 +367,7 @@ def _step_gates(state: dict) -> list:
         dmc.Space(h=10),
         dmc.TextInput(
             id="in-pattern",
-            label="…or a regex on the sample name",
-            description="Named groups become columns; used only without a CSV.",
+            label=hint("…or a regex on the sample name", "Named groups become columns; used only without a CSV."),
             value=state["sample_pattern"],
             placeholder="(?<patient>...)_(?<timepoint>...)",
         ),
@@ -376,8 +376,7 @@ def _step_gates(state: dict) -> list:
         dmc.Space(h=10),
         dmc.MultiSelect(
             id="in-annotate",
-            label="Annotations to plot",
-            description="Empty = every column.",
+            label=hint("Annotations to plot", "Empty = every column."),
             data=[],
             value=state["annotate"],
             searchable=True,
@@ -394,11 +393,10 @@ def _step_gates(state: dict) -> list:
         html.Div(id="meta-source-note"),
         dmc.MultiSelect(
             id="in-split-by",
-            label="Split plots by",
-            description=(
+            label=hint("Split plots by", (
                 "One plot per level on the same embedding, all levels side "
                 "by side, and each level's fold change against the first."
-            ),
+            )),
             data=[],
             value=state["split_by"],
             searchable=True,
@@ -411,11 +409,10 @@ def _step_gates(state: dict) -> list:
         dmc.Space(h=10),
         dmc.TextInput(
             id="in-level-order",
-            label="Level order",
-            description=(
+            label=hint("Level order", (
                 "column=a,b;column2=c. The first level is the reference for "
                 "the fold-change maps. Empty: natural order."
-            ),
+            )),
             value=state["level_order"],
             placeholder="timepoint=V0,V1,V2",
             disabled=not (_has_source(state) and state["split_by"]),
@@ -539,20 +536,19 @@ def _fit_settings(state: dict) -> list:
         dmc.RadioGroup(
             id="in-fit-subset",
             value=state["fit_subset"],
-            label="Fit the embedding on",
-            description="Every cell is then projected onto it and plotted.",
+            label=hint("Fit the embedding on", "Every cell is then projected onto it and plotted."),
             children=dmc.Stack(
                 [
                     dmc.Radio(value="random", label="Random cells"),
                     dmc.Radio(
                         value="supercell",
-                        label="SuperCellCyto supercells",
-                        description=(
+                        label=hint("SuperCellCyto supercells", (
                             "Groups each sample's cells into supercells of "
                             "similar cells and fits on their means: smaller "
                             "than the cohort, every phenotype kept in "
-                            "proportion."
-                        ),
+                            "proportion. Rare gated populations are averaged "
+                            "away unless Gate separation is above 0."
+                        )),
                     ),
                 ],
                 gap=8,
@@ -632,20 +628,18 @@ def _step_params(state: dict) -> list:
                 [
                     dmc.Radio(
                         value="markers",
-                        label=dict(config.LAYOUTS)["markers"],
-                        description=("An embedding of the marker values themselves: cells "
-                                     "that express alike lie close together."),
+                        label=hint(dict(config.LAYOUTS)["markers"], ("An embedding of the marker values themselves: cells "
+                                     "that express alike lie close together.")),
                     ),
                     dmc.Radio(
                         value="gates",
-                        label=dict(config.LAYOUTS)["gates"],
-                        description=(
+                        label=hint(dict(config.LAYOUTS)["gates"], (
                             "Every combination of gate calls is forced onto "
                             "its own island, so the map shows the gating, not "
                             "how similar the cells are. Values are re-centred "
                             "on each sample's gate cuts and the fit is "
                             "balanced across combinations."
-                        ),
+                        )),
                     ),
                 ],
                 gap=8,
@@ -687,8 +681,7 @@ def _step_params(state: dict) -> list:
         html.Div(id="layout-hint"),
         dmc.Select(
             id="in-normalize",
-            label="Per-marker normalisation",
-            description="From the pooled gated cells, before UMAP",
+            label=hint("Per-marker normalisation", "From the pooled gated cells, before UMAP"),
             data=[{"value": n, "label": n} for n in config.NORMALIZE_METHODS],
             value=state["normalize"],
             allowDeselect=False,
@@ -697,13 +690,22 @@ def _step_params(state: dict) -> list:
         dmc.Space(h=12),
         dmc.Select(
             id="in-colour-scale",
-            label="Marker colour scale",
-            description=("What the marker plots are coloured by. 'Same as the "
+            label=hint("Marker colour scale", ("What the marker plots are coloured by. 'Same as the "
                          "embedding' shows the values the map was computed "
                          "from: z-scores for a z-scored run, FlowJo values "
-                         "otherwise. Recolours only; the points do not move."),
+                         "otherwise. Recolours only; the points do not move.")),
             data=[{"value": v, "label": lab} for v, lab in config.COLOUR_SCALES],
             value=state["normalize_umap"],
+            allowDeselect=False,
+        ),
+        dmc.Space(h=12),
+        dmc.Select(
+            id="in-clip",
+            label=hint("Clip extreme values", ("Sets each marker's most extreme cells to the cut-off "
+                         "value, so a few far-off cells cannot stretch the map. "
+                         "The saved values stay unclipped.")),
+            data=[{"value": v, "label": lab} for v, lab in config.CLIP_CHOICES],
+            value=str(state["clip_quantile"]),
             allowDeselect=False,
         ),
         dmc.Space(h=12),
@@ -725,13 +727,14 @@ def _step_params(state: dict) -> list:
                 # A slider, not a number: the setting is a position between two
                 # pictures, and the marks say which end is which. Tested on
                 # J445: 0.5-1 is the middle ground, 2 already the islands.
-                dmc.Text("Gate separation", size="sm", fw=500),
                 dmc.Text(
-                    "From one continuum of marker values (left) to every gate "
-                    "on its own island (right). In between, gated populations "
-                    "become compact clusters next to the cells they come "
-                    "from. Uses the subpopulation colouring's gates.",
-                    size="xs", c="dimmed", mb=6),
+                    hint("Gate separation",
+                         "From one continuum of marker values (left) to every "
+                         "gate on its own island (right). In between, gated "
+                         "populations become compact clusters next to the "
+                         "cells they come from. Uses the subpopulation "
+                         "colouring's gates."),
+                    size="sm", fw=500, mb=6),
                 dmc.Slider(
                     id="in-gate-separation",
                     value=float(state["gate_separation"] or 0),
@@ -762,10 +765,20 @@ def _step_params(state: dict) -> list:
         dmc.Group(
             [
                 _number("in-neighbors", "n_neighbors", state["n_neighbors"],
-                        min=2, step=1, allowDecimal=False, style={"flex": 1}),
+                        min=2, step=1, allowDecimal=False, style={"flex": 1},
+                        description=(
+                            "How many neighbours each cell is placed by. Lower "
+                            "(10-15) lets small populations break off; higher "
+                            "(30+) keeps the overall structure but merges "
+                            "them into larger sheets.")),
                 _number("in-mindist", "min_dist", state["min_dist"],
                         min=0, max=1, step=0.05, decimalScale=3,
-                        style={"flex": 1}),
+                        style={"flex": 1},
+                        description=(
+                            "How tightly points may pack. Lower (0.02-0.05) "
+                            "draws tighter clusters with more space between "
+                            "them; higher spreads them out. Changes the look "
+                            "more than which cells lie together.")),
             ],
             grow=True,
             align="flex-start",
@@ -773,8 +786,7 @@ def _step_params(state: dict) -> list:
         dmc.Space(h=16),
         dmc.CheckboxGroup(
             id="in-formats",
-            label="Output formats",
-            description="PNG or SVG for the in-app gallery.",
+            label=hint("Output formats", "PNG or SVG for the in-app gallery."),
             value=state["output_formats"],
             children=dmc.Group(
                 [dmc.Checkbox(label=f, value=f) for f in config.OUTPUT_FORMATS],
@@ -833,11 +845,13 @@ def _step_params(state: dict) -> list:
                                         _number("in-pointsize", "point_size",
                                                 state["point_size"], min=0.05,
                                                 step=0.05, decimalScale=2,
+                                                placeholder="auto",
                                                 style={"flex": 1}),
                                         _number("in-pointalpha", "point_alpha",
                                                 state["point_alpha"], min=0.05,
                                                 max=1, step=0.05,
                                                 decimalScale=2,
+                                                placeholder="auto",
                                                 style={"flex": 1}),
                                     ],
                                     grow=True, align="flex-start",
@@ -897,11 +911,10 @@ def _step_run(state: dict) -> list:
         dmc.Space(h=10),
         dmc.Switch(
             id="sw-resume",
-            label="Reuse saved steps",
-            description=("A run into a folder an earlier run used continues "
+            label=hint("Reuse saved steps", ("A run into a folder an earlier run used continues "
                          "from its saved steps (extraction, supercells, "
                          "model, coordinates) whose settings still match. "
-                         "Off: recompute everything (--no_resume)."),
+                         "Off: recompute everything (--no_resume).")),
             checked=state["resume"],
         ),
         dmc.Space(h=14),
@@ -925,9 +938,28 @@ def _step_run(state: dict) -> list:
             ],
         ),
         dmc.Space(h=14),
+        # Every setting that differs from its default (steps.changed_settings_box).
+        html.Div(id="changed-settings"),
+        dmc.Space(h=14),
         html.Div(id="run-validation"),
         dmc.Space(h=10),
-        dmc.Button("Run UMAP", id="btn-run", fullWidth=True, size="md"),
+        dmc.Group(
+            [
+                dmc.Button("Run UMAP", id="btn-run", size="md",
+                           style={"flex": 3}),
+                dmc.Tooltip(
+                    dmc.Button("Quick preview", id="btn-preview", size="md",
+                               variant="light", fullWidth=True),
+                    label=("The same settings on about 1,000 cells per sample "
+                           "(200 per gate combination in the gate layout), "
+                           "PNG only, into <folder>_preview. A few minutes "
+                           "instead of an hour: check the look before the "
+                           "full run."),
+                    multiline=True, w=300, withArrow=True,
+                    style={"flex": 2}),
+            ],
+            grow=True, gap="sm", wrap="nowrap",
+        ),
         # Why the last run failed, was cancelled or left samples out (see
         # execution.poll). Right under the button, where the eye already is.
         dmc.Space(h=10),
@@ -947,13 +979,16 @@ def _fcs_names_panel(state: dict) -> list:
     around it is.
     """
     return [
-        dmc.Badge("sync_fcs_names.R", variant="dot", color="gray", size="sm"),
-        dmc.Space(h=10),
-        dmc.Text(
-            "Rewrites each file's $FIL keyword to its name on disk, so renamed "
-            "files stop appearing as one sample in FlowJo. Event data is not "
-            "touched.",
-            size="sm", c="dimmed",
+        dmc.Group(
+            [
+                dmc.Badge("sync_fcs_names.R", variant="dot", color="gray",
+                          size="sm"),
+                hint_icon(
+                    "Rewrites each file's $FIL keyword to its name on disk, so "
+                    "renamed files stop appearing as one sample in FlowJo. "
+                    "Event data is not touched."),
+            ],
+            gap="xs",
         ),
         dmc.Space(h=14),
         browser_field(
@@ -968,10 +1003,9 @@ def _fcs_names_panel(state: dict) -> list:
         dmc.RadioGroup(
             id="fcs-mode",
             value="dry",
-            label="What to do",
+            label=hint("What to do", "Census → dry run → apply."),
             # The escalation, attached to the control that orders it rather
             # than left in a paragraph above.
-            description="Census → dry run → apply.",
             children=dmc.Stack(
                 [
                     dmc.Radio(value=k, label=v["label"])
@@ -984,8 +1018,7 @@ def _fcs_names_panel(state: dict) -> list:
         dmc.Space(h=12),
         dmc.TextInput(
             id="fcs-also",
-            label="Also sync these keywords",
-            description="Comma-separated, e.g. $SRC,TUBE NAME",
+            label=hint("Also sync these keywords", "Comma-separated, e.g. $SRC,TUBE NAME"),
             placeholder="",
         ),
         dmc.Space(h=16),
