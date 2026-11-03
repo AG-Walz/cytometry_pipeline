@@ -31,6 +31,7 @@ If you are **looking for a specific utility function** (CSV I/O, memory manageme
 | [File Formats](file-formats.md) | Input and output format specifications for all pipelines (FCS, CSV, WSP, plots) |
 | [Standalone Scripts](standalone-scripts.md) | Using individual module functions outside of pipelines, with signatures and examples |
 | [UMAP from a FlowJo Population](scripts/umap-from-flowjo.md) | Extract a gated population from a `.wsp` + FCS, build a shared UMAP, and colour it by every marker (conjoint + per file) |
+| [Gate-anchored UMAP layout](methods/gate-anchored-layout.md) | The method behind `--layout gates`: features rebuilt from each sample's own gates so every combination of gate calls gets its own island, with stratified sampling, a balanced fit and metadata split plots |
 | [Cytokine combinations per patient](scripts/cytokine-combinations.md) | One stacked bar per FCS file: Boolean cytokine combinations under CD4/CD8 as % of parent, by timepoint and cocktail, one figure per patient plus a neg-subtracted one |
 | [Sync FCS Embedded Names](scripts/sync-fcs-names.md) | Rewrite each FCS file's `$FIL` keyword to match its file name on disk, so a renamed cohort stops colliding in FlowJo. Base R only, event data never decoded |
 | [FlowJo → UMAP Dash app](../app/README.md) | Browser front-end for that script: file and gate pickers, live log, results gallery |

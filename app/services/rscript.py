@@ -98,7 +98,8 @@ def run_argv(params: dict) -> list[str]:
 
     Only options the user actually set away from the R default are appended, so
     the printed command stays close to what someone would type by hand — with
-    the exception of the paths and the population, which are always explicit.
+    the exception of the paths, the population, the layout and min_dist,
+    which are always explicit.
     """
     argv = _base_argv() + [
         "--wsp", params["wsp"],
@@ -158,6 +159,17 @@ def run_argv(params: dict) -> list[str]:
     annotate = params.get("annotate") or []
     if annotate and (metadata or pattern):
         argv.extend(["--annotate", ",".join(annotate)])
+    # Filter, split and level order all read the sample annotations, so like
+    # --annotate they are only passed when there is a source to read them from.
+    # The level order only orders split plots, hence only with --split_by.
+    split_by = params.get("split_by") or []
+    if metadata or pattern:
+        if params.get("filter"):
+            argv.extend(["--filter", params["filter"]])
+        if split_by:
+            argv.extend(["--split_by", ",".join(split_by)])
+            if params.get("level_order"):
+                argv.extend(["--level_order", params["level_order"]])
 
     markers = params.get("markers") or []
     if markers:
@@ -172,17 +184,56 @@ def run_argv(params: dict) -> list[str]:
         add("--subpop_mode", params.get("subpop_mode"),
             config.DEFAULTS["subpop_mode"])
 
-    add("--normalize", params.get("normalize"), config.DEFAULTS["normalize"])
-    add("--downsample", params.get("downsample"), config.DEFAULTS["downsample"])
+    # --layout is passed even at its R default (as is --min_dist, below): the
+    # form starts on "gates" while R defaults to "markers", and an omitted flag
+    # would read as R's choice to anyone pasting the printed command. Each
+    # layout's own settings are passed only with that layout: the gate settings
+    # mean nothing to the marker layout, and the gate layout builds its own
+    # features and sampling, so normalisation and downsampling do not apply
+    # there.
+    layout = params.get("layout") or config.FORM_START["layout"]
+    argv.extend(["--layout", layout])
+    if layout == "gates":
+        for key in ("gate_gap", "gate_tier_ratio", "gate_softness", "supervise",
+                    "cells_per_combination", "min_combination_cells",
+                    "umap_subsample"):
+            add(f"--{key}", params.get(key), config.DEFAULTS[key])
+    else:
+        add("--normalize", params.get("normalize"),
+            config.DEFAULTS["normalize"])
+        add("--downsample", params.get("downsample"),
+            config.DEFAULTS["downsample"])
+        # The fit set: random cells (the form's own count, as --umap_subsample,
+        # which in the gate layout means the balanced budget instead) or
+        # SuperCellCyto supercells with their two settings.
+        fit_subset = params.get("fit_subset") or config.DEFAULTS["fit_subset"]
+        add("--fit_subset", fit_subset, config.DEFAULTS["fit_subset"])
+        if fit_subset == "supercell":
+            add("--supercell_gamma", params.get("supercell_gamma"),
+                config.DEFAULTS["supercell_gamma"])
+            add("--supercell_k_knn", params.get("supercell_k_knn"),
+                config.DEFAULTS["supercell_k_knn"])
+            add("--supercell_max", params.get("supercell_max"),
+                config.DEFAULTS["supercell_max"])
+        else:
+            add("--umap_subsample", params.get("random_fit_cells"),
+                config.DEFAULTS["random_fit_cells"])
     add("--n_cores", params.get("n_cores"), config.DEFAULTS["n_cores"])
     add("--n_neighbors", params.get("n_neighbors"), config.DEFAULTS["n_neighbors"])
-    add("--min_dist", params.get("min_dist"), config.DEFAULTS["min_dist"])
+    # Always passed: R's default depends on the layout (0.1 markers, 0.25
+    # gates), so omitting the form's value could silently change it.
+    if params.get("min_dist") is not None:
+        argv.extend(["--min_dist", str(params.get("min_dist"))])
     add("--metric", params.get("metric"), config.DEFAULTS["metric"])
     add("--seed", params.get("seed"), config.DEFAULTS["seed"])
     add("--point_size", params.get("point_size"), config.DEFAULTS["point_size"])
     add("--point_alpha", params.get("point_alpha"), config.DEFAULTS["point_alpha"])
     add("--plot_width", params.get("plot_width"), config.DEFAULTS["plot_width"])
     add("--plot_height", params.get("plot_height"), config.DEFAULTS["plot_height"])
+
+    # Resuming is R's default; only turning it off is a flag.
+    if params.get("resume") is False:
+        argv.append("--no_resume")
 
     formats = params.get("output_formats") or []
     if sorted(formats) != sorted(config.R_DEFAULT_OUTPUT_FORMATS):
@@ -385,10 +436,12 @@ def describe_annotations(metadata: str, pattern: str,
     if preview.get("error"):
         return [], {"error": preview["error"]}
     columns = list(preview.get("columns") or [])
-    # The form wants a level COUNT per column; R sends the levels themselves,
-    # which is the more useful thing to have in the document.
-    preview["levels"] = {c: len(v or [])
-                         for c, v in (preview.get("levels") or {}).items()}
+    # The summary line wants a level COUNT per column; the split and filter
+    # pickers want the levels themselves, in R's order of appearance.
+    raw_levels = preview.get("levels") or {}
+    preview["level_values"] = {c: [str(x) for x in (v or []) if x is not None]
+                               for c, v in raw_levels.items()}
+    preview["levels"] = {c: len(v or []) for c, v in raw_levels.items()}
     preview["unmatched"] = list(preview.get("unmatched") or [])
     if preview.get("source"):
         preview["source"] = f"From {preview['source']}"

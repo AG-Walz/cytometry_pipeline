@@ -348,10 +348,19 @@ def _step_gates(state: dict) -> list:
             children=dmc.Button("Upload metadata (CSV or XLSX)",
                                 variant="default", fullWidth=True),
         ),
-        dmc.Text("First column: FCS file name. Every other column becomes an "
-                 "annotation. Optional.", size="xs", c="dimmed", mt=4),
+        dmc.Text("R keys the table on the first of these columns it has: "
+                 "sample_id, sample, sampleID, sample_name, filename, file "
+                 "(none: the first column). Put the FCS file names there, "
+                 "usually as filename. Every other column becomes an "
+                 "annotation. Optional.",
+                 size="xs", c="dimmed", mt=4),
         dmc.TextInput(id={"comp": "fb-input", "bid": "meta"},
                       value=state["sample_metadata"], style={"display": "none"}),
+        # Disabled until a load: the rows are the loaded samples' file names.
+        dmc.Button("Download metadata template", id="btn-meta-template",
+                   variant="subtle", size="compact-xs", mt=4, disabled=True),
+        dcc.Download(id="dl-meta-template"),
+        html.Div(id="template-note"),
         dmc.Space(h=6),
         html.Div(id="meta-check"),
         dmc.Space(h=10),
@@ -377,6 +386,223 @@ def _step_gates(state: dict) -> list:
             placeholder="all available",
             nothingFoundMessage="No such column",
         ),
+        dmc.Space(h=16),
+        dmc.Divider(label="Split and filter by metadata", labelPosition="center"),
+        dmc.Space(h=6),
+        # Everything below reads the annotations, so it is disabled without a
+        # source (callbacks/steps.py: metadata_controls).
+        html.Div(id="meta-source-note"),
+        dmc.MultiSelect(
+            id="in-split-by",
+            label="Split plots by",
+            description=(
+                "One plot per level on the same embedding, all levels side "
+                "by side, and each level's fold change against the first."
+            ),
+            data=[],
+            value=state["split_by"],
+            searchable=True,
+            clearable=True,
+            hidePickedOptions=True,
+            placeholder="no split",
+            nothingFoundMessage="No such column",
+            disabled=not _has_source(state),
+        ),
+        dmc.Space(h=10),
+        dmc.TextInput(
+            id="in-level-order",
+            label="Level order",
+            description=(
+                "column=a,b;column2=c. The first level is the reference for "
+                "the fold-change maps. Empty: natural order."
+            ),
+            value=state["level_order"],
+            placeholder="timepoint=V0,V1,V2",
+            disabled=not (_has_source(state) and state["split_by"]),
+        ),
+        html.Div(id="level-order-hint"),
+        dmc.Space(h=12),
+        dmc.Text("Keep only samples where", size="sm", fw=500),
+        dmc.Space(h=4),
+        dmc.Group(
+            [
+                # "" and never None, for the reason given at sel-wsp above.
+                dmc.Select(
+                    id="in-filter-col",
+                    data=[],
+                    value=state["filter_column"] or "",
+                    placeholder="column",
+                    searchable=True,
+                    clearable=True,
+                    disabled=not _has_source(state),
+                    style={"flex": 1},
+                ),
+                dmc.SegmentedControl(
+                    id="in-filter-mode",
+                    value=state["filter_mode"],
+                    data=[{"value": "include", "label": "include"},
+                          {"value": "exclude", "label": "exclude"}],
+                    size="xs",
+                    disabled=not _has_source(state),
+                ),
+            ],
+            gap="xs",
+            align="center",
+            wrap="nowrap",
+        ),
+        dmc.Space(h=6),
+        dmc.MultiSelect(
+            id="in-filter-values",
+            data=[],
+            value=state["filter_values"],
+            placeholder="values",
+            searchable=True,
+            clearable=True,
+            hidePickedOptions=True,
+            nothingFoundMessage="No such value",
+            disabled=not _has_source(state),
+        ),
+        html.Div(id="filter-echo"),
+    ]
+
+
+def _has_source(state: dict) -> bool:
+    """True when the form has a metadata source (a CSV or a name pattern)."""
+    return bool((state.get("sample_metadata") or "").strip()
+                or (state.get("sample_pattern") or "").strip())
+
+
+def _gate_settings(state: dict) -> list:
+    """The gate layout's own settings (--gate_gap and friends)."""
+    return [
+        dmc.Group(
+            [
+                _number("in-gate-gap", "Gap at each gate cut", state["gate_gap"],
+                        min=0, step=0.5, decimalScale=2,
+                        description="Above 1, cells either side of a gate "
+                                    "can never overlap.",
+                        style={"flex": 1}),
+                _number("in-gate-tier-ratio", "Lineage gap ratio",
+                        state["gate_tier_ratio"], min=1, step=0.5,
+                        decimalScale=2,
+                        description="Gap one tier up the tree (CD4/CD8) is "
+                                    "this many times the cytokine gap; keeps "
+                                    "each lineage's islands together.",
+                        style={"flex": 1}),
+                _number("in-gate-softness", "Softness", state["gate_softness"],
+                        min=0.1, step=0.5, decimalScale=2,
+                        description="Spread within a side, in negative-"
+                                    "population MADs.",
+                        style={"flex": 1}),
+            ],
+            grow=True, align="flex-start",
+        ),
+        dmc.Space(h=12),
+        _number("in-supervise", "Supervision weight", state["supervise"],
+                min=0, max=1, step=0.1, decimalScale=2,
+                description="0 = unsupervised. Towards 1, each combination is "
+                            "pulled into one island by its label."),
+        dmc.Space(h=12),
+        dmc.Group(
+            [
+                _number("in-cells-per-comb", "Cells per combination",
+                        state["cells_per_combination"], min=1, step=500,
+                        allowDecimal=False,
+                        description="Per sample; rarer ones are kept whole.",
+                        style={"flex": 1}),
+                _number("in-min-comb-cells", "Minimum cells",
+                        state["min_combination_cells"], min=0, step=10,
+                        allowDecimal=False,
+                        description="Rarer combinations become "
+                                    "'other (rare)'.",
+                        style={"flex": 1}),
+            ],
+            grow=True, align="flex-start",
+        ),
+        dmc.Space(h=12),
+        _number("in-fit-cells", "Fit cells", state["umap_subsample"], min=0,
+                step=10000, allowDecimal=False,
+                description="Fit set balanced across combinations; the rest "
+                            "are projected onto it. 0 = 100,000."),
+    ]
+
+
+def _fit_settings(state: dict) -> list:
+    """The markers layout's fit set (--fit_subset and its settings).
+
+    UMAP is fitted on a smaller set and every cell is projected onto it; on a
+    cohort of millions of cells fitting on all of them takes hours.
+    """
+    supercell = state["fit_subset"] == "supercell"
+    hidden = {"display": "none"}
+    return [
+        dmc.RadioGroup(
+            id="in-fit-subset",
+            value=state["fit_subset"],
+            label="Fit the embedding on",
+            description="Every cell is then projected onto it and plotted.",
+            children=dmc.Stack(
+                [
+                    dmc.Radio(value="random", label="Random cells"),
+                    dmc.Radio(
+                        value="supercell",
+                        label="SuperCellCyto supercells",
+                        description=(
+                            "Groups each sample's cells into supercells of "
+                            "similar cells and fits on their means: smaller "
+                            "than the cohort, every phenotype kept in "
+                            "proportion."
+                        ),
+                    ),
+                ],
+                gap=8,
+                mt=6,
+            ),
+        ),
+        dmc.Space(h=12),
+        html.Div(
+            id="fit-random-wrap",
+            style=hidden if supercell else {},
+            children=_number(
+                "in-random-fit-cells", "Random cells to fit on",
+                state["random_fit_cells"], min=0, step=10000,
+                allowDecimal=False,
+                description="0 = fit on every cell (slow on millions)."),
+        ),
+        html.Div(
+            id="fit-supercell-wrap",
+            style={} if supercell else hidden,
+            children=dmc.Group(
+                [
+                    _number("in-sc-gamma", "Cells per supercell",
+                            state["supercell_gamma"], min=1.1, step=5,
+                            decimalScale=1,
+                            description="gamma: the fit set is about the "
+                                        "cell count / this.",
+                            style={"flex": 1}),
+                    _number("in-sc-knn", "Supercell neighbours",
+                            state["supercell_k_knn"], min=1, step=1,
+                            allowDecimal=False,
+                            description="k_knn of the within-sample graph.",
+                            style={"flex": 1}),
+                ],
+                grow=True, align="flex-start",
+            ),
+        ),
+        html.Div(
+            id="fit-supercell-max-wrap",
+            style={} if supercell else hidden,
+            children=[
+                dmc.Space(h=12),
+                _number("in-sc-max", "Max supercells", state["supercell_max"],
+                        min=1000, step=10000, allowDecimal=False,
+                        description="Most supercells the embedding is fitted "
+                                    "on; gamma is raised to cells / this on a "
+                                    "large cohort. Keeps the fit fast and "
+                                    "well-behaved."),
+            ],
+        ),
+        dmc.Space(h=12),
     ]
 
 
@@ -389,8 +615,72 @@ def _step_params(state: dict) -> list:
     plot dimensions are defaults nobody changes — five of them only affect how
     the image looks and can be re-plotted, and seed only matters when you want
     to reproduce, at which point the command preview in step 4 is what you copy.
+
+    The layout comes first because it decides which of the rest apply: the
+    gate layout has its own settings (shown only with it) and makes
+    normalisation and downsampling meaningless (disabled with it).
     """
+    gates = state["layout"] == "gates"
     return [
+        dmc.RadioGroup(
+            id="in-layout",
+            value=state["layout"],
+            label="Layout",
+            children=dmc.Stack(
+                [
+                    dmc.Radio(
+                        value="gates",
+                        label=dict(config.LAYOUTS)["gates"],
+                        description=(
+                            "Each combination of gate calls gets its own "
+                            "island: values are re-centred on every sample's "
+                            "own gate cuts, rare combinations are kept, and "
+                            "the fit is balanced across combinations."
+                        ),
+                    ),
+                    dmc.Radio(
+                        value="markers",
+                        label=dict(config.LAYOUTS)["markers"],
+                        description="An embedding of the marker values themselves.",
+                    ),
+                ],
+                gap=8,
+                mt=6,
+            ),
+        ),
+        dmc.Space(h=12),
+        html.Div(
+            id="gates-wrap",
+            style={} if gates else {"display": "none"},
+            children=[
+                dmc.Accordion(
+                    id="acc-gates",
+                    value=None,
+                    variant="contained",
+                    chevronPosition="left",
+                    children=[
+                        dmc.AccordionItem(
+                            value="gates",
+                            children=[
+                                dmc.AccordionControl(
+                                    dmc.Group(
+                                        [
+                                            dmc.Text("Gate layout settings",
+                                                     size="sm", fw=500),
+                                            html.Div(id="gates-badge"),
+                                        ],
+                                        gap="xs",
+                                    )
+                                ),
+                                dmc.AccordionPanel(_gate_settings(state)),
+                            ],
+                        )
+                    ],
+                ),
+                dmc.Space(h=12),
+            ],
+        ),
+        html.Div(id="layout-hint"),
         dmc.Select(
             id="in-normalize",
             label="Per-marker normalisation",
@@ -398,6 +688,7 @@ def _step_params(state: dict) -> list:
             data=[{"value": n, "label": n} for n in config.NORMALIZE_METHODS],
             value=state["normalize"],
             allowDeselect=False,
+            disabled=gates,
         ),
         dmc.Space(h=12),
         _number(
@@ -408,8 +699,14 @@ def _step_params(state: dict) -> list:
             step=1000,
             allowDecimal=False,
             description="0 = every cell",
+            disabled=gates,
         ),
         dmc.Space(h=12),
+        html.Div(
+            id="fit-wrap",
+            style={"display": "none"} if gates else {},
+            children=_fit_settings(state),
+        ),
         _number(
             "in-cores",
             "CPU cores",
@@ -558,6 +855,16 @@ def _step_run(state: dict) -> list:
         # Stays visible: this is where "the directory exists and files will be
         # overwritten" is said, and it is the only destructive warning here.
         html.Div(id="output-echo"),
+        dmc.Space(h=10),
+        dmc.Switch(
+            id="sw-resume",
+            label="Reuse saved steps",
+            description=("A run into a folder an earlier run used continues "
+                         "from its saved steps (extraction, supercells, "
+                         "model, coordinates) whose settings still match. "
+                         "Off: recompute everything (--no_resume)."),
+            checked=state["resume"],
+        ),
         dmc.Space(h=14),
         dmc.Accordion(
             id="acc-command",
@@ -886,12 +1193,25 @@ def _right_column(state: dict) -> dmc.Paper:
                             dmc.ScrollArea(
                                 [
                                     html.Div(id="gallery"),
-                                    # Both accordions are static components so
+                                    # The accordions are static components so
                                     # their open sets can drive which panels
                                     # get built: Mantine keeps closed panels
                                     # mounted, so building them all would put
                                     # every image on the page at once — marker
                                     # x sample, and every annotation level.
+                                    # The split plots come straight after the
+                                    # overview, hence the gallery is in two
+                                    # parts around them.
+                                    html.Div(id="split-header"),
+                                    dmc.Accordion(
+                                        id="split-accordion",
+                                        multiple=True,
+                                        value=[],
+                                        variant="separated",
+                                        children=[],
+                                        mb="md",
+                                    ),
+                                    html.Div(id="gallery-rest"),
                                     dmc.Accordion(
                                         id="annot-accordion",
                                         multiple=True,
@@ -945,6 +1265,9 @@ def build_layout(state: dict):
                 # in the folder later is included rather than silently dropped.
                 dcc.Store(id="store-wsp-exclude",
                           data=state.get("excluded_workspaces") or []),
+                # The annotation preview's columns and levels, for the split
+                # and filter pickers and for run validation.
+                dcc.Store(id="store-annot-preview", data={}),
                 dcc.Store(id="store-run-generation", data=-1),
                 dcc.Interval(id="poll", interval=POLL_MS, disabled=False),
                 # Sink for callbacks whose only real effect is starting or

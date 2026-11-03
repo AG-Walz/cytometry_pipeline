@@ -34,13 +34,25 @@ It reuses the repo's shared utilities (`run_umap`, `save_plot_formats`,
 `create_safe_filename`, `make_outdir`, `explore_data`) rather than
 reimplementing them.
 
+With `--layout gates`, steps 3 to 5 change: the features are rebuilt from the
+FlowJo gates themselves, so that every combination of gate calls gets its own
+island, and the combination, split and conjoint marker plots are drawn in a
+muted, axis-free style. See
+[Gate-separated layout](#gate-separated-layout). A sample metadata table can
+select which samples go in and split every plot by a column such as timepoint;
+see [Sample metadata, filters and split plots](#sample-metadata-filters-and-split-plots).
+
 ---
 
 ## Prerequisites
 
 The script runs inside the `cytometry_env` conda environment (it needs
 `CytoML`, `flowWorkspace`, `flowCore`, `uwot`, `ggplot2`, `viridis`,
-`optparse`). If you have not set the environment up yet, follow the
+`optparse`). `--layout gates` also uses `RANN` (or `FNN`) for its separation
+metrics, which are skipped with a message when neither is installed, and
+`ggrastr`, when installed, to rasterise the points in SVG and PDF output so a
+plot of many cells stays a small file. Both are declared in `environment.yml`.
+If you have not set the environment up yet, follow the
 [Getting Started](../getting-started.md) guide first, or on a fresh machine:
 
 ```bash
@@ -98,11 +110,21 @@ Common markers (12):
 ```
 
 Markers are a property of the channels rather than of a gate, so they are
-evaluated at the root node and are the same set a real run would use. These
-three block headers are a stable format that [the Dash front-end](../../app/README.md)
-parses — if you change them, update `app/services/rscript.py` too. With several
-workspaces two further blocks follow, indented four spaces so those parsers
-cannot swallow them; see [Gating trees that differ](#gating-trees-that-differ).
+evaluated at the root node and are the same set a real run would use. With
+several workspaces two further blocks follow, indented four spaces; see
+[Gating trees that differ](#gating-trees-that-differ).
+
+This text is for people. [The Dash front-end](../../app/README.md) does not
+parse it: it runs the same command with `--report_json <file>`, which writes
+the whole load (workspaces, sample pairing, gating trees, marker panels and
+what diverges between them) as JSON. `src/visualization/umap_load_report.R`
+writes that file, stamped with a `schema` version, and
+`app/services/rscript.py` reads it and refuses a major version it does not
+know, so change them together. Of what a run prints, the app uses
+the `::progress::` lines for its progress bar, the closing
+`Done. Plots written to:` line to tell that a detached run from before exit
+codes were recorded finished, and the last line of the log as the reason
+when a run fails.
 
 **2. Run the analysis** (defaults already target the bundled example data and
 the `Lymphocytes/Single Cells/Viable cells` population):
@@ -328,7 +350,7 @@ channels; they rejoin in the UMAP on marker names.
 Nothing is renamed and no parameter is dropped: each sample keeps the channel
 names its gates were drawn against, which is the only way the gates stay the
 gates FlowJo applied. The parts rejoin downstream because cells are pooled on
-**marker**, not on channel — `--recover_markers` already maps
+**marker**, not on channel — marker recovery (on unless `--no_recover_markers`) already maps
 `Comp-Aqua LiveDead-A` and `Comp-BV480-A` onto the same marker. Counts, the
 population map, plot legends and the load report all remain **per workspace**;
 the parts show up only as a `2 channel sets` badge in the app's data-health
@@ -374,6 +396,7 @@ set that *does* yield a single label per cell.
 | `cd4cd8` | `CD4+`, `CD8+`, or `(none)` | The clean lineage split — fewest colours, most readable. |
 | `direct` | by its single immediate child gate, else `(multiple)` | Immediate children overlap heavily, so most cells become `(multiple)`. |
 | `deepest` | by the deepest gate **by path depth**, ties → `(multiple)` | Sibling single-marker and Boolean gates share a path depth, so this also tends to collapse to `(multiple)`. |
+| `combinations` | by its **combination of gate calls**, e.g. `CD4+ \| IFNy+ TNFa+` | The labels of the [gate-separated layout](#combination-labels), in its muted palette, with its combination, split and fold-change plots. Colours only: the embedding still uses the marker values. Markers layout only |
 | `none` | — | Skips the subpopulation plot entirely. |
 
 Cells in **no** selected subgate are labelled `(none)`; under `direct`/`deepest`,
@@ -398,6 +421,494 @@ Rscript scripts/umap_from_flowjo.R --subpop_select \
 > a per-marker view (one clean `+/-` plot per functional marker) is more
 > effective than one many-colour plot.
 
+To give every combination of gate calls, rare ones included, its own island,
+use the gate-separated layout below.
+
+---
+
+## Fit set of the markers layout
+
+Fitting UMAP on every cell of a cohort of millions takes hours: the neighbour
+graph and the initialisation grow faster than the cell count, the projection of
+further cells onto a fitted model does not. `--fit_subset` chooses what the
+markers layout fits on; every cell is then projected onto that model and
+plotted.
+
+| `--fit_subset` | Fitted on | Settings |
+|----------------|-----------|----------|
+| `random` *(default)* | `--umap_subsample` randomly chosen cells (`0` = every cell, the old behaviour) | `--umap_subsample` |
+| `supercell` | the mean marker values of [SuperCellCyto](https://github.com/phipsonlab/SuperCellCyto) supercells: each sample's cells grouped into supercells of about `--supercell_gamma` similar cells (never across samples), so the fit set is about the cell count / gamma and every phenotype keeps a share in proportion to its cells | `--supercell_gamma` (default 20, above 1), `--supercell_k_knn` (default 5), `--supercell_max` (default 100000) |
+
+**Large cohorts.** Gamma is raised when the cohort would give more than
+`--supercell_max` supercells: 8.1 million MTB cells at gamma 20 give 405,521,
+so gamma becomes 82 and the fit about 99,000 supercells. The run says so. Two
+reasons. The fit stays at the size the gate layout fits on (about a minute),
+and it stays under the 300,000 points above which `--umap_init auto` swaps the
+spectral start for PCA. The PCA start is scaled to the spectral start's 0-10
+box: unscaled, on FlowJo values, it put the points about 100 units apart, the
+optimisation never brought them together, and the 2026-10-14 MTB run came out
+as specks over a range of 200. A fit whose layout still spans more than 100
+units now warns. The projection of the cells onto the model runs on every
+core (`--n_cores`); with a threaded embedding its result does not depend on
+the core count.
+
+Supercells need the R package SuperCellCyto: `install_extra_packages.R`
+installs it from GitHub (bioconda has `bioconductor-supercellcyto` for R 4.5
+only). Without it a supercell run stops before the workspaces load and says
+how to install it. Samples with fewer than 2 x gamma cells are not grouped;
+their cells join the fit set as they are. The gates layout has its own
+balanced fit set and ignores `--fit_subset supercell` with a warning.
+
+Example, the MTB cohort of the [gate-separated layout](#mtb-example) on the
+plain marker values, every stimulated cell plotted:
+
+```bash
+Rscript scripts/umap_from_flowjo.R \
+  --wsp /mnt/volume/patrick/UMAP/wsp --fcs_dir /mnt/volume/patrick/UMAP/fcs \
+  --population "/Lymphocytes/Single Cells/Live cells" \
+  --marker_aliases "INF=IFNy;TNF=TNFa;IFN=IFNy;INFy=IFNy" \
+  --markers "CD4,CD8,IFNy,IL-2,TNFa,CD107a" \
+  --sample_metadata /mnt/volume/patrick/UMAP/mtb_umap_metadata.csv \
+  --filter stimulation=stimulated --split_by timepoint --annotate timepoint \
+  --layout markers --subpop_mode combinations \
+  --fit_subset supercell --supercell_gamma 20 \
+  --n_neighbors 80 --min_dist 0.1 --n_cores 24 --output_formats png
+```
+
+### Background subtraction and an existing map
+
+Cells cannot be subtracted, only their shares per tube. `--background
+stimulation=unstimulated --pair_by patient,visit` pairs every sample with the
+sample of the same patient and visit whose `stimulation` is `unstimulated`
+(`background_pairs.csv` lists the pairs) and, in every legend, split plot,
+fold-change map and frequency table, replaces a combination's percentage by
+the sample's minus its background's, negatives set to 0. Only cytokine
+responses are subtracted (combinations with a positive call below the
+lineage, such as `CD4+ | IFNy+ TNFa+`). For `CD4+ | none`, `CD4- CD8-` and the
+like, stimulated minus unstimulated is a near-zero difference of two large
+numbers, and those are shown grey, "not a cytokine response". The background
+samples drop out of the frequencies and the split plots; the whole-embedding
+plots still show every cell. The embedding is not affected.
+
+`--umap_model <run>/umap_model.uwot` skips the fit and projects every cell
+onto that run's map, so a cohort with its unstimulated tubes lands on the map
+of the stimulated-only run (same `--markers`, in the same order; the run
+checks this against the model's `run_info.json`).
+
+`scripts/compare_umap_runs.R --run_a A --run_b B --column timepoint
+--output_dir C` then puts two such runs side by side: each level's
+fold-change maps next to each other (`compare_<col>_<level>.png`), every
+combination's fold change in A against B (`compare_<col>_scatter.png`) and
+the numbers (`compare_<col>.csv`).
+
+---
+
+## Gate-separated layout
+
+`--layout gates` builds the embedding from the gates under `--population`
+instead of from the raw marker values, so that every combination of gate calls
+(`CD4+ | IFNy+ TNFa+`, `CD8+ | none`, `CD4- CD8-`, ...) lands in its own
+island. This section covers running it and reading the output; the method and
+the reasoning behind each step are in
+[Gate-anchored UMAP layout](../methods/gate-anchored-layout.md).
+
+### Why
+
+In the default layout a cytokine-positive cell differs from its negative
+neighbours in one channel, often by a few units on FlowJo's 0 to 256 scale,
+and shares every other channel with them, so it is easily drawn among them
+instead of in an island of its own. Gates are also moved from visit to visit
+as analysts follow the detector voltages, so a single global threshold would
+disagree with the gater in many samples. The gate layout uses each sample's own
+gates instead.
+
+### How calls and cuts are read from the gates
+
+For every sample, every non-Boolean gate below the population is checked for
+the markers it decides:
+
+* A rectangle bound on a marker channel that on its own excludes at least 0.5 %
+  of the parent's cells binds. A gate that binds only at its lower bound is a
+  positive decision (cells above the cut), one that binds only at its upper
+  bound a negative decision. When both bounds bind, the gate is a band (a
+  "CD4 dim" gate) and decides nothing on that marker, unless the smaller side
+  excludes under 5 % of the parent: that is a far edge clipping a tail, and the
+  larger side is the decision.
+* Scatter, `Time` and viability-dye channels never decide, so the wide FSC-A
+  range of a cytokine-versus-FSC gate drops out. Viability dyes are recognised
+  by marker name (`--viability_pattern`).
+* A polygon or other gate decides a marker when membership separates well along
+  it (AUC of at least 0.8 or at most 0.2, with at least 10 members and 10
+  non-members); its cut is the 1-D threshold that best reproduces membership.
+* A gate never decides a marker that one of its ancestor gates below the
+  population already decides. A CD4 x IFNy box under `CD4+` that clips the
+  CD4-dim tail trims cells inside the side the `CD4+` gate chose; it is not a
+  second CD4 threshold.
+
+Each cell then gets the gater's call per marker. Only the deepest gates that
+apply to a cell count, so a cytokine gate under `CD4+` wins over one hung
+directly under the population for a CD4+ cell.
+
+* Inside one or more of those gates: positive if any of them keeps cells above
+  its cut, otherwise negative.
+* Outside all of them: the opposite side when every one of them binds on this
+  marker alone (outside the IFNy+ gate is IFNy-negative, whatever its FSC-A
+  edge did). When a gate also binds on another marker the cell may be outside
+  it because of that other marker, and when the gates have opposite
+  polarities they disagree; in both cases the cell's own value against the
+  median cut of those gates decides (`x >= cut` is positive).
+* No gate applies: the marker is not decided (cytokines in CD4-CD8- cells, when
+  the cytokine gates sit under CD4 and CD8 only).
+
+Every decision goes to `gate_decisions.csv` with its gate, cut, polarity,
+method and `n_axes`, the number of marker axes the gate binds on.
+
+### The features
+
+Each decided marker `m` becomes
+
+```
+f     = tanh((x - anchor) / (gate_softness * sigma)) + gap_m * s
+s     = +1 for a positive call, -1 for a negative or undecided one
+gap_m = gate_gap * gate_tier_ratio ^ (deepest tier - tier of m)
+```
+
+with `x` the FlowJo value. The `anchor` is the marker's median over the
+sample's own cells with the same combination of calls, so in each tube the
+CD4+ IFNy+ cells are centred on their own medians and the CD8+ cells on
+theirs. That removes per-visit voltage shifts without depending on where the
+gater drew the line in that tube, which can differ between tubes even when the
+cells do not, or on which other populations share a side of the gate. It also
+means a whole combination that is brighter in one tube than in another sits in
+the same place in both; the marker plots keep the raw values. `sigma` is the
+spread (MAD) of the negative cells around their anchor, pooled over samples
+and at least 1 % of the 0 to 256 scale.
+
+The tanh term always lies between -1 and 1, so two cells whose calls on `m`
+differ as positive against negative or undecided are more than
+`2 * (gap_m - 1)` apart on that coordinate, whatever the voltages of their
+samples were. Negative and undecided share a side. With the defaults
+(`--gate_gap 2`, `--gate_tier_ratio 2`) the cytokines of the MTB tree get a
+jump of 2 and CD4 and CD8 one of 4, so the lineage split is the largest
+distance and the islands of one lineage gather in one region.
+`--gate_tier_ratio` must be 1 or more. `--gate_softness` sets how much of the
+spread inside each island survives.
+
+Cells that no gate decides on any marker (with a population above the live
+gate, the cells that gate excluded) would otherwise sit on the negative side of
+every marker, on top of the all-negative combination. They get one more
+coordinate, `no_gate_decision`, at plus or minus the largest jump, and the
+label `(no decision)`, and the log says how many there are.
+
+By default the features are the markers that some gate below the population
+decides and that every sample measures, which leaves out scatter, `Time`,
+live/dead and anything gated only above the population. The marker plots cover
+the same markers. `--markers` gives the exact list instead: decided markers
+get the transform above, the others enter as a bounded robust z-score without a
+jump, shaping the islands without splitting them.
+
+### Combination labels
+
+A marker's tier is how deep below the population its gates sit: in the MTB
+tree under `Live cells`, CD4 and CD8 (the quadrant gates) are tier 1 and the
+cytokines, gated under CD4 and CD8, are tier 2. A cell's label lists the
+positive markers of each tier in panel order, tiers joined by ` | `, for
+example `CD4+ | IFNy+ TNFa+`. A tier with no positive marker reads `none`,
+except the first, which names its markers as negative (`CD4- CD8-`); tiers in
+which nothing was decided for the cell are left out.
+
+Labels come from marker names, not gate names, so gates spelled `IFNy` in one
+workspace and `INFy` in another give one label once `--marker_aliases` makes
+the marker names agree. A cell with no decision on any marker is labelled
+`(no decision)`.
+
+Combinations with fewer than `--min_combination_cells` cells in the whole run
+are pooled as `other (rare)` everywhere: in the colours, the fit balancing,
+supervision, the separation metrics, `combination_counts.csv` and the frequency
+and change tables. They keep their own features, and their calls stay in the
+`call_<marker>` columns of `cells.csv.gz`; lower `--min_combination_cells`
+(`0` turns pooling off) to count them separately.
+
+When a marker is decided for more than half of a lineage's cells (counted with
+the sampling weights, so a share of cells rather than of tubes), the cells of
+that lineage left without a decision on it, typically those of a sample whose
+workspace lacks the gate, are treated as negative for the marker. The log
+reports it, and `run_info.json` lists each fill per sample.
+
+### Sampling and the balanced fit
+
+1. **Counts first.** For every sample, the cells of each combination are
+   counted before anything is sampled (`combination_counts.csv`). Every
+   frequency in a legend or a CSV comes from these counts.
+2. **Stratified sampling.** Per sample, at most `--cells_per_combination` cells
+   of each call pattern are kept; rarer patterns are kept whole. Each kept cell
+   carries a weight (cells of its pattern in that sample / cells kept), which
+   restores the full counts wherever frequencies are rebuilt from the plotted
+   cells. A sample in which no gate decides anything is sampled as one pattern,
+   not dropped.
+3. **Balanced fit.** The UMAP is fitted on a set in which no combination has
+   more than `--umap_subsample` / (number of combinations) cells (100000 /
+   number of combinations when it is `0`). Smaller combinations are fitted
+   whole, and what they leave unused is not handed to the large ones, so the
+   fit set can be much smaller than `--umap_subsample`, and a small run is
+   balanced too. The other kept cells are projected onto the fitted embedding
+   (`uwot::umap_transform`). This gives rare and common combinations comparable
+   room; it also means that **island area does not reflect frequency**.
+
+The projection's neighbour search runs on every plotting core (`--n_cores`).
+It finds the same neighbours at any thread count, so the coordinates do not
+depend on it.
+
+Some options do not apply in this layout. `--downsample` and
+`--normalize_data` are ignored with a warning (`--normalize_umap` still sets
+the marker colours). The subgate plots of the markers layout
+(`by_subpopulation`, `by_level<N>`) are not written, and `--subpop_mode`,
+`--subpop_select`, `--subpop_levels_select` and `--no_subpop_levels` have no
+effect.
+
+### Supervision
+
+`--supervise w`, with `w` between 0 and 1, fits the UMAP with the combination
+label as target (uwot's `target_weight = w`); the default `0` fits without one.
+It pulls each combination together more tightly. Projected cells are placed
+from their features only, since uwot's projection takes no target.
+
+### Separation metrics
+
+`separation_metrics.csv` scores the embedding against the combination labels,
+on up to 50000 cells balanced across labels, using each cell's 15 nearest
+neighbours in the 2-D embedding. The first row, `(macro average)`, weights
+every combination equally; one row per combination follows.
+
+| Column | Meaning |
+|--------|---------|
+| `label` | The combination, or `(macro average)` |
+| `cells_scored` | Cells of the label among the scored cells (not the run's total; see `combination_counts.csv` for those) |
+| `knn_purity` | Share of a cell's 15 nearest neighbours that carry its label, averaged over the label's cells |
+| `isolated` | Share of the label's cells whose 15 nearest neighbours all carry its label |
+| `silhouette` | Distance to the nearest other label's centroid against distance to its own: 1 = far from every other island, 0 or below = overlapping |
+| `group_mixing` | Within the label, how often neighbours come from a different workspace relative to chance (NA for a label found in one workspace only): 1 = as mixed as chance, 0 = every neighbour from the cell's own workspace |
+| `sample_mixing` | The same over samples (NA for a label found in one sample only): 1 = the label's samples are mixed as by chance, 0 = each sample sits apart inside the island |
+
+The metrics need the `RANN` or `FNN` package; without either the file is not
+written. The two mixing columns are the most useful in practice: a low value
+means the same combination from different workspaces or samples lands in
+different places, which points at acquisition or gating differences, or a real
+per-sample shift, rather than at the combination itself. The log lists every
+island of at least 200 scored cells with either mixing below 0.5, and every
+island with `isolated` below 0.9: islands apart in feature space can still be
+drawn touching, and two touching colours are then not one population.
+
+> **Read the islands as the gating, not as a finding.** The layout is
+> gate-driven by construction: the gap puts cells with different calls apart
+> before UMAP sees them, and `--supervise` adds the labels themselves. Separate
+> islands, high purity and a high silhouette restate the gates; they are not
+> independent evidence that the combinations differ biologically, and a
+> misplaced gate gives a clean island of wrongly called cells. What the layout
+> adds is the structure inside each island and how the composition of
+> combinations changes between samples and metadata levels.
+> [Reading the plots](../methods/gate-anchored-layout.md#reading-the-plots)
+> says in plain terms what each figure shows and what it does not.
+
+### Plot style
+
+Combinations are coloured by their first-tier group: one muted hue family per
+group (CD4+, CD8+, ...), the group's `| none` combination in its lightest tint
+and darker shades for more positive markers, an all-negative first tier
+(`CD4- CD8-`) in neutral greys, `(no decision)` in a near-black slate and
+`other (rare)` in light grey. A group with a single combination gets an accent
+colour between the families. The positive combinations of a family, the
+accents, and every colour after the twelve reference colours when there are no
+families are each the muted candidate furthest in CIE-Lab from every colour
+already used, so even a large family stays tellable apart. Points are
+small and translucent, sized and faded per combination to its density unless
+`--point_size` and `--point_alpha` are given. There are no axes, grid or box,
+only a short
+UMAP1/UMAP2 arrow in the lower-left corner, and no text labels or leader lines
+on the islands; the legend names the combinations.
+
+The file, workspace, annotation and per-file marker plots keep their usual
+style on the same coordinates. The conjoint marker plots
+(`umap_<pop>_marker_<M>_ALL`) are redrawn in the clean style, still in viridis
+and with the same colour limits as the per-file plots of that marker, and
+their subtitle says whether `--normalize_umap` scaled the values. This also
+happens with `--split_by` in the markers layout.
+
+### MTB example
+
+```bash
+Rscript scripts/umap_from_flowjo.R \
+  --wsp /mnt/volume/data/MTB_FACS/wsp \
+  --fcs_dir /mnt/volume/data/MTB_FACS/fcs \
+  --population "Lymphocytes/Single Cells/Live cells" \
+  --marker_aliases "INFy=IFNy;IFN=IFNy;TNF=TNFa" \
+  --layout gates \
+  --sample_metadata mtb_umap_metadata.csv \
+  --filter "stimulation=stimulated" \
+  --split_by timepoint \
+  --output_formats png,svg \
+  --output_dir results/umap_mtb_gates
+```
+
+This pools the Live cells of all 20 workspaces. The files spell IFNg as `INFy`
+or `IFN` and TNFa as `TNF` or `TNFa`, so the aliases give each one name. The
+decision markers found under `Live cells` are CD4 and CD8 (the quadrant gates)
+and CD107a, IL-2, IFNy and TNFa (the gates under CD4 and CD8). Only stimulated
+tubes go in, and the embedding is drawn once per vaccination level, with the
+fold-change maps drawn against `V0 pre-vaccination`, the first level in natural
+order. The metadata file is described in the next section.
+
+---
+
+## Sample metadata, filters and split plots
+
+One table describes the samples. Any of its columns can then colour the
+embedding, select which samples go in, or split every plot into one per level.
+Nothing here is specific to patient or timepoint: a column is a column.
+
+### The metadata table
+
+`--sample_metadata` takes a CSV, comma- or semicolon-separated (detected from
+the header line). Every column is read as text, so `01` stays `01`.
+
+* **The sample column.** `--sample_id_column` names it. Otherwise the first of
+  `sample_id`, `sample`, `sampleID`, `sample_name`, `filename` and `file` that
+  the table has is used, in that order of preference rather than the order of
+  the columns (so a `sample` column wins over `filename`), and failing that the
+  first column.
+* **Matching.** A row matches a sample by FCS file name, ignoring case, any
+  folder in front of the name, and the `.fcs` extension (with or without the
+  `.fcs_0`-style suffix of FlowJo sample names). `MTB011_1_V3W315_neg.fcs` and
+  `MTB011_1_V3W315_neg` are the same sample. The run's display name and the
+  workspace name are tried after the file name, so a table keyed on workspace
+  annotates every sample of that workspace.
+* **Duplicates** give a warning, and the first row wins.
+* **`Unassigned`.** A sample with no row is kept, with `Unassigned` in every
+  column and a warning naming it. Blank cells and `NA`, `n/a`, `null`, `?` and
+  `-` also read as `Unassigned`. It is drawn grey in the annotation plots, never
+  becomes a split level, and fails every `=` filter clause that does not name it.
+
+Write the `filename` column from the FCS folder rather than typing it. In MTB,
+the `MTB16_1_...`, `MTB57_...` and `MTB59_...` files are not zero-padded
+although their workspaces are, and a retyped `MTB016_1_...` leaves those samples
+`Unassigned`. The app can write a template for the loaded samples: a `filename`
+column, one column per named group of the pattern box, and one row per FCS file.
+In the app the table can also be uploaded as TSV or XLSX (first sheet); it is
+stored as CSV.
+
+**MTB example** (`mtb_umap_metadata.csv`, one row per FCS file, 328 rows):
+
+```
+filename,patient,prior_peptide_vaccination,visit,timepoint,week,stimulation,cocktail
+MTB011_1_V3W315_234216.fcs,MTB011,no,V3W315,V3 after 3rd vaccination,W315,stimulated,234216
+MTB011_1_V3W315_neg.fcs,MTB011,no,V3W315,V3 after 3rd vaccination,W315,unstimulated,neg
+MTB012_2_V4W70_215008.fcs,MTB012,yes,V4W70,V4 after 4th vaccination,W070,stimulated,215008
+MTB59_1_V0W0_224065.fcs,MTB059,no,V0W0,V0 pre-vaccination,W000,stimulated,224065
+MTB59_1_V1W5_214154.fcs,MTB059,no,V1W5,V1 after 1st vaccination,W005,stimulated,214154
+```
+
+| Column | Levels |
+|--------|--------|
+| `patient` | `MTB011` ... `MTB088`, zero-padded even where the file name is not |
+| `prior_peptide_vaccination` | `no`, `yes` |
+| `visit` | the `V..W..` token of the file name, e.g. `V3W315` |
+| `timepoint` | `V0 pre-vaccination`, `V1 after 1st vaccination` ... `V4 after 4th vaccination` |
+| `week` | `W000` ... `W315`, zero-padded |
+| `stimulation` | `stimulated`, `unstimulated` (the neg tube) |
+| `cocktail` | the peptide pool, `neg` for the unstimulated tube |
+
+**Without a table**, `--sample_pattern` takes a regular expression with named
+capture groups, applied to each sample's display name; the group names become
+the columns:
+
+```bash
+--sample_pattern "(?<patient>MTB[0-9]+)_[0-9]_(?<visit>V[0-9]W[0-9]+)"
+```
+
+It is ignored when `--sample_metadata` is given. A pattern only knows what the
+names contain: in MTB it would make `MTB016` and `MTB16` two patients.
+
+`--annotate` picks which annotation columns get plots, in that order (default:
+all). Each chosen column gives `umap_<pop>_annot_<col>_ALL`, all cells coloured
+by the column, and one `umap_<pop>_annot_<col>_level_<level>` per level, that
+level's cells in one colour over all cells in grey. The `--split_by` columns
+are added to the list, since a split needs their values per cell; `--filter`
+reads every column of the metadata, whatever `--annotate` selects.
+
+### Filters
+
+`--filter` keeps samples by their metadata before anything is extracted, so a
+filtered-out sample is never read. It works in both layouts and filters on the
+annotation columns, so it needs `--sample_metadata` or `--sample_pattern`.
+
+```bash
+--filter "stimulation=stimulated"                 # keep samples with this value
+--filter "stimulation!=unstimulated"              # drop samples with this value
+--filter "stimulation=stimulated;timepoint!=V4 after 4th vaccination"
+```
+
+* Clauses are separated by `;` and must all hold.
+* `column=a,b` keeps samples whose value is `a` or `b`; `column!=a,b` drops them.
+* Values are compared exactly, case included, after trimming spaces around them.
+  A value containing `,` or `;` cannot be named.
+* A column the metadata does not have is an error that lists the columns it has.
+
+Quote the whole value: an unquoted `;` ends the shell command (see
+[Quoting on the command line](#quoting-on-the-command-line)).
+
+### Split plots
+
+`--split_by col1,col2` draws, for each column, the same embedding once per
+level, that level's cells in colour over a light grey silhouette of all cells.
+It works in both layouts. In the `gates` layout cells are coloured by gate
+combination and every percentage comes from the full counts. In the `markers`
+layout they are coloured by their subgate label (`--subpop_mode`); with
+`--subpop_mode combinations` by gate combination, the percentages again from
+the full counts. With the other modes the percentages are shares of the
+plotted cells, so of the downsampled ones with `--downsample`.
+
+* **Level order** is natural: runs of digits compare as numbers, so
+  `W5 < W12 < W110` and `V0 ... < V1 ... < V4 ...`. `--level_order` overrides
+  it per column, `"timepoint=V0 pre-vaccination,V2 after 2nd vaccination;week=W000,W005"`:
+  the listed levels come first in that order, the rest follow in natural order,
+  and a listed level that does not occur gives a warning.
+* **The reference level** for the fold-change maps is the first level in that
+  order. `--split_reference "timepoint=V0 pre-vaccination"` picks another.
+
+Per column the run writes:
+
+* `umap_<pop>_split_<col>_<level>`: that level's cells coloured by combination
+  over the grey silhouette of all cells. The legend gives each combination's
+  mean per-sample percentage of the population in that level.
+* `umap_<pop>_split_<col>_panel`: all levels side by side, with shared colours
+  and one legend.
+* `umap_<pop>_diff_<col>_<level>`: every island coloured by how the frequency
+  of its combination changed at this level against the reference, as
+  `log2((mean % at level + p) / (mean % at reference + p))`. A mean % is the
+  combination's percentage of the population averaged over the level's
+  samples, so every **sample** counts equally. `p` is one cell in the median
+  sample of the two levels (100 / its population cells, in %), which keeps a
+  change of well under one cell per sample pale. Colours stop at 8-fold either
+  way, and a combination absent at both levels is grey. There is no map for
+  the reference itself.
+* `combination_frequencies_<col>.csv`: per level and combination, the mean and
+  SD over the level's samples of the combination's percentage of the
+  population, and the number of samples.
+* `combination_change_<col>.csv`: the numbers behind the fold-change maps, one
+  row per level other than the reference and combination: `column`, `level`,
+  `reference`, `combination`, `mean_pct_level`, `mean_pct_reference`,
+  `log2_fold_change` (NA when the combination is absent at both levels),
+  `n_samples_level`, `n_samples_reference` and `pseudo_pct` (the `p` above).
+
+A fold-change map is descriptive: it compares two means over samples, without
+a test or a confidence interval, and the samples of two levels need not come
+from the same patients. In MTB, `V0 pre-vaccination` has 8 stimulated tubes
+from 4 patients, none of them previously peptide-vaccinated, while
+`V1 after 1st vaccination` has 60 from 12,
+so a change against V0 mixes time with differences between patients, and one
+patient can drive the change of a rare combination. For tests, start from the
+per-sample counts in `combination_counts.csv`.
+
 ---
 
 ## Quoting on the command line
@@ -419,6 +930,8 @@ In practice that means:
 # separate command, and the script silently receives only the first pair.
 --marker_aliases "TNF=TNFa;IFN=INFy"
 --population_map "MTB016=/Lymphocytes/Live cells;MTB023=/Lymphocytes/Viable"
+--filter "stimulation=stimulated;timepoint!=V4 after 4th vaccination"
+--split_reference "timepoint=V0 pre-vaccination"
 
 # Parentheses and '+' — real FlowJo workspaces contain both.
 --workspaces "MTB061_ (2),MTB074"
@@ -459,19 +972,50 @@ group: "1"                                          # quoted: keep it a string
 | `--group` | `1` | FlowJo sample group to load: an index, **or a group name** such as `"All Samples"` |
 | `--allow_missing_samples` | off | Drop samples whose FCS file is not found instead of failing, reporting each one (see [above](#loading-anyway-when-fcs-files-are-missing)). An *ambiguous* name is still fatal |
 | `--expected_samples` | `0` | If `> 0`, warn when the run does not total this many samples across all workspaces |
-| `--markers` | all common | Comma-separated subset of marker names to use/plot |
-| `--subpop_mode` | `furthest` | Subgate set for the subpopulation plot: `furthest`, `cd4cd8`, `direct`, `deepest`, `none` (see [above](#subpopulation-colouring)) |
-| `--subpop_select` | — | Comma-separated explicit gate list (relative path or bare name) used as the colour partition, overriding `--subpop_mode` |
-| `--normalize` | `none` | Per-marker normalisation from the pooled gated cells: `none`, `zscore`, `minmax`. Applied before UMAP and used for the marker colour scales |
+| `--report_json` | none | With `--list_populations`, also write the whole load to this path as JSON. This is what the Dash app reads |
+| `--sample_metadata` | none | CSV keyed on sample (see [The metadata table](#the-metadata-table)). Every other column becomes a per-sample annotation that can be plotted, filtered on and split by |
+| `--sample_id_column` | see description | The `--sample_metadata` column holding the sample identifier. Default: the first of `sample_id`, `sample`, `sampleID`, `sample_name`, `filename`, `file` present, else the first column |
+| `--sample_pattern` | none | Alternative to `--sample_metadata`: a regex with named capture groups applied to the sample name, e.g. `"(?<patient>MTB[0-9]+)_[0-9]_(?<visit>V[0-9]W[0-9]+)"`. Group names become the columns. Ignored when `--sample_metadata` is given |
+| `--annotate` | all columns | Comma-separated subset of annotation columns to plot, in this order. The `--split_by` columns are always added |
+| `--filter` | none | Keep only matching samples, before anything is extracted: `"col=a,b;col2!=c"` (see [Filters](#filters)). Works in both layouts and on any metadata column, whatever `--annotate` selects |
+| `--split_by` | none | Comma-separated metadata columns. Per column: one plot per level, a panel of all levels, fold-change maps against a reference level, `combination_frequencies_<col>.csv` and `combination_change_<col>.csv` (see [Split plots](#split-plots)). Works in both layouts |
+| `--level_order` | natural sort | Display order of levels: `"col=lvA,lvB;col2=..."`. Levels not listed follow in natural order |
+| `--split_reference` | first level | Reference level per column for the fold-change maps: `"col=level;col2=level"` |
+| `--markers` | all common | Comma-separated subset of marker names to use/plot. With `--layout gates`: exactly these markers become features; gate-decided ones get the gap transform, the others enter without a jump |
+| `--subpop_mode` | `furthest` | Subgate set for the subpopulation plot: `furthest`, `cd4cd8`, `direct`, `deepest`, `combinations`, `none` (see [above](#subpopulation-colouring)). No effect with `--layout gates` |
+| `--subpop_select` | — | Comma-separated explicit gate list (relative path or bare name) used as the colour partition, overriding `--subpop_mode`. No effect with `--layout gates` |
+| `--normalize_data` | `none` | Per-marker normalisation of the values the **embedding** is computed from: `none`, `zscore`, `minmax`. Changing it moves the points; it is a different analysis. Ignored with `--layout gates`, with a warning |
+| `--normalize_umap` | `none` | Per-marker normalisation of the values the **marker colours** are taken from, applied after the embedding exists. Changing it recolours the same coordinates and moves nothing |
+| `--normalize` | none | Deprecated alias of `--normalize_data`; passing both is an error |
 | `--output_dir` | `umap_flowjo` | Output directory for plots |
 | `--output_formats` | `svg` | Comma-separated formats: `png,pdf,svg` |
-| `--downsample` | `0` | Max cells per sample after gating (`0` = no downsampling) |
+| `--downsample` | `0` | Max cells per sample after gating (`0` = no downsampling). Ignored with `--layout gates`, which samples per combination instead |
+| `--layout` | `markers` | `markers`: embed the FlowJo values of the markers, as described above. `gates`: gate-anchored features, combination labels, stratified sampling, balanced fit and the muted plot style (see [Gate-separated layout](#gate-separated-layout)) |
+| `--gate_gap` | `2` | `gates` layout: jump added at each gate cut of the deepest tier, in feature units (shallower tiers get it times `--gate_tier_ratio` per tier). The within-side term is bounded by 1, so the two sides of a gate are more than `2 * (gate_gap - 1)` apart |
+| `--gate_tier_ratio` | `2` | `gates` layout: how much larger the jump is one tier up the gating tree; with 2, CD4 and CD8 get twice the cytokines' jump and the islands of one lineage gather in one region. Must be 1 or more |
+| `--gate_softness` | `4` | `gates` layout: tanh softness, in units of the marker's negative-population MAD around its anchor |
+| `--viability_pattern` | built-in list | `gates` layout: case-insensitive regular expression of marker names that are viability dyes and never decide a combination. The built-in list covers names such as `live`, `dead`, `viab`, `zombie`, `fixable`, `ALD`, `7-AAD`, `DAPI`, `PI`, `FVD`, `FVS`, `SYTOX`, `DRAQ7`, `Aqua`, `L/D` and `LD`; `""` turns it off |
+| `--supervise` | `0` | `gates` layout: uwot `target_weight` with the combination label as target; `0` = unsupervised |
+| `--cells_per_combination` | `2000` | `gates` layout: per sample, the most cells kept of each call pattern; rarer ones are kept whole |
+| `--min_combination_cells` | `50` | `gates` layout: combinations with fewer cells in total (weighted back to the full counts) are pooled as `other (rare)`, in the plots and in every count and frequency table; `0` turns pooling off |
 | `--n_neighbors` | `15` | UMAP `n_neighbors` |
-| `--min_dist` | `0.1` | UMAP `min_dist` |
+| `--min_dist` | `0.1`; `0.25` with `--layout gates` | UMAP `min_dist` |
 | `--metric` | `euclidean` | UMAP distance metric |
-| `--seed` | `42` | Random seed (UMAP + downsampling) |
-| `--point_size` | `0.4` | ggplot point size |
-| `--point_alpha` | `0.6` | ggplot point alpha |
+| `--umap_init` | `auto` | Initial layout: `auto` (spectral below 300k fitted points, PCA above), `spectral`, `pca`, `random`. Spectral is the best start but single-threaded, and on millions of cells it is the whole run. The PCA start is scaled to a 0-10 range; unscaled, it does not converge on FlowJo values |
+| `--umap_subsample` | `0` | Fit the embedding on this many randomly chosen cells and project the rest onto it; `0` = fit on every cell. With `--layout gates`: the fit budget, each combination contributing at most this / (number of combinations) cells, and `0` means 100000 (see [Sampling and the balanced fit](#sampling-and-the-balanced-fit)). Ignored with `--fit_subset supercell` |
+| `--background` | — | `column=level` of the background samples, e.g. `stimulation=unstimulated`; frequencies become sample minus background for cytokine responses (see [Background subtraction](#background-subtraction-and-an-existing-map)). Needs `--pair_by` |
+| `--pair_by` | — | Comma-separated metadata columns a sample shares with its background sample, e.g. `patient,visit` |
+| `--umap_model` | — | A saved `umap_model.uwot` (markers layout): nothing is fitted, every cell is projected onto that map |
+| `--no_resume` | off | Recompute every step instead of reusing the checkpoints an earlier run into the same `--output_dir` saved (see [Restarting a run](#restarting-a-run)) |
+| `--replot` | — | Run folder to redraw from its saved files (see [Output](#output)); nothing is read or recomputed |
+| `--fit_subset` | `random` | Markers layout: fit on `random` cells (`--umap_subsample`) or on SuperCellCyto `supercell` means, then project every cell (see [Fit set of the markers layout](#fit-set-of-the-markers-layout)) |
+| `--supercell_gamma` | `20` | Cells per supercell with `--fit_subset supercell`; above 1 |
+| `--supercell_k_knn` | `5` | Neighbours of SuperCellCyto's within-sample kNN graph with `--fit_subset supercell` |
+| `--supercell_max` | `100000` | Most supercells UMAP is fitted on with `--fit_subset supercell`; gamma is raised to cells / this on a larger cohort (see [Fit set of the markers layout](#fit-set-of-the-markers-layout)) |
+| `--n_cores` | `0` | Worker processes for the per-file plots: `0` = automatic, leaving one core free; `1` = no parallelism. Capped at the cgroup CPU quota. An explicit value above 1 also runs the embedding multi-threaded, which is reproducible but gives different coordinates from a single-threaded run. With `--layout gates` the projection of the non-fitted cells always uses the plotting cores, which changes its speed but not the coordinates |
+| `--seed` | `42` | Random seed (UMAP, downsampling, and the sampling and fit set of `--layout gates`) |
+| `--point_size` | `0.4`; automatic in the styled plots | ggplot point size. Unset, the plots in the usual style (file, workspace, subpopulation, annotation and marker plots) use 0.4, and the combination, split, panel and styled conjoint marker plots size the points of each combination to its density. A value applies to every plot |
+| `--point_alpha` | `0.6`; automatic in the styled plots | ggplot point alpha, set the same way as `--point_size` |
 | `--plot_width` | `10` | Plot width (inches) |
 | `--plot_height` | `8` | Plot height (inches) |
 | `--src_dir` | auto | Path to the repo `src` directory (auto-detected from the script location) |
@@ -483,16 +1027,137 @@ command line.
 
 ## Output
 
-All files are written to `--output_dir` (created if needed). Plots have no
-background grid. File names are sanitised from the population and marker names.
+All files are written to `--output_dir` (created if needed), one subfolder
+per kind of output, so a figure can be found without scrolling past two
+thousand per-sample plots:
+
+```
+<output_dir>/
+  run_info.json, plot_index.json    what was run, and every plot written
+  overview/                         by combination, file, workspace, subgate
+  markers/                          one map per marker, all cells
+  markers/per_sample/<marker>/      the per-file marker plots
+  metadata/<column>/                coloured by an annotation, one plot per level
+  splits/<column>/                  per-level plots and the side-by-side panel
+  changes/<column>/                 fold-change maps, combination_frequencies_ and
+                                    combination_change_<column>.csv
+  data/                             cells.csv.gz, supercells.csv.gz,
+                                    combination_counts.csv, gate_decisions.csv,
+                                    separation_metrics.csv, background_pairs.csv,
+                                    sample_metadata.csv
+  model/                            umap_model.uwot
+  checkpoints/                      for resuming (see Restarting a run)
+```
+
+File names are the same as before and say what a plot is wherever it sits.
+Runs before 2026-10-15 wrote everything flat into `--output_dir`;
+`Rscript scripts/organise_umap_run.R --run <folder> [--dry_run]` moves such a
+run into this layout (and rewrites its `plot_index.json`), and `--replot`, the
+app and `scripts/compare_umap_runs.R` read both. Plots have no background
+grid. File names are sanitised from the population and marker names.
 
 | File | Content |
 |------|---------|
 | `umap_<pop>_by_file.<fmt>` | Shared embedding, points coloured categorically by source file |
 | `umap_<pop>_by_workspace.<fmt>` | Shared embedding, points coloured by source **workspace**. Only written when more than one workspace was loaded — see [Many workspaces at once](#many-workspaces-at-once) |
-| `umap_<pop>_by_subpopulation.<fmt>` | Shared embedding, points coloured by FlowJo subgate (per `--subpop_mode`); omitted when `--subpop_mode none` finds no subgates |
-| `umap_<pop>_marker_<M>_ALL.<fmt>` | **Conjoint** plot per marker `M` — all cells, viridis-coloured by expression |
+| `umap_<pop>_by_subpopulation.<fmt>` | Shared embedding, points coloured by FlowJo subgate (per `--subpop_mode`); omitted when `--subpop_mode none` finds no subgates, and not written with `--layout gates`, which colours by combination instead |
+| `umap_<pop>_marker_<M>_ALL.<fmt>` | **Conjoint** plot per marker `M` — all cells, viridis-coloured by expression. With `--layout gates` or `--split_by` it is redrawn in the clean style on the same colour scale (see [Plot style](#plot-style)) |
 | `umap_<pop>_marker_<M>_file_<sample>.<fmt>` | **Per-file** plot per marker `M` — that file's cells on the shared coordinates and colour scale |
+| `umap_<pop>_annot_<col>_ALL.<fmt>` | All cells coloured by annotation column `col`, with `Unassigned` in grey. Written per column chosen by `--annotate` when `--sample_metadata` or `--sample_pattern` is given |
+| `umap_<pop>_annot_<col>_level_<level>.<fmt>` | One per level of `col`: that level's cells in one colour over all cells in grey |
+
+With `--layout gates`, or with `--split_by` in either layout, the run also
+writes the files below. Those marked *gates* are written only in the `gates`
+layout; the split, change and frequency files only with `--split_by`.
+
+| File | Content |
+|------|---------|
+| `umap_<pop>_by_combination.<fmt>` | All plotted cells coloured by combination label (by subgate label in the markers layout), in the muted style (see [Gate-separated layout](#gate-separated-layout)) |
+| `umap_<pop>_split_<col>_<level>.<fmt>` | One per level of each `--split_by` column: that level's cells coloured by combination over a light grey silhouette of all cells. The legend gives each combination's mean per-sample percentage in that level |
+| `umap_<pop>_split_<col>_panel.<fmt>` | All levels of `col` side by side, shared colours, one legend |
+| `umap_<pop>_diff_<col>_<level>.<fmt>` | Each island coloured by the log2 fold change of its combination's mean per-sample percentage at the level against the reference level, capped at 8-fold, grey where the combination is absent at both, with a grey outline of the embedding (see [Split plots](#split-plots)). Not drawn for the reference itself |
+| `combination_frequencies_<col>.csv` | Per `--split_by` column: `column`, `level`, `combination`, `mean_pct` (mean over the level's samples of 100 x cells / population cells), `sd_pct`, `n_samples`. From the full counts in the gates layout, from the plotted cells in the markers layout |
+| `combination_change_<col>.csv` | Per `--split_by` column, the numbers behind the fold-change maps: `column`, `level`, `reference`, `combination`, `mean_pct_level`, `mean_pct_reference`, `log2_fold_change`, `n_samples_level`, `n_samples_reference`, `pseudo_pct` |
+| `combination_counts.csv` | *gates*. Per sample and combination, from all cells before sampling and zero-filled: `sample`, `combination`, `cells`, `population_cells` |
+| `gate_decisions.csv` | *gates*. Per sample, every decision read from the gates: `gate`, `parent`, `depth`, `channel`, `marker`, `polarity`, `cut`, `method`, `excluded` (share of the parent on the excluded side), `n_parent`, `n_member`, `n_axes` (marker axes the gate binds on, bands included, markers an ancestor gate decides left out), `sample`, `workspace` |
+| `separation_metrics.csv` | *gates*. How well the embedding separates the combinations: `label`, `cells_scored`, `knn_purity`, `isolated`, `silhouette`, `group_mixing`, `sample_mixing` (see [Separation metrics](#separation-metrics)) |
+| `cells.csv.gz` | *gates*. Every plotted cell: `UMAP1`, `UMAP2`, `sample`, `workspace`, `combination`, one `call_<marker>` column per decided marker (1, 0 or NA), `weight`, `fit` (in the fit set or projected) and one `annot_<col>` column per annotation |
+| `run_info.json` | *gates*. Creation time, command line, git commit and dirty state, R and package versions, seed, thread count, the parameters that shape the result (population, gate, sampling and UMAP settings, filter, splits, metadata source, markers and aliases), the features, feature scales, a summary of the decisions and fills, cell, fit-set and sample counts, samples left out by the filter, and the weighted total of each combination |
+| `sample_metadata.csv` | *gates*. Copy of the `--sample_metadata` table (not written with `--sample_pattern`) |
+| `plot_index.json` | Every plot written, with its kind (`combination`, `split`, `split_panel`, `diff`, `marker`, ...), column, level and reference. The app's gallery sorts plots by it |
+
+Every markers-layout run also keeps what it computed, written before any plot
+so a plotting failure cannot cost it, and enough to redraw or re-analyse the
+embedding without reading a workspace or recomputing anything:
+
+| File | Content |
+|------|---------|
+| `cells.csv.gz` | *markers*. Every cell: `UMAP1`, `UMAP2`, `sample`, `workspace`, `label` (subgate or, with `--subpop_mode combinations`, gate combination), `supercell` (with `--fit_subset supercell`: its supercell's number within the sample, NA for a sample too small to group), one `annot_<col>` column per annotation and one `value_<marker>` column per embedded marker (the values UMAP saw, after `--normalize_data`) |
+| `supercells.csv.gz` | *markers*, `--fit_subset supercell`. The fit set, one row per supercell: `sample`, `supercell`, `cells` (its size) and the mean of each marker. Written as soon as SuperCellCyto finishes |
+| `umap_model.uwot` | The fitted UMAP model, whenever the embedding was fitted on a subset and the rest projected (supercells, `--umap_subsample`, the gates layout's balanced fit). `uwot::load_uwot()` reads it and `uwot::umap_transform()` places new cells on the same map. Written right after the embedding |
+| `run_info.json` | *markers*. As in the gates layout, with the fit set (`fit_subset`, gamma and k_knn or `umap_subsample`), the embedded markers, the supercell count and how long SuperCellCyto took, and the cell count per label |
+| `gate_decisions.csv`, `combination_counts.csv`, `sample_metadata.csv` | *markers*, as in the gates layout: the decisions and full counts with `--subpop_mode combinations`, the metadata copy with `--sample_metadata` |
+
+### Restarting a run
+
+Every step saves a checkpoint in `checkpoints/` inside the run folder as soon
+as it is done: `extract.rds` (the cells, labels and values read from the
+workspaces), `supercells.rds`, `model.rds` (with `umap_model.uwot`) and
+`embedding.rds` (the coordinates). Each carries a key of the settings it
+depends on, and of the inputs' file sizes and modification times. Running the
+same command into the same folder again reuses every step whose key still
+matches and continues from the first that does not:
+
+| Rerun after | Recomputed |
+|-------------|------------|
+| a crash, cancel or power cut | from the step that was running |
+| changing only plot settings (point size, formats, ...) | the plots only |
+| changing `--min_dist`, `--n_neighbors`, `--seed`, ... | the fit, projection and plots |
+| changing `--supercell_gamma` or `--supercell_max` | from the supercells on |
+| changing the markers, filter, population or an input file | everything |
+
+The projection is seeded per chunk, so a run resumed from a saved model gives
+the coordinates the uninterrupted run would have. On the two-workspace MTB
+test a rerun with the same settings took 66 s instead of 185 s and wrote a
+byte-identical `cells.csv.gz`, as did a run "crashed" after its model was
+saved. `--no_resume` recomputes everything. The checkpoints of an 8-million
+cell run take a few GB; delete `checkpoints/` once a run is final.
+
+To redraw every plot of a run from these files, for example with other point
+sizes, plot dimensions or more cores, without reading a workspace or
+recomputing anything:
+
+```bash
+Rscript scripts/umap_from_flowjo.R --replot /path/to/run_folder --n_cores 24
+```
+
+`--replot` reads `cells.csv.gz`, `run_info.json` and `combination_counts.csv`,
+takes the population, splits, level order and colouring from `run_info.json`,
+and writes the plots into the run folder, replacing the old ones. Only
+`--n_cores`, `--point_size`, `--point_alpha`, `--plot_width`, `--plot_height`
+and `--output_formats` apply. On the two-workspace MTB test it gave the same
+132 PNG files, byte for byte, as the run that computed them, in 51 s.
+
+The overview plots (by file, by workspace, per annotation level, per marker)
+are drawn in parallel, at most 12 at a time; each one draws every cell, about
+1.3 minutes at 8 million cells.
+
+To reuse a run in R:
+
+```r
+cells <- data.table::fread(cmd = "zcat cells.csv.gz")    # or read.csv(gzfile(...))
+model <- uwot::load_uwot("umap_model.uwot")
+x <- as.matrix(cells[, grep("^value_", names(cells)), with = FALSE])
+colnames(x) <- sub("^value_", "", colnames(x))
+new_xy <- uwot::umap_transform(x[1:1000, ], model)       # same map, no refit
+```
+
+Names go through the same sanitising as every other plot: characters other than
+letters, digits, `.`, `_` and `-` become `_`, runs of `_` or `-` shrink to one,
+and both are stripped from the ends, so the level `V0 pre-vaccination`
+gives `umap_Lymphocytes_Single_Cells_Live_cells_split_timepoint_V0_pre-vaccination.png`.
+Names are cut to 100 characters, and a name that would collide with one
+already written gets `_2`, `_3`, and so on.
 
 ---
 
@@ -527,10 +1192,19 @@ directly (e.g. from another script or an interactive session):
 shared_dir <- "src/R_shared"
 source(file.path(shared_dir, "io_utils.R"))        # make_outdir
 source(file.path(shared_dir, "plot_utils.R"))      # save_plot_formats, create_safe_filename
+source(file.path(shared_dir, "memory_utils.R"))    # resolve_cores, parallel_lapply
 source(file.path(shared_dir, "stats_utils.R"))     # run_umap
+source(file.path(shared_dir, "dimred_dispatch.R")) # run_dimred
 source(file.path(shared_dir, "flowframe_utils.R")) # explore_data
-source("src/loading/flowjo_workspace.R") # workspace discovery/pairing
+source("src/loading/flowjo_workspace.R")           # workspace discovery/pairing
+source("src/loading/sample_annotations.R")         # --sample_metadata, --sample_pattern
+source("src/harmonization/panel_homogenization.R") # marker name recovery, aliases
+source("src/harmonization/panel_comparison.R")     # panel comparison
+source("src/visualization/umap_load_report.R")     # --report_json
 source("src/visualization/umap_from_flowjo.R")     # umap_from_flowjo
+source("src/visualization/umap_gate_layout.R")     # layout = "gates", filter, split_by
+source("src/visualization/umap_style.R")           # look of the styled plots
+source("src/visualization/umap_split_plots.R")     # combination, split, fold-change plots
 
 umap_from_flowjo(
   wsp_path   = "data/Killing_AML.wsp",   # or a folder of .wsp files
@@ -542,16 +1216,23 @@ umap_from_flowjo(
 )
 ```
 
-`src/loading/flowjo_workspace.R` must be sourced too: it holds the
-workspace discovery and FCS pairing (`find_workspace_files`, `index_fcs_dir`,
-`resolve_workspace_specs`, …) that `umap_from_flowjo()` calls.
+This is the list `scripts/umap_from_flowjo.R` sources. `src/loading/flowjo_workspace.R`
+holds the workspace discovery and FCS pairing (`find_workspace_files`,
+`index_fcs_dir`, `resolve_workspace_specs`, …) that `umap_from_flowjo()` calls.
+Without `umap_gate_layout.R`, `layout = "gates"`, `filter`, `split_by`,
+`level_order` and `split_reference` stop with a message naming it; without
+`umap_style.R` and `umap_split_plots.R` the combination, split and fold-change
+plots are skipped with a note.
 
-`umap_from_flowjo()` parameters mirror the CLI options (e.g. `markers` and
-`subpop_select` take character vectors rather than comma-separated strings).
-With `list_populations = TRUE` it prints the inspect blocks and returns
-(invisibly) a list of `populations`, `samples` and `markers`; otherwise it
-returns (invisibly) the `umap_coords`, the master `umap_df`, and the resolved
-`output_dir`.
+`umap_from_flowjo()` parameters mirror the CLI options (e.g. `markers`,
+`subpop_select`, `annotate` and `split_by` take character vectors rather than
+comma-separated strings). With `list_populations = TRUE` it prints the inspect
+blocks and returns (invisibly) a list of `populations`, `samples` and
+`markers`; otherwise it returns (invisibly) the `umap_coords`, the master
+`umap_df`, `workspaces`, `dropped`, the resolved `output_dir` and `layout`, and
+for a gates or split run also `cells` (one row per plotted cell),
+`gate_layout` (calls, weights, decisions and counts; gates layout only) and
+`plot_index`.
 
 ---
 
@@ -606,11 +1287,20 @@ by index and by name, sample-label collision handling, population resolution
 across differing trees, and subgate merging. What it cannot cover is CytoML's
 own behaviour — that needs a real workspace on an analysis host.
 
+```bash
+Rscript test_data/test_umap_gate_layout.R
+```
+
+covers the pure functions of `--layout gates` the same way: decisions, calls,
+anchors, features, labels, sampling, filters, level order, the change table and
+the palette, on hand-built gates that mirror the MTB tree.
+
 ---
 
 ## Related
 
 - [FlowJo → UMAP Dash app](../../app/README.md) — a GUI over this script
+- [Gate-anchored UMAP layout](../methods/gate-anchored-layout.md): the method behind `--layout gates`
 - [`src/loading/flowjo_workspace.R`](../subprojects/loading.md#flowjo_workspacer) — the workspace discovery and FCS pairing functions
 - [Getting Started](../getting-started.md) — environment setup
 - [Pipeline D — FlowJo Comparison](../pipelines/pipeline-D-flowjo-comparison.md) — inter-rater gating comparison from `.wsp` files

@@ -52,6 +52,10 @@ dependencies:
   - r-ragg         # PNG device with reliable font rendering (save_plot_formats)
   - r-svglite      # SVG device that honours the registered font (save_plot_formats)
   - r-systemfonts  # Font discovery/registration for the ragg/svglite devices
+  - r-rann         # Exact kNN for the UMAP separation metrics (--layout gates;
+                   #   skipped with a message when missing)
+  - r-ggrastr      # Rasterised points in SVG/PDF UMAP plots (plain points when
+                   #   missing, which makes multi-million-cell SVGs huge)
 
   # Bioconductor Packages (bioconductor- prefix)
   - bioconductor-opencyto

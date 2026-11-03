@@ -101,9 +101,13 @@ def _workspace_row(ws: dict, excluded: bool):
                 disabled=not loaded,
                 size="xs",
             ),
+            # c is omitted, never None, for the default colour: None reaches
+            # Mantine as null and fails to render ("Failed to parse color"),
+            # and the re-render that follows put the step 1 path fields back
+            # to their page-load values after every load.
             dmc.Text(ws["label"], fw=600, size="sm",
                      td="line-through" if (excluded or not loaded) else None,
-                     c="dimmed" if (excluded or not loaded) else None),
+                     **({"c": "dimmed"} if (excluded or not loaded) else {})),
             dmc.Badge(meaning, color=color, variant="light", size="xs"),
             dmc.Text(f"{ws.get('n_loaded') or 0}/{ws.get('n_listed') or 0}",
                      size="xs", c="dimmed"),

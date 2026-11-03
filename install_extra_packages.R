@@ -44,7 +44,10 @@ github_repos <- c(
   "DillonHammill/CytoExploreR",
   "ImmuneDynamics/Spectre",
   "biosurf/cyCombine", 
-  "tidyverse/tidyverse"
+  "tidyverse/tidyverse",
+  # --fit_subset supercell of scripts/umap_from_flowjo.R. On bioconda only for
+  # R 4.5 (bioconductor-supercellcyto), so installed from GitHub here.
+  "phipsonlab/SuperCellCyto"
 )
 
 # Function to install if missing

@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from flask import Response, abort, request, send_file
 
-from app.config import PLOT_EXTENSIONS
+from app.config import DATA_EXTENSIONS, PLOT_EXTENSIONS
 
 #: Directories whose plot files may be served (populated as galleries render).
 _ALLOWED: set[Path] = set()
@@ -27,14 +27,17 @@ def allow(directory: str | Path) -> None:
         pass
 
 
-def _is_allowed(path: Path) -> bool:
+def _is_allowed(path: Path, extensions=PLOT_EXTENSIONS) -> bool:
     try:
         resolved = path.resolve()
     except OSError:
         return False
-    if resolved.suffix.lower() not in PLOT_EXTENSIONS:
+    if resolved.suffix.lower() not in extensions:
         return False
-    return any(resolved.parent == allowed for allowed in _ALLOWED)
+    # A run keeps its plots in subfolders (overview/, splits/<col>/, ...), so
+    # anything below an allowed results folder may be served, nothing outside.
+    return any(allowed == resolved.parent or allowed in resolved.parents
+               for allowed in _ALLOWED)
 
 
 def url_for_plot(path: str | Path) -> str:
@@ -65,7 +68,10 @@ def register_route(server) -> None:
     def download_plot():  # noqa: D401 - Flask view
         raw = request.args.get("path", "")
         path = Path(raw)
-        if not raw or not _is_allowed(path) or not path.is_file():
+        # The run's tables (cells.csv.gz, run_info.json, ...) download from
+        # the same folders as its plots; they are never served inline.
+        if not raw or not _is_allowed(path, PLOT_EXTENSIONS + DATA_EXTENSIONS) \
+                or not path.is_file():
             abort(404)
         return send_file(path, as_attachment=True, download_name=path.name)
 

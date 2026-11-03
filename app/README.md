@@ -170,11 +170,87 @@ not a display choice: the R side refuses a `--population` it cannot resolve in
 every workspace, so anything outside the intersection could not be run anyway.
 The Log tab names the gates that were left out and which workspace lacks them.
 
-**3 — Parameters.** UMAP and plot options. Anything left at its default is
-omitted from the command line, so the printed command stays readable.
+**Sample metadata.** Further down step 2, upload a CSV, TSV or XLSX with one
+row per FCS file (`--sample_metadata`), or type a regular expression with named
+groups that reads the columns out of the sample names (`--sample_pattern`). The
+file names usually go in a column called `filename`. R keys the table on the
+first of `sample_id`, `sample`, `sampleID`, `sample_name`, `filename` and `file`
+that it has, in that order of preference (so a `sample` column wins over
+`filename`), otherwise on the first column. The app applies the same rule, and
+the check under the upload names the column it keyed on and any FCS file
+without a row. R itself resolves the table for the preview
+(`--annotation_preview`), so the columns and levels the form offers are the
+ones a run will see.
+
+**Download metadata template** writes a CSV with one row per loaded sample,
+keyed on its FCS file name as it is on disk. With a name pattern in the box,
+its groups become pre-filled columns (R's `(?<name>...)` syntax is accepted).
+A group named `sample_id`, `sample`, `sampleID` or `sample_name` is written as
+`<name>_group`, since R would otherwise key the table on it, and the note under
+the button says so. Fill in the rest in a spreadsheet and upload it. Generating
+the names rather than typing them matters: a retyped `MTB016` for a file called
+`MTB16_...` silently fails to match.
+
+With a metadata source, three more controls apply:
+
+| Control | Flag | What it does |
+|---|---|---|
+| Split plots by | `--split_by` | per column: one plot per level on the same embedding, all levels side by side, and a map of each level against the reference that colours every combination by its fold change in frequency |
+| Level order | `--level_order` | `column=a,b;column2=c`; the first level is the reference of the fold-change maps. Empty means natural order (`W5` before `W12`). The hint below the box lists the detected levels in that order, ready to copy and rearrange |
+| Keep only samples where | `--filter` | one column, its values, and include or exclude, giving `col=a,b` or `col!=a,b`; applied before any cell is read |
+
+Without a source these are disabled and none of them is passed. A split or
+filter column does not have to be among **Annotations to plot**; R reads it
+whatever `--annotate` selects, and adds a split column to the annotated ones. The run is refused when a split or filter names
+a column the metadata lacks, a filter value is not one of its levels, or the
+level order is malformed or names a column that is not split.
+
+**3 — Parameters.** The layout comes first:
+
+* **Gate-separated islands (recommended)**, `--layout gates`: every
+  combination of gate calls under the population gets its own island. Values
+  are re-centred within each sample on that sample's own cells of the same
+  combination, rare combinations are kept rather than downsampled away, and
+  the embedding is fitted on a set balanced across combinations. Its settings
+  sit in **Gate layout settings**
+  (`--gate_gap`, `--gate_tier_ratio` as **Lineage gap ratio**,
+  `--gate_softness`, `--supervise`, `--cells_per_combination`,
+  `--min_combination_cells`, and the fit set size `--umap_subsample`).
+  Normalisation and downsampling do not apply and are disabled.
+  `--viability_pattern`, the regular expression for marker names that are
+  never gate decisions (viability dyes by default; empty disables it), is
+  CLI-only: add it to the printed command by hand.
+* **Marker values**, `--layout markers`: the embedding of the marker values
+  themselves, as before. **Fit the embedding on** chooses what UMAP is fitted
+  on before every cell is projected onto it and plotted: **Random cells**
+  (**Random cells to fit on**, sent as `--umap_subsample`; 0 = every cell) or
+  **SuperCellCyto supercells** (`--fit_subset supercell`, with **Cells per
+  supercell** as `--supercell_gamma`, **Supercell neighbours** as
+  `--supercell_k_knn` and **Max supercells** as `--supercell_max`, which
+  raises gamma on a large cohort so the fit stays at most that size; needs
+  the R package SuperCellCyto, see `install_extra_packages.R`). For the same
+  coordinates as a command-line run, set **CPU cores** to the same number:
+  with 0 the embedding runs on one core, a different optimiser. Step 2's `combinations` colouring labels the
+  cells by gate combination as the gate layout does, without the gates
+  entering the embedding.
+
+The form starts on the gate layout while R defaults to `markers`, so
+`--layout` is always written out, and so is `--min_dist`, whose R default
+depends on the layout (0.1 for markers, 0.25 for gates; switching the layout
+swaps the field between the two unless you typed your own value). Everything
+else left at its R default is omitted from the command line, so the printed
+command stays readable, and a layout's own settings are only passed with that
+layout. Point size and alpha left at 0.4 and 0.6 are omitted too, which lets R
+size the points of the styled plots (combinations, splits, panels and the
+conjoint marker plots) automatically for each combination's density; any other
+value applies to every plot.
 
 **4 — Run.** Choose a parent directory and a folder name (pre-filled with the
 population and a timestamp, so consecutive runs never overwrite each other).
+To continue an interrupted or changed run, choose its folder instead: the
+step lists the steps saved there, and with **Reuse saved steps** on (the
+default) the run continues from the first step whose settings changed; off
+passes `--no_resume`.
 The exact command appears above the Run button. Output formats are exactly what
 you ticked in step 3 — nothing is added behind your back, which does mean a
 PDF-only run has no inline preview.
@@ -190,18 +266,30 @@ The gallery reads the **Results folder** at the top of the tab rather than
 tracking what the script said it wrote, so it shows the truth on disk. A
 finished run fills the folder in; typing or browsing to an earlier run shows
 that run instead, and the value is remembered with the rest of the form, so a
-reload or a server restart does not lose it. Files are grouped into:
+reload or a server restart does not lose it. It reads the run's subfolders
+(`overview/`, `markers/`, `splits/<column>/`, `changes/<column>/`, `data/`,
+...; see the output layout in `docs/scripts/umap-from-flowjo.md`) as well as
+the flat folders of older runs, and skips `checkpoints/`. Files are grouped
+into:
 
-* **Overview** — `by_file`, `by_workspace` (only when several workspaces were
-  loaded) and `by_subpopulation`
+* **Overview** — `by_combination` first (gate layout, or any run split by
+  metadata), then `by_file`,
+  `by_workspace` (only when several workspaces were loaded) and
+  `by_subpopulation`
+* **Split by metadata**: one accordion per split column, holding the panel with all
+  levels, then each level, then the fold-change maps against the reference
+  level, in the order R drew them
 * **Markers — all samples** — one conjoint plot per marker
 * **Markers — per sample** — one accordion per marker, whose images are only
   loaded once you open it. A full panel across several samples is hundreds of
   files, and Dash exposes no lazy-loading attribute on images, so the gallery
   has to control that itself.
 
-Marker and sample dropdowns filter all three. Clicking an image opens it full
-size. PNG is preferred for preview and is the form's default output format
+Marker and sample dropdowns filter the marker sections; a sample filter
+also hides the annotation and split sections, which are not per sample. The
+run's tables (`cells.csv.gz`, `combination_frequencies_<column>.csv`,
+`separation_metrics.csv`, `run_info.json` and the rest) are listed under
+**Data files** for download. Clicking an image opens it full size. PNG is preferred for preview and is the form's default output format
 (the CLI's own default stays `svg`): an SVG of a large embedding carries one
 node per cell and can be tens of megabytes, so an SVG over 8 MB is offered
 for download instead of being embedded.
@@ -225,14 +313,18 @@ app/
   components/filebrowser.py the reusable dmc.Tree path picker
   callbacks/
     common.py               form collection, validation, parameter mapping
-    steps.py                navigation, gating tree, command preview
+    steps.py                navigation, gating tree, metadata, command preview
     execution.py            start/cancel/poll the subprocess
     results.py              the gallery
+    fcsnames.py             the FCS names tab
+  components/health.py      the Data health panel
   services/
     fs_tree.py              lazy filesystem listing for the browser
     gating.py               population paths -> tree data
-    rscript.py              argv construction and inspect-output parsing
+    rscript.py              argv construction, load report and annotation preview reading
     runner.py               single-slot subprocess runner with a live log
+    detached.py             runs that outlive the app (log and exit code in <out>/_run)
+    report_cache.py         remembered workspace loads
     results_scan.py         output directory -> gallery structure
     serving.py              Flask route for plot files outside assets/
     session_state.py        remembered form state
@@ -254,19 +346,26 @@ The one structured thing the tab needs — the keyword table — comes back from
 as a CSV rather than being parsed out of stdout, because R owns the only
 correct FCS parser in this repo and a second one in Python would drift from it.
 
-### The one dependency on the R side
+### What the app reads from the R side
 
-Step 2 needs the marker panel, which only R can compute. `--list_populations`
-therefore prints four parseable blocks — `Samples in loaded group (N):`,
-`Population tree (N nodes):`, `Common markers (N):` and `Workspaces resolved
-(N):` — and `services/rscript.py` reads them. Both sides carry a comment saying
-the format is a shared contract. If you change those headers in
-`src/visualization/umap_from_flowjo.R`, change the parser too.
+Nothing is parsed out of R's stdout any more. Everything structured comes back
+as a file:
 
-The last block, and the `Populations not shared by all workspaces` block after
-it, are indented **four** spaces rather than two. That is load-bearing: the
-first three blocks are collected by two-space item patterns, and a two-space
-indent here would let the population parser swallow the divergence list.
+| File | Written by | Read by |
+|---|---|---|
+| load report (`--report_json`, schema 1.x) | `write_load_report()` in `src/visualization/umap_load_report.R` | `rscript.read_report` / `inspect_from_report`; a different major schema is refused rather than half-read |
+| annotation preview (`--annotation_preview`) | `preview_annotations()`, same file | `rscript.describe_annotations`: columns, levels per column, match counts |
+| `plot_index.json` in the output folder | the run | `results_scan.read_plot_index`: kind, column, level and reference of each split plot |
+
+The plot index exists because split file names cannot be read back reliably:
+`<column>_<level>` is ambiguous when a column name contains `_`, and names are
+cut at 100 characters. Without an index (an older run) the gallery falls back
+to the name tokens `_by_combination`, `_split_`, `_diff_`.
+
+Two things are still read from the log: `::progress::` lines (from
+`emit_progress()` in `src/R_shared/io_utils.R`), which drive the progress bar
+and are hidden from the log, and, for detached runs started before exit codes
+were recorded, the closing `Done. Plots written to:` line.
 
 ---
 
@@ -280,7 +379,9 @@ indent here would let the population parser swallow the divergence list.
 - **Marker and sample names in the gallery are the sanitised ones**, since they
   are recovered from filenames that went through `create_safe_filename()`.
 - **The form is remembered** between launches in `~/.cache/umap_flowjo_app/`.
-  **Reset form** clears it.
+  **Reset form** clears it. A form saved before the gate layout existed opens
+  on that layout with its `min_dist` of 0.25; the other remembered values are
+  kept.
 
 ---
 

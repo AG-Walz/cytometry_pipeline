@@ -55,6 +55,58 @@
 .SUBPOP_MULTI <- "(multiple)"
 
 # -----------------------------------------------------------------------------
+# Folder layout of a run. A cohort run writes two thousand files; flat, the
+# figure someone wants is lost among the per-sample marker plots. Each kind of
+# output has one subfolder, by metadata column where there is one:
+#
+#   run_info.json, plot_index.json    what was run, and every plot written
+#   overview/                         by combination, file, workspace, subgate
+#   markers/                          one map per marker, all cells
+#   markers/per_sample/<marker>/      the per-file marker plots
+#   metadata/<column>/                coloured by an annotation, one per level
+#   splits/<column>/                  per-level plots and the panel
+#   changes/<column>/                 fold-change maps, frequency and change tables
+#   data/                             cells, supercells, counts, decisions, pairs
+#   model/                            umap_model.uwot
+#   checkpoints/                      resume (see ckpt_save)
+#
+# File names are unchanged, so a name still says what a plot is wherever it is.
+# run_subdir() is the only place the folder names are spelt.
+# -----------------------------------------------------------------------------
+run_subdir <- function(kind, column = NULL, marker = NULL) {
+  part <- function(x) create_safe_filename(as.character(x))
+  switch(kind,
+         overview   = "overview",
+         marker     = "markers",
+         marker_file = file.path("markers", "per_sample", part(marker)),
+         annot      = file.path("metadata", part(column)),
+         split      = file.path("splits", part(column)),
+         split_panel = file.path("splits", part(column)),
+         diff       = file.path("changes", part(column)),
+         table      = file.path("changes", part(column)),
+         data       = "data",
+         model      = "model",
+         "")
+}
+
+# Path of a run's output file `name` in `kind`'s folder, created if needed.
+run_path <- function(output_dir, kind, name, column = NULL, marker = NULL) {
+  d <- file.path(output_dir, run_subdir(kind, column, marker))
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  file.path(d, name)
+}
+
+# Where an EXISTING run keeps `name`: its folder in the layout, else the run
+# folder itself (runs before 2026-10-15 wrote everything flat), else NA.
+run_find <- function(run_dir, kind, name, column = NULL) {
+  for (p in c(file.path(run_dir, run_subdir(kind, column), name),
+              file.path(run_dir, name))) {
+    if (file.exists(p)) return(p)
+  }
+  NA_character_
+}
+
+# -----------------------------------------------------------------------------
 # Resolve the requested population to a path that exists in the gating tree.
 # Accept with/without leading '/', and also match by basename or suffix.
 #
@@ -912,21 +964,61 @@ distinct_palette <- function(n) {
 # @param annotate Optional character vector naming which annotation columns to
 #   plot (default: all of them).
 # @param sample_id_column Optional name of the metadata column holding the
-#   sample identifier (default: `sample_id`, else the first column).
+#   sample identifier (default: the first of sample_id, sample, sampleID,
+#   sample_name, filename, file; else the first column).
 # @param markers Optional character vector subset of marker names (NULL = all
 #   common non-scatter markers).
-# @param subpop_mode One of 'cd4cd8', 'direct', 'deepest', 'none'.
+# @param subpop_mode One of 'furthest', 'cd4cd8', 'direct', 'deepest',
+#   'combinations' (markers layout: colour by the combination of gate calls,
+#   as the gates layout labels cells; the embedding is not affected), 'none'.
 # @param subpop_select Optional character vector of gates (relative path or bare
 #   name) used as the colour partition, overriding subpop_mode.
 # @param normalize One of 'none', 'zscore', 'minmax'.
 # @param downsample Max cells per sample AFTER gating (0 = no downsampling).
 # @param n_neighbors,min_dist,metric,seed UMAP parameters / RNG seed.
-# @param point_size,point_alpha ggplot point aesthetics.
+# @param point_size,point_alpha ggplot point aesthetics. NULL: 0.4 and 0.6 in
+#   the marker, file and annotation plots; scaled to the number of cells in
+#   the combination, split, fold-change and conjoint marker plots.
 # @param plot_width,plot_height Base plot dimensions (inches).
 # @param output_formats Named logical list, e.g. list(pdf=,png=,svg=).
 # @param list_populations If TRUE, print the gating tree and return it.
-# @return Invisibly, a list with umap_coords, umap_df, output_dir (or, in
-#   list_populations mode, the character vector of population paths).
+# @param layout "markers" (embed the FlowJo values) or "gates" (embed
+#   gate-anchored features so every combination of gate calls gets its own
+#   island; see docs/plans/umap_gate_layout_plan.md).
+# @param gate_gap,gate_tier_ratio,gate_softness Jump at each gate cut of the
+#   deepest tier, how much larger it is per tier up, and the tanh softness of
+#   the gate-anchored features (gates layout).
+# @param viability_pattern Regex of marker names never used as decisions
+#   (NULL: VIABILITY_MARKER_PATTERN; "" turns it off).
+# @param supervise uwot target_weight with the combination as label; 0 = off.
+# @param cells_per_combination,min_combination_cells Per-sample cap of kept
+#   cells per gate-call pattern; combinations with fewer cells in total are
+#   pooled as "other (rare)" (gates layout).
+# @param filter Samples to keep, "col=a,b;col2!=c" on the sample metadata
+#   (either layout).
+# @param split_by,level_order,split_reference Metadata columns to draw one
+#   plot per level of, their level order ("col=a,b;col2=..."), and the
+#   reference level of each for the fold-change maps ("col=level;...").
+# @param fit_subset Markers layout: what UMAP is fitted on before every cell
+#   is projected. "random" (umap_subsample random cells; 0 = fit on all) or
+#   "supercell" (SuperCellCyto supercell means, see umap_supercells.R).
+# @param supercell_gamma,supercell_k_knn SuperCellCyto's cells per supercell
+#   and kNN size (fit_subset = "supercell").
+# @param background,pair_by Background subtraction: "column=level" of the
+#   background samples (e.g. "stimulation=unstimulated") and the metadata
+#   columns a sample shares with its background (e.g. c("patient", "visit")).
+#   Frequencies become sample minus background, negatives 0.
+# @param umap_model Path of a saved model (umap_model.uwot of an earlier run):
+#   the fit is skipped and every cell is projected onto that map.
+# @param resume Reuse the steps a previous run into output_dir saved
+#   (checkpoints/: extraction, supercells, model, coordinates) whose settings
+#   match this run's; FALSE recomputes everything.
+# @param supercell_max Most supercells UMAP is fitted on: gamma is raised to
+#   cells / supercell_max when the cohort would give more (fit_subset =
+#   "supercell"). Keeps the fit small enough for the spectral start.
+# @return Invisibly, a list with umap_coords, umap_df, workspaces, dropped,
+#   output_dir (or, in list_populations mode, what extract_flowjo_population()
+#   returned for the inspection).
 # =============================================================================
 # =============================================================================
 # extract_flowjo_population() — everything up to the embedding
@@ -972,7 +1064,12 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
                              marker_aliases = NULL,
                              recover_markers = TRUE,
                              workspaces = NULL,
-                             report_json = NULL) {
+                             report_json = NULL,
+                             layout = "markers",
+                             sample_filter = NULL,
+                             cells_per_combination = 2000L,
+                             min_combination_cells = 50L,
+                             viability_pattern = VIABILITY_MARKER_PATTERN) {
   require(CytoML)
   require(flowWorkspace)
   require(flowCore)
@@ -1005,7 +1102,8 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
            " (got '", v, "').")
     }
   }
-  VALID_SUBPOP_MODE <- c("furthest", "cd4cd8", "direct", "deepest", "none")
+  VALID_SUBPOP_MODE <- c("furthest", "cd4cd8", "direct", "deepest",
+                         "combinations", "none")
   if (!subpop_mode %in% VALID_SUBPOP_MODE) {
     stop("subpop_mode must be one of: ",
          paste(VALID_SUBPOP_MODE, collapse = ", "),
@@ -1015,6 +1113,81 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   if (!match_mode %in% VALID_MATCH_MODE) {
     stop("match_mode must be one of: ", paste(VALID_MATCH_MODE, collapse = ", "),
          " (got '", match_mode, "').")
+  }
+
+  # LAYOUT. "markers" is the plain embedding of FlowJo values. "gates" reads
+  # the gates below the population, labels every cell by its gate calls and
+  # keeps the per-cell calls, cuts and values the gate-anchored features are
+  # built from (src/visualization/umap_gate_layout.R and
+  # docs/plans/umap_gate_layout_plan.md). Everything the markers layout does is
+  # left exactly as it was; the gates layout branches off at extraction.
+  VALID_LAYOUT <- c("markers", "gates")
+  if (!layout %in% VALID_LAYOUT) {
+    stop("layout must be one of: ", paste(VALID_LAYOUT, collapse = ", "),
+         " (got '", layout, "').")
+  }
+  gates_layout <- identical(layout, "gates")
+  # The markers layout coloured by gate combinations: the cells are labelled
+  # exactly as the gates layout labels them (pool_gate_layout()), but the
+  # embedding still sees only the marker values. --subpop_select overrides it,
+  # as it overrides every other mode.
+  combo_colour <- !gates_layout && identical(subpop_mode, "combinations") &&
+    is.null(subpop_select)
+  if (identical(subpop_mode, "combinations") && !combo_colour) {
+    subpop_mode <- "none"
+  }
+  gate_labels <- gates_layout || combo_colour
+  if (gate_labels && !exists("gate_layout_extract_sample", mode = "function")) {
+    stop(if (gates_layout) "layout = \"gates\"" else "subpop_mode = \"combinations\"",
+         " needs src/visualization/umap_gate_layout.R to be sourced first.",
+         call. = FALSE)
+  }
+
+  # SAMPLE FILTER, as parsed clauses or the raw "col=a,b;col2!=c" string. It
+  # selects samples by their annotations, so it is meaningless without a
+  # metadata table or a name pattern, and that is said before the slow load.
+  filter_clauses <- sample_filter
+  if (is.character(filter_clauses)) {
+    if (!exists("parse_sample_filter", mode = "function")) {
+      stop("a sample filter needs src/visualization/umap_gate_layout.R to be ",
+           "sourced first.", call. = FALSE)
+    }
+    filter_clauses <- parse_sample_filter(filter_clauses)
+  }
+  if (is.null(filter_clauses)) filter_clauses <- list()
+  if (length(filter_clauses) && is.null(sample_metadata) &&
+      is.null(sample_pattern)) {
+    stop("--filter selects samples by their metadata, but neither ",
+         "--sample_metadata nor --sample_pattern was given.", call. = FALSE)
+  }
+
+  if (combo_colour) {
+    # Labelled by gate calls below; the subgate candidates are not needed.
+    subpop_mode   <- "none"
+    subpop_levels <- FALSE
+  }
+  if (gates_layout) {
+    # Cells are labelled by their gate calls here, so the subgate colouring of
+    # the markers layout is switched off rather than computed and ignored.
+    subpop_mode   <- "none"
+    subpop_select <- NULL
+    subpop_levels <- FALSE
+    # Uniform downsampling is what loses the rare cytokine-positive cells; the
+    # gates layout samples per call pattern instead (cells_per_combination).
+    if (downsample > 0) {
+      warning("--downsample is ignored in the gates layout; cells are sampled ",
+              "per gate-call pattern instead (--cells_per_combination = ",
+              cells_per_combination, ").", call. = FALSE)
+      downsample <- 0L
+    }
+    # The embedding is computed from gate-anchored features, not from these
+    # values, so normalising them for the embedding would do nothing.
+    if (!identical(normalize_data, "none")) {
+      warning("--normalize_data is ignored in the gates layout: the embedding ",
+              "is built from gate-anchored features. --normalize_umap still ",
+              "applies to the marker colours.", call. = FALSE)
+      normalize_data <- "none"
+    }
   }
 
   group <- as.character(group)
@@ -1306,6 +1479,32 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     }
   }
 
+  # Which samples the run keeps, by their annotations. Decided here, before a
+  # single event is read, so a filtered-out sample costs no extraction time.
+  # The filter sees every metadata column, not only the --annotate subset: a
+  # run may well filter on a column it does not want plotted.
+  sample_keep <- stats::setNames(rep(TRUE, nrow(sample_index)),
+                                 sample_index$display)
+  if (length(filter_clauses) && !isTRUE(list_populations)) {
+    filter_ann <- sample_annotations
+    if (!is.null(annotate) && length(annotate)) {
+      filter_ann <- suppressWarnings(resolve_sample_annotations(
+        sample_index, metadata_file = sample_metadata, pattern = sample_pattern,
+        annotate = NULL, id_column = sample_id_column))
+    }
+    sample_keep[] <- apply_sample_filter(filter_ann, filter_clauses)
+    filter_txt <- paste(vapply(filter_clauses, function(cl)
+      paste0(cl$column, if (cl$negate) "!=" else "=",
+             paste(cl$values, collapse = ",")), character(1)), collapse = "; ")
+    cat(sprintf("\nSample filter (%s): %d of %d sample(s) kept, %d left out.\n",
+                filter_txt, sum(sample_keep), length(sample_keep),
+                sum(!sample_keep)))
+    if (!any(sample_keep)) {
+      stop("the sample filter (", filter_txt, ") leaves no sample. Check the ",
+           "values against the metadata levels listed above.", call. = FALSE)
+    }
+  }
+
   cat("\nSamples in loaded group (", nrow(sample_index), "):\n", sep = "")
   for (s in sample_index$display) cat("  -", s, "\n")
   if (expected_samples > 0 && nrow(sample_index) != expected_samples) {
@@ -1537,16 +1736,19 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     stats::setNames(lapply(nms, function(s)
       flowWorkspace::gh_get_pop_paths(gs[[s]], path = "full")), nms)
   })
-  lacking <- lapply(names(gs_list), function(w)
-    samples_missing_population(paths_by_sample[[w]], pop_by_wsp[[w]]))
+  # A sample the --filter leaves out is never read, so its tree does not matter.
+  lacking <- lapply(names(gs_list), function(w) {
+    miss <- samples_missing_population(paths_by_sample[[w]], pop_by_wsp[[w]])
+    miss[vapply(miss, function(s)
+      sample_keep[[sample_display_label(sample_index, gs_source, w, s)]],
+      logical(1))]
+  })
   names(lacking) <- names(gs_list)
   lacking <- lacking[lengths(lacking) > 0]
   # Left out, loudly, rather than stopping the run: one stray sample in an "All
   # Samples" group is the usual case, and the rest of the run is sound without
-  # it. Its cells must not be pooled under some other gate, so it is skipped in
-  # the extraction loop below and named here. The app shows this block under
-  # the Run button (app/callbacks/execution.py, _left_out_warning): keep its
-  # first line and the "To include them" sentence as they are.
+  # it. Its cells must not be pooled under some other gate, so it is excluded,
+  # named here and recorded as samples_left_out in run_info.json.
   if (length(lacking)) {
     detail <- vapply(names(lacking), function(w) {
       rows <- vapply(lacking[[w]], function(s) sprintf(
@@ -1567,7 +1769,10 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
         "\n\nTo include them, gate them in FlowJo. To silence this, remove ",
         "them from the workspace or load a sample group that leaves them ",
         "out.\n", sep = "")
-    if (sum(lengths(lacking)) == sum(lengths(paths_by_sample))) {
+    for (w in names(lacking)) for (s in lacking[[w]]) {
+      sample_keep[[sample_display_label(sample_index, gs_source, w, s)]] <- FALSE
+    }
+    if (!any(sample_keep)) {
       stop("no sample is left: every one lacks the population in its own ",
            "gating tree.", call. = FALSE)
     }
@@ -1642,11 +1847,15 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   per_sample_wsp    <- character(0)
   no_marker_samples <- character(0)
   per_sample_levels <- list()
+  # Gates layout only: per sample, the kept cells' calls, cuts and values plus
+  # the call-pattern counts over ALL cells, and the gate decisions.
+  per_sample_gl     <- list()
+  per_sample_dec    <- list()
   # Progress is reported against the sample count the GatingSets actually hold,
   # which is the only total that is known before the loop and true after it.
   n_total_samples <- sum(vapply(gs_list, function(g)
-    length(flowWorkspace::sampleNames(g)), integer(1))) -
-    sum(lengths(lacking))
+    length(flowWorkspace::sampleNames(g)), integer(1)))
+  if (!all(sample_keep)) n_total_samples <- sum(sample_keep)
   n_done <- 0L
   for (w in names(gs_list)) {
     gs <- gs_list[[w]]
@@ -1657,15 +1866,22 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       # `w` is a GatingSet name and sample_index is keyed per workspace — see
       # sample_display_label(), which owns that translation.
       display <- sample_display_label(sample_index, gs_source, w, s)
-      if (s %in% lacking[[w]]) next   # no population gate: left out above
-      res <- extract_population_sample(gs[[s]], pop_by_wsp[[w]],
-                                       subpop_paths_by_wsp[[w]],
-                                       subpop_depths, subpop_labels,
-                                       assignment = subpop_assignment,
-                                       dictionary = channel_dict$dictionary,
-                                       aliases = marker_alias_map,
-                                       levels = isTRUE(subpop_levels),
-                                       level_spec = level_spec)
+      if (!sample_keep[[display]]) next   # left out (filter, or no gate)
+      if (gate_labels) {
+        res <- gate_layout_extract_sample(gs[[s]], pop_by_wsp[[w]],
+                                          dictionary = channel_dict$dictionary,
+                                          aliases = marker_alias_map,
+                                          exclude_markers = viability_pattern)
+      } else {
+        res <- extract_population_sample(gs[[s]], pop_by_wsp[[w]],
+                                         subpop_paths_by_wsp[[w]],
+                                         subpop_depths, subpop_labels,
+                                         assignment = subpop_assignment,
+                                         dictionary = channel_dict$dictionary,
+                                         aliases = marker_alias_map,
+                                         levels = isTRUE(subpop_levels),
+                                         level_spec = level_spec)
+      }
       # No usable channel on this sample. Collected rather than fatal — see
       # extract_population_sample() — and reported together below.
       if (is.null(res)) {
@@ -1675,6 +1891,50 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       }
       mtx <- res$mtx
       sp  <- res$subpop
+
+      # Gates layout: keep up to cells_per_combination cells of every gate-call
+      # pattern (rare ones whole), each carrying the weight that restores its
+      # sample's true count, and count every pattern over ALL cells first so
+      # the frequencies reported later never depend on the sampling.
+      # Markers layout coloured by combinations: every cell (or the uniform
+      # --downsample of them), each weighing 1, so the embedding sees the
+      # cohort as it is.
+      if (gate_labels) {
+        ss <- if (gates_layout) {
+          stratified_sample(res$key, cells_per_combination)
+        } else {
+          n_res <- length(res$key)
+          keep_rows <- if (downsample > 0 && n_res > downsample) {
+            sort(sample(n_res, downsample))
+          } else {
+            seq_len(n_res)
+          }
+          list(idx = keep_rows, weight = rep(1, length(keep_rows)))
+        }
+        kc <- table(res$key)
+        per_sample_gl[[display]] <- list(
+          calls  = res$calls[ss$idx, , drop = FALSE],
+          cuts   = res$cuts[ss$idx, , drop = FALSE],
+          anchors = res$anchors[ss$idx, , drop = FALSE],
+          values = res$values[ss$idx, , drop = FALSE],
+          mtx    = res$mtx[ss$idx, , drop = FALSE],
+          weight = ss$weight, key = res$key[ss$idx],
+          key_counts = stats::setNames(as.integer(kc), names(kc)),
+          population_cells = nrow(res$mtx))
+        if (nrow(res$decisions)) {
+          d <- res$decisions
+          d$sample <- display
+          d$workspace <- gs_source[[w]]
+          per_sample_dec[[display]] <- d
+        }
+        mtx <- per_sample_gl[[display]]$mtx
+        # Placeholder: labels need the whole cohort's tiers; set after pooling.
+        sp  <- rep(NA_character_, nrow(mtx))
+        gl_note <- sprintf("    gate calls: %d cells in %d pattern(s), %d kept; decided: %s\n",
+                           nrow(res$mtx), length(kc), nrow(mtx),
+                           if (ncol(res$calls)) paste(colnames(res$calls), collapse = ", ")
+                           else "(none)")
+      }
 
       # Optional per-sample downsampling AFTER gating. The SAME row index
       # subsets the subpopulation labels — overall and per level — so they stay
@@ -1690,6 +1950,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
 
       cat(sprintf("  %s: %d cells x %d markers\n", display, nrow(mtx),
                   ncol(mtx)))
+      if (gate_labels) cat(gl_note)
       n_done <- n_done + 1L
       emit_progress("extract", n_done, n_total_samples, display)
       if (nrow(mtx) == 0) {
@@ -1755,6 +2016,90 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     use_markers <- common_markers
   }
 
+  # --- 4b. Gates layout: pool the samples, label every cell. -----------------
+  # Tiers, the fill of missing decisions and the rare-combination pooling are
+  # properties of the cohort, so they are decided here, over every sample, and
+  # not inside the loop. See pool_gate_layout().
+  gl <- NULL
+  if (gate_labels) {
+    decisions <- do.call(rbind, unname(per_sample_dec[names(per_sample_mtx)]))
+    if (is.null(decisions) || !nrow(decisions)) {
+      stop("no gate below '", population, "' decides a marker in any sample, so ",
+           if (gates_layout) "there is nothing for the gates layout to separate. "
+           else "there are no gate combinations to colour by. ",
+           "Pick a population with gates under it",
+           if (gates_layout) ", or use --layout markers." else
+             ", or another --subpop_mode.", call. = FALSE)
+    }
+    rownames(decisions) <- NULL
+    panel_order <- unique(unlist(lapply(per_sample_mtx, colnames),
+                                 use.names = FALSE))
+    gl <- pool_gate_layout(per_sample_gl[names(per_sample_mtx)], decisions,
+                           panel_order = panel_order,
+                           min_combination_cells = min_combination_cells)
+    dec_markers <- names(gl$tiers)
+    subpop_mode_tag <- "gate combinations"
+
+    cat("\nGate decisions under ", population, " (marker: tier, samples decided, median cut):\n",
+        sep = "")
+    for (m in dec_markers) {
+      dm <- decisions[decisions$marker == m, , drop = FALSE]
+      cat(sprintf("  %-10s tier %d, %d of %d sample(s), cut %.1f\n", m,
+                  gl$tiers[[m]], length(unique(dm$sample)),
+                  length(per_sample_mtx), stats::median(dm$cut)))
+    }
+    if (!is.null(gl$filled) && nrow(gl$filled)) {
+      cat(sprintf(paste0("  %d sample(s) lack a decision most of their lineage has; ",
+                         "those cells are treated as negative for it:\n"),
+                  length(unique(gl$filled$sample))))
+      fl <- stats::aggregate(cells ~ marker + group, data = gl$filled, FUN = sum)
+      # The group is the first-tier call pattern ("10"), spelled out by marker.
+      t1 <- names(gl$tiers)[gl$tiers == min(gl$tiers)]
+      sign_of <- c("1" = "+", "0" = "-", "x" = "?")
+      for (i in seq_len(nrow(fl))) {
+        grp <- paste0(t1, sign_of[strsplit(fl$group[i], "")[[1]]], collapse = " ")
+        cat(sprintf("    %s in %s cells: %d kept cell(s)\n", fl$marker[i], grp,
+                    as.integer(fl$cells[i])))
+      }
+    }
+
+    if (gates_layout && is.null(markers)) {
+      # The features are the markers a gate decides, as long as every sample
+      # carries the channel: a sample without a marker's DECISION still has its
+      # values (pool_gate_layout() takes them from the channel), a sample
+      # without the CHANNEL has nothing to embed.
+      use_markers <- dec_markers[dec_markers %in% common_markers]
+      not_shared <- setdiff(dec_markers, common_markers)
+      if (length(not_shared)) {
+        cat("  Decided but not measured in every sample, so labels only, not features: ",
+            paste(not_shared, collapse = ", "), "\n", sep = "")
+      }
+      if (!length(use_markers)) {
+        stop("none of the decided markers (", paste(dec_markers, collapse = ", "),
+             ") is measured in every sample.", call. = FALSE)
+      }
+    }
+    extra <- setdiff(use_markers, dec_markers)
+    if (gates_layout) {
+      cat(sprintf("  Gate-anchored features: %s%s\n",
+                  paste(intersect(use_markers, dec_markers), collapse = ", "),
+                  if (length(extra)) paste0("; without a gate: ",
+                                            paste(extra, collapse = ", ")) else ""))
+    } else {
+      cat("  Gate combinations colour the plots only; the embedding uses the ",
+          "marker values.\n", sep = "")
+    }
+
+    tot <- tapply(gl$weight, gl$combination, sum)
+    tot <- sort(tot, decreasing = TRUE)
+    cat(sprintf("  %d combination(s) of gate calls (combinations under %d cells pooled as '%s'):\n",
+                length(tot), as.integer(min_combination_cells), .GL_RARE))
+    for (k in names(tot)) {
+      cat(sprintf("    %-40s %10.0f cells, %d kept\n", k, tot[[k]],
+                  sum(gl$combination == k)))
+    }
+  }
+
   cat("\nMarkers used (", length(use_markers), "):\n  ",
       paste(use_markers, collapse = ", "), "\n", sep = "")
 
@@ -1780,6 +2125,13 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # combined_matrix (the two lists are filtered/ordered identically).
   combined_subpop <- unlist(per_sample_subpop[sample_labels], use.names = FALSE)
   stopifnot(length(combined_subpop) == nrow(combined_matrix))
+  # Gates layout (and the markers layout coloured by combinations): the label
+  # of a cell is its combination of gate calls, pooled in the same sample
+  # order by pool_gate_layout().
+  if (gate_labels) {
+    stopifnot(length(gl$combination) == nrow(combined_matrix))
+    combined_subpop <- gl$combination
+  }
 
   # Per-level labels, concatenated in the SAME sample order as the matrix and
   # turned into factors only now — the level set is the union across samples,
@@ -1862,8 +2214,158 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     workspaces      = names(load_records),
     dropped         = resolved$dropped,
     dropped_report  = dropped_report,
-    inspected       = FALSE
+    inspected       = FALSE,
+    layout          = layout,
+    # Per sample (display label): kept by the sample filter or not.
+    sample_keep     = sample_keep,
+    # Gates layout only (NULL otherwise): calls, values, cuts, weight,
+    # combination per kept cell (row-aligned to combined_matrix), decisions,
+    # counts over all cells, tiers, filled. See pool_gate_layout().
+    gate_layout     = gl
   )
+}
+
+
+# -----------------------------------------------------------------------------
+# Helpers of the gates layout and the metadata splits (umap_from_flowjo()).
+# -----------------------------------------------------------------------------
+
+# Annotation column names a metadata table or a sample-name pattern will give,
+# read without loading a workspace: the table's header minus its id column, or
+# the pattern's named groups. This is what lets --split_by and --filter be
+# checked before the slow part of a run.
+annotation_columns_offered <- function(sample_metadata = NULL,
+                                       sample_pattern = NULL,
+                                       sample_id_column = NULL) {
+  if (!is.null(sample_metadata)) {
+    md <- read_sample_metadata(sample_metadata)
+    return(setdiff(colnames(md), metadata_id_column(md, sample_id_column)))
+  }
+  if (!is.null(sample_pattern)) {
+    nms <- attr(regexpr(sample_pattern, "", perl = TRUE), "capture.names")
+    return(nms[nzchar(nms)])
+  }
+  character(0)
+}
+
+# A per-cell table as gzipped CSV. data.table::fwrite is many times faster
+# than write.csv on millions of rows; base R is the fallback when data.table
+# (or its zlib support) is missing.
+write_table_gz <- function(df, path) {
+  done <- requireNamespace("data.table", quietly = TRUE) &&
+    isTRUE(tryCatch({
+      data.table::fwrite(df, path, compress = "gzip")
+      TRUE
+    }, error = function(e) FALSE))
+  if (!done) {
+    con <- gzfile(path, "w")
+    on.exit(close(con))
+    utils::write.csv(df, con, row.names = FALSE)
+  }
+  invisible(path)
+}
+
+# run_info.json of a run: how to reproduce it (argv, parameters, seed,
+# threads, code version, package versions) and what it found (cell counts,
+# labels; for the gates layout the decisions and feature scales, for a
+# supercell fit set the supercell count). Vectors that must stay JSON arrays
+# even with one element are wrapped in I(), because auto_unbox would turn them
+# into scalars. The gate-only arguments are NULL in the markers layout, where
+# gate_markers holds the embedded markers.
+write_gate_run_info <- function(path, parameters, seed, embed_threads,
+                                sigma = NULL, gate_markers, extra_markers = NULL,
+                                tiers = NULL, decisions = NULL, filled = NULL,
+                                n_cells, n_fit, n_samples,
+                                samples_left_out, combinations,
+                                supercells = NULL) {
+  if (!requireNamespace("jsonlite", quietly = TRUE)) {
+    message("run_info.json not written: install jsonlite.")
+    return(invisible(NULL))
+  }
+  repo <- if (exists("src_dir")) dirname(normalizePath(src_dir, mustWork = FALSE))
+          else getwd()
+  git <- function(args) tryCatch(
+    suppressWarnings(system2("git", c("-C", repo, args), stdout = TRUE,
+                             stderr = FALSE)),
+    error = function(e) structure(character(0), status = 1L))
+  commit <- git(c("rev-parse", "HEAD"))
+  in_git <- length(commit) == 1L && is.null(attr(commit, "status"))
+  pkg <- function(p) tryCatch(as.character(utils::packageVersion(p)),
+                              error = function(e) NA_character_)
+  info <- list(
+    created = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
+    argv = I(commandArgs()),
+    R = R.version.string,
+    packages = lapply(stats::setNames(nm = c("uwot", "ggplot2", "CytoML",
+                                             "flowWorkspace", "ggrastr", "RANN",
+                                             "data.table", "jsonlite",
+                                             "SuperCellCyto")), pkg),
+    git = list(repo = repo,
+               commit = if (in_git) commit else NA_character_,
+               dirty = if (in_git) length(git(c("status", "--porcelain"))) > 0
+                       else NA),
+    seed = seed,
+    embed_threads = embed_threads,
+    parameters = parameters,
+    features = if (is.null(tiers)) list(markers = I(gate_markers))
+               else list(gate_anchored = I(gate_markers),
+                         without_gate = I(extra_markers)),
+    sigma = if (is.null(sigma)) NULL else as.list(sigma),
+    decisions = if (is.null(tiers) || is.null(decisions)) NULL
+                else lapply(names(tiers), function(m) {
+      d <- decisions[decisions$marker == m, , drop = FALSE]
+      list(marker = m, tier = tiers[[m]], samples = length(unique(d$sample)),
+           median_cut = stats::median(d$cut),
+           cut_range = I(range(d$cut)))
+    }),
+    filled = if (is.null(filled)) list() else filled,
+    cells = n_cells, fit_cells = n_fit, samples = n_samples,
+    samples_left_out = I(samples_left_out),
+    combinations = as.list(combinations),
+    supercells = supercells)
+  info <- info[!vapply(info, is.null, logical(1))]
+  jsonlite::write_json(info, path, auto_unbox = TRUE, pretty = TRUE,
+                       null = "null", na = "null", digits = NA)
+  invisible(path)
+}
+
+# The plots plot_flowjo_umap_facets() wrote in this run, as index entries:
+# files modified since `since` (whole seconds, so a coarse file system clock
+# cannot drop one), minus the gate-layout plots already indexed.
+facet_plot_entries <- function(output_dir, since, exclude = NULL) {
+  f <- list.files(output_dir, pattern = "\\.(png|pdf|svg)$", recursive = TRUE)
+  f <- f[!startsWith(f, "checkpoints/")]
+  f <- f[as.numeric(file.mtime(file.path(output_dir, f))) >= floor(as.numeric(since))]
+  rel <- unique(sub("\\.(png|pdf|svg)$", "", f))
+  # `exclude` (the styled plots' index) gives paths; compare by file stem.
+  rel <- rel[!basename(rel) %in% basename(as.character(exclude))]
+  stems <- rel
+  if (!length(stems)) return(NULL)
+  kind <- ifelse(grepl("_marker_", stems, fixed = TRUE), "marker",
+                 ifelse(grepl("_annot_", stems, fixed = TRUE), "annot",
+                        "overview"))
+  data.frame(file = stems, kind = kind, stringsAsFactors = FALSE)
+}
+
+# plot_index.json: one entry per plot (file stem, kind, column, level,
+# reference), which the app uses to sort the gallery instead of guessing from
+# file names.
+write_plot_index <- function(path, gate_index, facet_entries) {
+  if (!requireNamespace("jsonlite", quietly = TRUE)) {
+    message("plot_index.json not written: install jsonlite.")
+    return(invisible(NULL))
+  }
+  cols <- c("file", "kind", "column", "level", "reference")
+  norm <- function(df) {
+    if (is.null(df) || !nrow(df)) return(NULL)
+    df <- as.data.frame(df, stringsAsFactors = FALSE)
+    for (cl in setdiff(cols, names(df))) df[[cl]] <- NA_character_
+    df[, cols, drop = FALSE]
+  }
+  idx <- rbind(norm(gate_index), norm(facet_entries))
+  jsonlite::write_json(if (is.null(idx)) list() else idx, path,
+                       dataframe = "rows", pretty = TRUE, na = "null")
+  invisible(path)
 }
 
 
@@ -1883,9 +2385,9 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              normalize_data = "none", normalize_umap = "none",
                              subpop_levels = TRUE,
                              subpop_levels_select = NULL,
-                             downsample = 0L, n_neighbors = 15L, min_dist = 0.1,
+                             downsample = 0L, n_neighbors = 15L, min_dist = NULL,
                              metric = "euclidean", seed = 42L,
-                             point_size = 0.4, point_alpha = 0.6,
+                             point_size = NULL, point_alpha = NULL,
                              plot_width = 10, plot_height = 8,
                              output_formats = list(pdf = FALSE, png = FALSE, svg = TRUE),
                              list_populations = FALSE,
@@ -1900,7 +2402,27 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              n_cores = 1L,
                              embed_cores = 1L,
                              umap_init = "auto",
-                             umap_subsample = 0L) {
+                             umap_subsample = 0L,
+                             layout = "markers",
+                             gate_gap = 2,
+                             gate_tier_ratio = 2,
+                             gate_softness = 4,
+                             supervise = 0,
+                             cells_per_combination = 2000L,
+                             min_combination_cells = 50L,
+                             viability_pattern = NULL,
+                             filter = NULL,
+                             split_by = NULL,
+                             level_order = NULL,
+                             split_reference = NULL,
+                             fit_subset = "random",
+                             supercell_gamma = 20,
+                             supercell_k_knn = 5L,
+                             supercell_max = 100000L,
+                             resume = TRUE,
+                             background = NULL,
+                             pair_by = NULL,
+                             umap_model = NULL) {
   require(ggplot2)
   if (!requireNamespace("viridis", quietly = TRUE)) {
     stop("Package 'viridis' is required for marker colour scales.")
@@ -1921,7 +2443,175 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   cat("Cores: ", n_cores, " for plotting, ", embed_cores,
       " for the embedding.\n", sep = "")
 
-  ext <- extract_flowjo_population(
+  # --- Layout, metadata splits and sample filter: checked BEFORE the load. ----
+  # A misspelt column should cost seconds, not the hour a cohort takes to load.
+  # Column names are read from the metadata header (or the pattern's group
+  # names), which is exactly what resolve_sample_annotations() will offer.
+  gates_layout <- identical(layout, "gates")
+  # min_dist depends on the layout when it is not given: the gate layout's
+  # islands are rounder and closer to the look asked for at 0.25 (tuned on the
+  # MTB cohort, docs/plans/umap_gate_layout_plan.md section 11); the markers
+  # layout keeps the value it always had.
+  if (is.null(min_dist) || is.na(min_dist)) {
+    min_dist <- if (gates_layout) 0.25 else 0.1
+  }
+  if (gates_layout && (!is.finite(gate_tier_ratio) || gate_tier_ratio < 1)) {
+    stop("gate_tier_ratio must be 1 or more: below 1 a lineage gate's jump ",
+         "would be smaller than the cytokine gates' and could fall under the ",
+         "within-side spread, so its two sides could overlap.", call. = FALSE)
+  }
+  if (gates_layout && gate_gap <= 1) {
+    warning("gate_gap <= 1: the two sides of a gate are no longer guaranteed ",
+            "to be apart (the within-side part of a feature spans -1 to 1).",
+            call. = FALSE)
+  }
+  if (gates_layout && !identical(tolower(method), "umap")) {
+    stop("layout = \"gates\" embeds with UMAP only (it fits on a set balanced ",
+         "across gate combinations and projects the rest); method = '", method,
+         "' is not supported there.", call. = FALSE)
+  }
+  # What the markers layout fits UMAP on before projecting every cell. The
+  # gates layout has its own balanced fit set, so a supercell choice there is
+  # said and dropped rather than silently ignored.
+  if (!fit_subset %in% c("random", "supercell")) {
+    stop("fit_subset must be 'random' or 'supercell' (got '", fit_subset, "').",
+         call. = FALSE)
+  }
+  if (gates_layout && identical(fit_subset, "supercell")) {
+    warning("--fit_subset supercell is ignored in the gates layout, which fits ",
+            "on a set balanced across gate combinations.", call. = FALSE)
+    fit_subset <- "random"
+  }
+  # An existing map: no fit at all, every cell projected onto the saved model.
+  # The gates layout's features depend on the cohort they were built from, so
+  # its model cannot take another cohort's cells.
+  model_file <- NULL
+  if (!is.null(umap_model) && nzchar(umap_model)) {
+    if (gates_layout || !identical(tolower(method), "umap")) {
+      stop("--umap_model projects onto a saved markers-layout UMAP model; it ",
+           "does not apply to the gates layout or to method '", method, "'.",
+           call. = FALSE)
+    }
+    if (!file.exists(umap_model)) {
+      stop("--umap_model: no such file: ", umap_model, call. = FALSE)
+    }
+    model_file <- normalizePath(umap_model)
+    if (identical(fit_subset, "supercell")) {
+      message("--fit_subset supercell is not needed with --umap_model: ",
+              "nothing is fitted.")
+      fit_subset <- "random"
+    }
+  }
+  supercell_fit <- identical(fit_subset, "supercell")
+  if (supercell_fit) {
+    if (!identical(tolower(method), "umap")) {
+      stop("--fit_subset supercell projects cells onto a UMAP model; method = '",
+           method, "' cannot project.", call. = FALSE)
+    }
+    if (!exists("require_supercellcyto", mode = "function")) {
+      stop("--fit_subset supercell needs src/visualization/umap_supercells.R to ",
+           "be sourced first.", call. = FALSE)
+    }
+    if (!isTRUE(list_populations)) require_supercellcyto()
+    if (!is.finite(supercell_gamma) || supercell_gamma <= 1) {
+      stop("supercell_gamma must be above 1 (cells per supercell).", call. = FALSE)
+    }
+    if (is.na(as.integer(supercell_k_knn)) || as.integer(supercell_k_knn) < 1L) {
+      stop("supercell_k_knn must be a whole number of at least 1.", call. = FALSE)
+    }
+    if (is.na(as.integer(supercell_max)) || as.integer(supercell_max) < 1000L) {
+      stop("supercell_max must be a whole number of at least 1000.", call. = FALSE)
+    }
+    if (umap_subsample > 0) {
+      warning("--umap_subsample is ignored with --fit_subset supercell: the ",
+              "supercells are the fit set.", call. = FALSE)
+    }
+  }
+  split_cols <- unique(trimws(as.character(split_by)))
+  split_cols <- split_cols[nzchar(split_cols)]
+  level_order_list <- list()
+  split_ref_list   <- list()
+  bg_spec          <- NULL
+  filter_clauses   <- filter
+  if (!isTRUE(list_populations)) {
+    uses_gl <- gates_layout || length(split_cols) || !is.null(filter) ||
+      !is.null(level_order) || !is.null(split_reference)
+    if (uses_gl && !exists("parse_level_order", mode = "function")) {
+      stop("--layout gates, --split_by, --filter, --level_order and ",
+           "--split_reference need src/visualization/umap_gate_layout.R to be ",
+           "sourced first.", call. = FALSE)
+    }
+    if (is.character(filter_clauses)) {
+      filter_clauses <- parse_sample_filter(filter_clauses)
+    }
+    level_order_list <- if (uses_gl) parse_level_order(level_order) else list()
+    split_ref_list   <- if (uses_gl) parse_split_reference(split_reference) else list()
+    if (length(split_cols) || length(filter_clauses)) {
+      if (is.null(sample_metadata) && is.null(sample_pattern)) {
+        stop("--split_by and --filter read the sample metadata, but neither ",
+             "--sample_metadata nor --sample_pattern was given.", call. = FALSE)
+      }
+      offered <- annotation_columns_offered(sample_metadata, sample_pattern,
+                                            sample_id_column)
+      bad <- setdiff(split_cols, offered)
+      if (length(bad)) {
+        stop("--split_by names column(s) ", paste(bad, collapse = ", "),
+             ", which the sample annotations do not have. Available: ",
+             if (length(offered)) paste(offered, collapse = ", ") else "(none)",
+             ".", call. = FALSE)
+      }
+      # A split column needs its values per cell, so it joins the --annotate
+      # selection rather than being refused by it: --annotate chooses which
+      # columns get their own annotation plots, not which ones exist.
+      if (length(annotate)) annotate <- union(annotate, split_cols)
+      bad <- setdiff(vapply(filter_clauses, `[[`, character(1), "column"),
+                     offered)
+      if (length(bad)) {
+        stop("--filter names column(s) ", paste(unique(bad), collapse = ", "),
+             ", which the sample metadata does not have. Available: ",
+             if (length(offered)) paste(offered, collapse = ", ") else "(none)",
+             ".", call. = FALSE)
+      }
+    }
+    bg_spec <- parse_background(background)
+    if (!is.null(bg_spec)) {
+      if (is.null(sample_metadata) && is.null(sample_pattern)) {
+        stop("--background reads the sample metadata, but neither ",
+             "--sample_metadata nor --sample_pattern was given.", call. = FALSE)
+      }
+      pair_by <- unique(trimws(as.character(pair_by)))
+      pair_by <- pair_by[nzchar(pair_by)]
+      if (!length(pair_by)) {
+        stop("--background needs --pair_by: the metadata column(s) a sample ",
+             "shares with its background sample, e.g. patient,visit.",
+             call. = FALSE)
+      }
+      offered <- annotation_columns_offered(sample_metadata, sample_pattern,
+                                            sample_id_column)
+      bad <- setdiff(c(bg_spec$column, pair_by), offered)
+      if (length(bad)) {
+        stop("--background/--pair_by name column(s) ", paste(bad, collapse = ", "),
+             ", which the sample metadata does not have. Available: ",
+             paste(offered, collapse = ", "), ".", call. = FALSE)
+      }
+    }
+    for (nm in c("level_order", "split_reference")) {
+      given <- names(if (nm == "level_order") level_order_list else split_ref_list)
+      stray <- setdiff(given, split_cols)
+      if (length(stray)) {
+        warning("--", nm, " names column(s) not in --split_by, ignored: ",
+                paste(stray, collapse = ", "), call. = FALSE)
+      }
+    }
+  }
+
+  # --- Checkpoints: a cohort run is an hour of extraction, supercells, fit and
+  # projection, and each step is saved under output_dir/checkpoints/ as soon as
+  # it is done, with a key of the settings it depends on (each key includes
+  # the one before it). A rerun into the same folder reuses every step whose
+  # key still matches and recomputes from the first one that does not, so a
+  # crash, a cancel or a changed plot setting costs only what has to be redone.
+  extract_args <- list(
     wsp_path = wsp_path, fcs_dir = fcs_dir, population = population,
     group = group, expected_samples = expected_samples,
     sample_metadata = sample_metadata, sample_pattern = sample_pattern,
@@ -1936,12 +2626,44 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     allow_missing_samples = allow_missing_samples,
     population_map = population_map, match_mode = match_mode,
     marker_aliases = marker_aliases, recover_markers = recover_markers,
-    workspaces = workspaces, report_json = report_json)
-
-  # Inspect mode already printed and returned everything it has.
-  if (isTRUE(ext$inspected)) return(invisible(ext))
+    workspaces = workspaces, report_json = report_json,
+    layout = layout, sample_filter = filter_clauses,
+    viability_pattern = if (is.null(viability_pattern)) VIABILITY_MARKER_PATTERN
+                        else viability_pattern,
+    cells_per_combination = cells_per_combination,
+    min_combination_cells = min_combination_cells)
+  use_ckpt <- isTRUE(resume) && !isTRUE(list_populations)
+  key_extract <- ckpt_key(list(
+    "extract", extract_args[setdiff(names(extract_args), "report_json")],
+    inputs = ckpt_input_stamp(wsp_path, fcs_dir, sample_metadata)))
+  ext <- if (use_ckpt) ckpt_load(output_dir, "extract", key_extract) else NULL
+  if (is.null(ext)) {
+    ext <- do.call(extract_flowjo_population, extract_args)
+    # Inspect mode already printed and returned everything it has.
+    if (isTRUE(ext$inspected)) return(invisible(ext))
+    if (use_ckpt) ckpt_save(output_dir, "extract", key_extract, ext)
+  }
 
   combined_matrix     <- ext$combined_matrix
+  # Each sample's background sample, from every metadata column (not only the
+  # --annotate subset), as the filter reads them.
+  bg_map <- NULL
+  if (!is.null(bg_spec)) {
+    full_ann <- suppressWarnings(resolve_sample_annotations(
+      ext$sample_index, metadata_file = sample_metadata, pattern = sample_pattern,
+      annotate = NULL, id_column = sample_id_column))
+    rows <- match(ext$samples, ext$sample_index$display)
+    bg_map <- background_pairs(ext$samples, full_ann[rows, , drop = FALSE],
+                               bg_spec$column, bg_spec$level, pair_by)
+    make_outdir(output_dir)
+    utils::write.csv(data.frame(sample = names(bg_map), background = unname(bg_map),
+                                stringsAsFactors = FALSE),
+                     run_path(output_dir, "data", "background_pairs.csv"), row.names = FALSE)
+    cat(sprintf(paste0("Background: %d sample(s) paired with their %s = %s ",
+                       "sample by %s (background_pairs.csv)\n"),
+                length(bg_map), bg_spec$column, bg_spec$level,
+                paste(pair_by, collapse = ", ")))
+  }
   sample_labels       <- ext$samples
   file_labels         <- ext$file_labels
   wsp_labels_per_cell <- ext$workspace_labels
@@ -1971,11 +2693,77 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
          "alignment with the per-file plots.")
   }
 
+  # Gates layout: the embedding is computed from gate-anchored features, not
+  # from combined_matrix (which keeps the raw values for the marker colours).
+  # Each decided marker becomes tanh((x - anchor) / (softness * sigma)) plus a
+  # jump of +-gap_m on the side of its call (anchor: the median of the
+  # sample's cells of the same combination; gap_m larger one tier up), so
+  # cells on different sides of any gate cannot overlap; markers no gate
+  # decides enter without a jump. The fit set is
+  # balanced across combinations, so a rare cytokine combination gets as much
+  # say in the layout as the bulk CD4 cells, and the rest are projected.
+  gl <- ext$gate_layout
+  if (gates_layout) {
+    gate_markers  <- intersect(use_markers, colnames(gl$calls))
+    extra_markers <- setdiff(use_markers, gate_markers)
+    sigma <- gate_scales(gl$values, gl$anchors, gl$calls, gl$weight)
+    gaps <- tier_gaps(gl$tiers[gate_markers], gate_gap, gate_tier_ratio)
+    features <- gate_features(
+      gl$values[, gate_markers, drop = FALSE],
+      gl$anchors[, gate_markers, drop = FALSE],
+      gl$calls[, gate_markers, drop = FALSE],
+      sigma[gate_markers], gap = gaps, softness = gate_softness,
+      extra = if (length(extra_markers))
+        combined_matrix[, extra_markers, drop = FALSE] else NULL)
+    # Cells no gate decides on any marker (with a population above the live
+    # gate: the cells that gate excluded) would otherwise sit on the negative
+    # side of every marker, on top of the all-negative combination. One more
+    # coordinate with the largest jump gives them their own island.
+    undecided <- if (ncol(gl$calls)) rowSums(!is.na(gl$calls)) == 0 else
+      rep(TRUE, nrow(features))
+    if (any(undecided) && !all(undecided)) {
+      jump <- if (length(gaps)) max(gaps) else gate_gap
+      features <- cbind(features,
+                        no_gate_decision = ifelse(undecided, jump, -jump))
+      cat(sprintf(paste0("NOTE: %s of %s embedded cells (%.1f%% of the ",
+                         "population, weighted) fall outside every gate that ",
+                         "decides a marker; they are labelled '(no decision)' ",
+                         "and kept apart. With a population above the live ",
+                         "gate these are the cells that gate excluded.\n"),
+                  format(sum(undecided), big.mark = ","),
+                  format(length(undecided), big.mark = ","),
+                  100 * sum(gl$weight[undecided]) / sum(gl$weight)))
+    }
+    if (!all(is.finite(features))) {
+      bad_cols <- colnames(features)[
+        apply(features, 2, function(x) any(!is.finite(x)))]
+      stop("gate-anchored features are not finite for marker(s): ",
+           paste(bad_cols, collapse = ", "), ". Refusing to embed.",
+           call. = FALSE)
+    }
+    # The fit set is drawn from its own seed so it does not depend on how many
+    # random numbers the extraction happened to use.
+    fit_budget <- if (umap_subsample > 0) as.integer(umap_subsample) else 100000L
+    set.seed(seed)
+    fit_idx <- balanced_fit_index(gl$combination, fit_budget)
+    cat(sprintf(paste0("Gate layout: gap %g (x%g per tier up), softness %g, ",
+                       "supervision %g; ",
+                       "sigma %s\n  fit set: %d of %d cells, balanced over %d ",
+                       "combination(s)\n"),
+                gate_gap, gate_tier_ratio, gate_softness, supervise,
+                paste(sprintf("%s=%.2f", gate_markers, sigma[gate_markers]),
+                      collapse = ", "),
+                length(fit_idx), nrow(features),
+                length(unique(gl$combination))))
+  }
+
   # Through run_dimred(), not run_umap(): the dispatcher is what the rest of the
   # repo embeds with, it re-checks that the coordinate count still matches the
   # matrix, and going through it means `method` can be tsne or diffusion_map
   # here without another line of code. draw_plots = FALSE because the figures
   # below are this path's own — the standard by-sample plot is not one of them.
+  # The gates layout calls run_umap() directly: it needs the fit set and the
+  # supervision, which only run_umap() takes.
   cat("Computing shared ", method, " over ", nrow(combined_matrix),
       " cells x ", ncol(combined_matrix), " markers (n_neighbors=", n_neighbors,
       ", min_dist=", min_dist, ", metric=", metric, ", seed=", seed,
@@ -1993,20 +2781,181 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # which is a single-threaded eigendecomposition and on millions of cells is
   # the longest of the three — are indistinguishable from a hang. There is no
   # epoch to count yet, so the only honest signal is what uwot says it is doing.
+  # Markers layout, supercell fit set: SuperCellCyto groups each sample's cells
+  # into supercells of about supercell_gamma cells; UMAP is fitted on their
+  # means and every cell is projected onto that model.
+  sc_fit <- NULL
+  key_fitset <- key_extract
+  if (supercell_fit) {
+    key_fitset <- ckpt_key(list("supercells", key_extract, supercell_gamma,
+                                as.integer(supercell_k_knn),
+                                as.integer(supercell_max), seed))
+    if (use_ckpt) sc_fit <- ckpt_load(output_dir, "supercells", key_fitset)
+  }
+  if (supercell_fit && is.null(sc_fit)) {
+    emit_progress("embed", 0L, 100L, "SuperCellCyto supercells")
+    sc_started <- Sys.time()
+    set.seed(seed)
+    # A cohort of millions at gamma 20 gives hundreds of thousands of
+    # supercells: a slow fit, and past SPECTRAL_LIMIT (run_umap) a PCA start
+    # instead of the spectral one. Raising gamma keeps the fit at most
+    # supercell_max supercells, every sample still grouped in proportion.
+    gamma_used <- max(supercell_gamma,
+                      ceiling(nrow(combined_matrix) / as.integer(supercell_max)))
+    if (gamma_used > supercell_gamma) {
+      cat(sprintf(paste0("SuperCellCyto: gamma raised from %g to %g so that %s ",
+                         "cells give at most %s supercells (--supercell_max).\n"),
+                  supercell_gamma, gamma_used,
+                  format(nrow(combined_matrix), big.mark = ","),
+                  format(as.integer(supercell_max), big.mark = ",")))
+    }
+    sc_fit <- supercell_fit_matrix(combined_matrix, file_labels,
+                                   gamma = gamma_used,
+                                   k_knn = supercell_k_knn,
+                                   n_workers = n_cores)
+    cat(sprintf(paste0("SuperCellCyto: %s cells -> %s supercells (gamma %g, ",
+                       "k_knn %d)%s in %s; fitting on them, projecting every ",
+                       "cell.\n"),
+                format(sc_fit$n_cells, big.mark = ","),
+                format(sc_fit$n_supercells, big.mark = ","), gamma_used,
+                as.integer(supercell_k_knn),
+                if (sc_fit$passed_through) sprintf(
+                  ", plus %d cell(s) of samples too small to group",
+                  sc_fit$passed_through) else "",
+                format(round(difftime(Sys.time(), sc_started), 1))))
+    sc_fit$seconds <- as.numeric(difftime(Sys.time(), sc_started, units = "secs"))
+    sc_fit$gamma_used <- gamma_used
+    # Saved at once: an hour of a cohort run goes into these, and nothing after
+    # this point (the embedding, the plots) may cost them.
+    make_outdir(output_dir)
+    write_table_gz(cbind(sc_fit$supercells, as.data.frame(sc_fit$matrix)),
+                   run_path(output_dir, "data", "supercells.csv.gz"))
+    cat("Wrote supercells.csv.gz (the fit set: one row per supercell)\n")
+    if (use_ckpt) ckpt_save(output_dir, "supercells", key_fitset, sc_fit)
+  }
+  # The fitted model is saved the moment it exists, before the projection
+  # (most of an hour on a cohort), so a failure there cannot cost the fit:
+  # uwot::load_uwot() gives it back and uwot::umap_transform() places cells on
+  # this same map without refitting. The path through run_dimred() has no such
+  # hook; its model is saved after the embedding instead (below).
+  # The embedding's key: the fit set's, plus everything that shapes the fit.
+  key_embed <- ckpt_key(list(
+    "embedding", key_fitset, layout, method, fit_subset,
+    if (!is.null(model_file)) ckpt_input_stamp(model_file, "", NULL),
+    if (supercell_fit) NULL else umap_subsample, n_neighbors, min_dist, metric,
+    seed, umap_init, embed_cores,
+    if (gates_layout) list(gate_gap, gate_tier_ratio, gate_softness, supervise)))
+  model_saved <- FALSE
+  save_model <- function(model) {
+    make_outdir(output_dir)
+    # save_uwot() will not overwrite, and a rerun into this folder with other
+    # settings must not leave the old model beside new coordinates: written
+    # under a temporary name, then renamed over the old one.
+    model_saved <<- tryCatch({
+      final <- run_path(output_dir, "model", "umap_model.uwot")
+      tmp <- paste0(final, ".part")
+      unlink(tmp)
+      uwot::save_uwot(model, tmp)
+      if (!file.rename(tmp, final)) stop("could not rename ", tmp)
+      cat("Wrote umap_model.uwot (load with uwot::load_uwot())\n")
+      TRUE
+    }, error = function(e) {
+      cat("NOTE: umap_model.uwot not written: ", conditionMessage(e), "\n",
+          sep = "")
+      FALSE
+    })
+    if (model_saved && use_ckpt) {
+      ckpt_save(output_dir, "model", key_embed, "model/umap_model.uwot")
+    }
+  }
+  # Resume: the finished coordinates, or else the fitted model (then only the
+  # projection runs).
+  umap_coords <- if (use_ckpt) ckpt_load(output_dir, "embedding", key_embed)
+                 else NULL
+  saved_model <- NULL
+  if (is.null(umap_coords) && use_ckpt && !is.null(ckpt_load(output_dir, "model", key_embed)) &&
+      file.exists(run_path(output_dir, "model", "umap_model.uwot"))) {
+    saved_model <- tryCatch(
+      uwot::load_uwot(run_path(output_dir, "model", "umap_model.uwot")),
+      error = function(e) NULL)
+    model_saved <- !is.null(saved_model)
+  }
+  if (is.null(umap_coords) && !is.null(model_file)) {
+    saved_model <- uwot::load_uwot(model_file)
+    # The model's run: model/ inside it (2026-10-15 on), or the run folder.
+    info_file <- c(file.path(dirname(dirname(model_file)), "run_info.json"),
+                   file.path(dirname(model_file), "run_info.json"))
+    info_file <- info_file[file.exists(info_file)][1]
+    if (!is.na(info_file) && requireNamespace("jsonlite", quietly = TRUE)) {
+      mk <- unlist(jsonlite::fromJSON(info_file)$features$markers)
+      if (length(mk) && !identical(mk, colnames(combined_matrix))) {
+        stop("--umap_model was fitted on markers ", paste(mk, collapse = ", "),
+             "; this run embeds ", paste(colnames(combined_matrix), collapse = ", "),
+             ". Pass the same --markers, in the same order.", call. = FALSE)
+      }
+    }
+    cat("Projecting every cell onto the saved model ", model_file, "\n", sep = "")
+    if (!identical(normalizePath(run_path(output_dir, "model", "umap_model.uwot"),
+                                 mustWork = FALSE), model_file)) {
+      make_outdir(output_dir)
+      file.copy(model_file, run_path(output_dir, "model", "umap_model.uwot"),
+                overwrite = TRUE)
+    }
+    model_saved <- TRUE
+  }
+  embedding_resumed <- !is.null(umap_coords)
   emit_progress("embed", 0L, 100L, "neighbour graph + initialisation")
-  dimred <- run_dimred(
-    expr_matrix = combined_matrix,
-    method      = method,
-    output_dir  = output_dir,
-    params = list(n_neighbors = n_neighbors, umap_min_dist = min_dist,
-                  metric = metric, seed = seed, draw_plots = FALSE,
-                  n_threads = embed_cores, progress = TRUE, verbose = TRUE,
-                  umap_init = umap_init, umap_subsample = umap_subsample,
-                  output_formats = output_formats,
-                  plot_width = plot_width, plot_height = plot_height)
-  )
-  umap_coords <- dimred$coords
+  if (embedding_resumed) {
+    # Coordinates from the checkpoint; nothing to compute.
+  } else if (!is.null(model_file)) {
+    umap_coords <- run_umap(
+      combined_matrix, n_neighbors = n_neighbors, min_dist = min_dist,
+      metric = metric, seed = seed, n_threads = embed_cores, progress = TRUE,
+      verbose = TRUE, init = umap_init, model = saved_model,
+      transform_threads = max(embed_cores, n_cores))
+  } else if (supercell_fit) {
+    umap_coords <- run_umap(
+      combined_matrix, n_neighbors = n_neighbors, min_dist = min_dist,
+      metric = metric, seed = seed, n_threads = embed_cores, progress = TRUE,
+      verbose = TRUE, init = umap_init, fit_matrix = sc_fit$matrix,
+      transform_threads = max(embed_cores, n_cores), on_fit = save_model,
+      model = saved_model)
+  } else if (gates_layout) {
+    umap_coords <- run_umap(
+      features, n_neighbors = n_neighbors, min_dist = min_dist,
+      metric = metric, seed = seed, n_threads = embed_cores, progress = TRUE,
+      verbose = TRUE, init = umap_init,
+      y = if (supervise > 0) factor(gl$combination[fit_idx]) else NULL,
+      target_weight = supervise, fit_idx = fit_idx,
+      # Projection's neighbour search on every plotting core: same neighbours
+      # at any thread count, so the coordinates do not depend on it.
+      transform_threads = max(embed_cores, n_cores), on_fit = save_model,
+      model = saved_model)
+  } else {
+    dimred <- run_dimred(
+      expr_matrix = combined_matrix,
+      method      = method,
+      output_dir  = output_dir,
+      params = list(n_neighbors = n_neighbors, umap_min_dist = min_dist,
+                    metric = metric, seed = seed, draw_plots = FALSE,
+                    n_threads = embed_cores, progress = TRUE, verbose = TRUE,
+                    umap_init = umap_init, umap_subsample = umap_subsample,
+                    output_formats = output_formats,
+                    plot_width = plot_width, plot_height = plot_height)
+    )
+    umap_coords <- dimred$coords
+  }
   stopifnot(nrow(umap_coords) == nrow(combined_matrix))
+  # The random fit set (--umap_subsample) goes through run_dimred(), which
+  # has no hook to save the model early; it comes back attached to the
+  # coordinates and is saved now. Any model already saved is not written twice.
+  umap_model <- attr(umap_coords, "model")
+  attr(umap_coords, "model") <- NULL
+  if (!is.null(umap_model) && !model_saved) save_model(umap_model)
+  rm(umap_model, saved_model)
+  if (use_ckpt && !embedding_resumed) {
+    ckpt_save(output_dir, "embedding", key_embed, umap_coords)
+  }
 
   # Master data frame: one row per cell, aligned to combined_matrix.
   umap_df <- data.frame(
@@ -2030,19 +2979,242 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   }
   stopifnot(nrow(umap_df) == nrow(combined_matrix))
 
+  # One row per plotted cell in the form plot_gate_layout() takes. In the
+  # markers layout the "combination" is the subgate label, every cell weighs 1
+  # and which cells a --umap_subsample fit used is not tracked.
+  cells <- NULL
+  if (!is.null(gl) || length(split_cols)) {
+    cells <- data.frame(
+      UMAP1 = umap_coords[, 1], UMAP2 = umap_coords[, 2],
+      sample = file_labels, workspace = wsp_labels_per_cell,
+      combination = if (gates_layout) gl$combination else combined_subpop,
+      weight = if (gates_layout) gl$weight else 1,
+      fit = if (gates_layout) seq_len(nrow(umap_df)) %in% fit_idx else TRUE,
+      stringsAsFactors = FALSE)
+    for (cl in annot_cols) {
+      cells[[paste0("annot_", cl)]] <- umap_df[[paste0("annot_", cl)]]
+    }
+  }
+
+  # --- 6b. Gates layout: the record of the run, written BEFORE any plot. ------
+  # Everything needed to redraw, re-score or audit the embedding without
+  # re-reading a workspace: coordinates and calls per cell, every gate
+  # decision, the true counts per sample, how well combinations separate, and
+  # the exact inputs. A plotting failure must not cost the run these.
+  if (gates_layout) {
+    make_outdir(output_dir)
+    calls_df <- as.data.frame(gl$calls)
+    names(calls_df) <- paste0("call_", colnames(gl$calls))
+    first <- c("UMAP1", "UMAP2", "sample", "workspace", "combination")
+    vals <- as.data.frame(ext$colour_matrix)
+    names(vals) <- paste0("value_", colnames(ext$colour_matrix))
+    cells_out <- cbind(cells[, first], calls_df,
+                       cells[, setdiff(names(cells), first), drop = FALSE], vals)
+    write_table_gz(cells_out, run_path(output_dir, "data", "cells.csv.gz"))
+    utils::write.csv(gl$decisions, run_path(output_dir, "data", "gate_decisions.csv"),
+                     row.names = FALSE)
+    utils::write.csv(gl$counts, run_path(output_dir, "data", "combination_counts.csv"),
+                     row.names = FALSE)
+    sep_metrics <- separation_metrics(umap_coords, gl$combination,
+                                      groups = wsp_labels_per_cell, seed = seed,
+                                      samples = file_labels)
+    if (!is.null(sep_metrics)) {
+      utils::write.csv(sep_metrics,
+                       run_path(output_dir, "data", "separation_metrics.csv"),
+                       row.names = FALSE)
+      macro <- sep_metrics[1, ]
+      cat(sprintf(paste0("Separation (macro average over %d combination(s)): ",
+                         "15-NN purity %.3f, isolated %.3f, silhouette %.3f, ",
+                         "workspace mixing %.3f, sample mixing %.3f\n"),
+                  nrow(sep_metrics) - 1L, macro$knn_purity, macro$isolated,
+                  macro$silhouette, macro$group_mixing, macro$sample_mixing))
+      # Islands whose samples sit apart: worth a look before reading a split
+      # or fold-change plot of them as biology.
+      low <- sep_metrics[-1, , drop = FALSE]
+      low_mix <- function(v) is.finite(v) & v < 0.5
+      low <- low[(low_mix(low$sample_mixing) | low_mix(low$group_mixing)) &
+                   low$cells_scored >= 200, , drop = FALSE]
+      if (nrow(low)) {
+        cat("  Low mixing (< 0.5; samples / workspaces) in: ",
+            paste(sprintf("%s (%.2f / %.2f)", low$label, low$sample_mixing,
+                          low$group_mixing), collapse = "; "), "\n", sep = "")
+      }
+      # Islands that are apart in feature space can still be drawn touching:
+      # UMAP places small disconnected pieces of the graph in 2-D with little
+      # to keep them off each other. Named so a reader checks before reading
+      # two touching colours as one population.
+      touch <- sep_metrics[-1, , drop = FALSE]
+      touch <- touch[is.finite(touch$isolated) & touch$isolated < 0.9, ,
+                     drop = FALSE]
+      if (nrow(touch)) {
+        cat("  Islands drawn touching another (isolated < 0.9): ",
+            paste(sprintf("%s (%.2f)", touch$label, touch$isolated),
+                  collapse = "; "), "\n", sep = "")
+      }
+    }
+    if (!is.null(sample_metadata) && file.exists(sample_metadata)) {
+      file.copy(sample_metadata, run_path(output_dir, "data", "sample_metadata.csv"),
+                overwrite = TRUE)
+    }
+    write_gate_run_info(
+      file.path(output_dir, "run_info.json"),
+      parameters = list(
+        layout = layout, population = population,
+        population_by_workspace = as.list(ext$pop_by_wsp),
+        gate_gap = gate_gap, gate_tier_ratio = gate_tier_ratio,
+        viability_pattern = if (is.null(viability_pattern))
+          VIABILITY_MARKER_PATTERN else viability_pattern,
+        gate_softness = gate_softness,
+        supervise = supervise, cells_per_combination = cells_per_combination,
+        min_combination_cells = min_combination_cells,
+        filter = filter,
+        split_by = I(split_cols), level_order = level_order,
+        split_reference = split_reference, n_neighbors = n_neighbors,
+        min_dist = min_dist, metric = metric, umap_init = umap_init,
+        fit_budget = fit_budget,
+        markers = if (length(markers)) I(markers) else NULL,
+        marker_aliases = marker_aliases, sample_metadata = sample_metadata,
+        sample_pattern = sample_pattern,
+        annotate = if (length(annotate)) I(annotate) else NULL,
+        workspaces = workspaces, group = group,
+        normalize_umap = ext$normalize_umap),
+      seed = seed, embed_threads = embed_cores, sigma = sigma,
+      gate_markers = gate_markers, extra_markers = extra_markers,
+      tiers = gl$tiers, decisions = gl$decisions, filled = gl$filled,
+      n_cells = nrow(umap_df), n_fit = length(fit_idx),
+      n_samples = length(sample_labels),
+      samples_left_out = names(ext$sample_keep)[!ext$sample_keep],
+      combinations = sort(tapply(gl$weight, gl$combination, sum),
+                          decreasing = TRUE))
+    written <- c("data/cells.csv.gz", "data/gate_decisions.csv",
+                 "data/combination_counts.csv", "data/separation_metrics.csv",
+                 "run_info.json", "model/umap_model.uwot")
+    written <- written[file.exists(file.path(output_dir, written))]
+    cat("Wrote ", paste(written, collapse = ", "), "\n", sep = "")
+  }
+
+  # --- 6c. Markers layout: the record of the run, written BEFORE any plot. ----
+  # Coordinates of every cell with its sample, workspace, label, metadata, the
+  # values it was embedded from and (with supercells) its supercell, so the
+  # figures can be redrawn or re-analysed without re-reading a workspace or
+  # recomputing the embedding.
+  if (!gates_layout) {
+    make_outdir(output_dir)
+    cells_out <- data.frame(
+      UMAP1 = umap_df$UMAP1, UMAP2 = umap_df$UMAP2,
+      sample = umap_df$file, workspace = umap_df$workspace,
+      label = combined_subpop, stringsAsFactors = FALSE)
+    if (!is.null(sc_fit)) cells_out$supercell <- sc_fit$cell_supercell
+    for (cl in annot_cols) {
+      cells_out[[paste0("annot_", cl)]] <- umap_df[[paste0("annot_", cl)]]
+    }
+    vals <- as.data.frame(combined_matrix)
+    names(vals) <- paste0("value_", colnames(combined_matrix))
+    write_table_gz(cbind(cells_out, vals), run_path(output_dir, "data", "cells.csv.gz"))
+    rm(cells_out, vals)
+    if (!is.null(gl)) {
+      utils::write.csv(gl$decisions, run_path(output_dir, "data", "gate_decisions.csv"),
+                       row.names = FALSE)
+      utils::write.csv(gl$counts, run_path(output_dir, "data", "combination_counts.csv"),
+                       row.names = FALSE)
+    }
+    if (!is.null(sample_metadata) && file.exists(sample_metadata)) {
+      file.copy(sample_metadata, run_path(output_dir, "data", "sample_metadata.csv"),
+                overwrite = TRUE)
+    }
+    write_gate_run_info(
+      file.path(output_dir, "run_info.json"),
+      parameters = list(
+        layout = layout, population = population,
+        population_by_workspace = as.list(ext$pop_by_wsp),
+        subpop_mode = subpop_mode,
+        fit_subset = fit_subset,
+        umap_model = model_file,
+        background = background,
+        pair_by = if (length(pair_by)) I(pair_by) else NULL,
+        supercell_gamma = if (supercell_fit) supercell_gamma else NULL,
+        supercell_k_knn = if (supercell_fit) as.integer(supercell_k_knn) else NULL,
+        supercell_max = if (supercell_fit) as.integer(supercell_max) else NULL,
+        umap_subsample = if (supercell_fit) NULL else umap_subsample,
+        filter = filter, split_by = I(split_cols), level_order = level_order,
+        split_reference = split_reference, n_neighbors = n_neighbors,
+        min_dist = min_dist, metric = metric, umap_init = umap_init,
+        normalize_data = ext$normalize_data, downsample = downsample,
+        markers = if (length(markers)) I(markers) else NULL,
+        marker_aliases = marker_aliases, sample_metadata = sample_metadata,
+        sample_pattern = sample_pattern,
+        annotate = if (length(annotate)) I(annotate) else NULL,
+        workspaces = workspaces, group = group,
+        normalize_umap = ext$normalize_umap),
+      seed = seed, embed_threads = embed_cores,
+      gate_markers = use_markers,
+      n_cells = nrow(umap_df),
+      n_fit = if (!is.null(sc_fit)) nrow(sc_fit$matrix)
+              else if (umap_subsample > 0) min(umap_subsample, nrow(umap_df))
+              else nrow(umap_df),
+      n_samples = length(sample_labels),
+      samples_left_out = names(ext$sample_keep)[!ext$sample_keep],
+      combinations = sort(table(combined_subpop), decreasing = TRUE),
+      supercells = if (is.null(sc_fit)) NULL else list(
+        supercells = sc_fit$n_supercells, gamma_used = sc_fit$gamma_used,
+        passed_through = sc_fit$passed_through,
+        seconds = round(sc_fit$seconds)))
+    written <- c("data/supercells.csv.gz", "model/umap_model.uwot", "data/cells.csv.gz",
+                 "data/gate_decisions.csv", "data/combination_counts.csv", "run_info.json")
+    written <- written[file.exists(file.path(output_dir, written))]
+    cat("Wrote ", paste(written, collapse = ", "), "\n", sep = "")
+  }
+
   # --- 7. Plotting. ----------------------------------------------------------
+  # The existing figures first, the styled combination, split, fold-change and
+  # marker plots last: plot_gate_layout() draws its marker plots under the same
+  # umap_<pop>_marker_<m>_ALL names the app already files, so it has to be the
+  # one that writes them last.
+  facets_started <- Sys.time()
   plot_flowjo_umap_facets(
     umap_df = umap_df, combined_matrix = combined_matrix,
-    use_markers = use_markers, subpop_labels = subpop_labels,
+    use_markers = use_markers,
+    # The gates layout colours by combination in its own plots; the subgate
+    # plots of the markers layout would only repeat them in another palette.
+    subpop_labels = if (gates_layout) character(0) else subpop_labels,
     annot_cols = annot_cols, population = population,
     output_dir = output_dir, n_workspaces = length(gs_list),
     subpop_mode_tag = subpop_mode_tag, n_cores = n_cores,
     colour_matrix = ext$colour_matrix,
-    subpop_by_level = ext$subpop_by_level %||% list(),
+    subpop_by_level = if (gates_layout) list() else ext$subpop_by_level %||% list(),
     normalize = ext$normalize_data, normalize_umap = ext$normalize_umap,
-    point_size = point_size,
-    point_alpha = point_alpha, plot_width = plot_width,
+    point_size = point_size %||% 0.4,
+    point_alpha = point_alpha %||% 0.6, plot_width = plot_width,
     plot_height = plot_height, output_formats = output_formats)
+
+  gate_index <- NULL
+  if (!is.null(cells)) {
+    if (exists("plot_gate_layout", mode = "function")) {
+      gate_index <- plot_gate_layout(
+        cells, colour_matrix = ext$colour_matrix, use_markers = use_markers,
+        population = population, output_dir = output_dir,
+        split_cols = split_cols, level_order = level_order_list,
+        split_reference = split_ref_list,
+        counts = if (!is.null(gl)) gl$counts else NULL,
+        background = bg_map,
+        point_size = point_size, point_alpha = point_alpha,
+        normalize_umap = ext$normalize_umap,
+        plot_width = plot_width, plot_height = plot_height,
+        output_formats = output_formats, n_cores = n_cores)
+    } else {
+      cat("NOTE: plot_gate_layout() is not available (src/visualization/",
+          "umap_split_plots.R was not sourced), so the combination, split and ",
+          "fold-change plots were not drawn.\n", sep = "")
+    }
+  }
+
+  # What was drawn, for the app: the gate-layout index plus the plots the
+  # function above wrote in this run (found by modification time).
+  if (!is.null(cells)) {
+    write_plot_index(file.path(output_dir, "plot_index.json"), gate_index,
+                     facet_plot_entries(output_dir, facets_started,
+                                        exclude = gate_index$file))
+  }
 
   cat("\nDone. Plots written to:", normalizePath(output_dir), "\n")
   # Repeated here on purpose: the warning above scrolled past a long load, and
@@ -2053,7 +3225,9 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   invisible(list(umap_coords = umap_coords, umap_df = umap_df,
                  workspaces = names(gs_list),
                  dropped = resolved$dropped,
-                 output_dir = normalizePath(output_dir)))
+                 output_dir = normalizePath(output_dir),
+                 layout = layout, cells = cells, gate_layout = gl,
+                 plot_index = gate_index))
 }
 
 
@@ -2142,10 +3316,16 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
     ggplot2::theme(panel.grid = ggplot2::element_blank())
   )
 
-  save_one <- function(p, basename_no_ext) {
+  # Every figure goes into its kind's folder of the run (run_subdir()).
+  in_subdir <- function(subdir, basename_no_ext) {
+    d <- file.path(output_dir, subdir)
+    dir.create(d, recursive = TRUE, showWarnings = FALSE)
+    file.path(d, basename_no_ext)
+  }
+  save_one <- function(p, basename_no_ext, subdir = "") {
     save_plot_formats(
       p,
-      file.path(output_dir, basename_no_ext),
+      in_subdir(subdir, basename_no_ext),
       width   = plot_width,
       height  = plot_height,
       formats = output_formats
@@ -2165,7 +3345,8 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
   # otherwise. The other colourings (subpopulation, workspace, annotation) have
   # few enough levels that this never triggers.
   MAX_CANVAS_IN <- 45
-  save_categorical <- function(p, basename_no_ext, legend_strings, ncol = 1L) {
+  save_categorical <- function(p, basename_no_ext, legend_strings, ncol = 1L,
+                               subdir = run_subdir("overview")) {
     width <- plot_width + ncol * legend_width_in(legend_strings)
     if (width > MAX_CANVAS_IN) {
       n_keys <- max(0L, length(legend_strings) - 1L)
@@ -2179,159 +3360,186 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
     }
     save_plot_formats(
       p,
-      file.path(output_dir, basename_no_ext),
+      in_subdir(subdir, basename_no_ext),
       width   = width,
       height  = plot_height,
       formats = output_formats
     )
   }
 
-  # 7a. Categorical plot coloured by file/sample (all cells).
-  file_levels <- sort(unique(umap_df$file))
-  file_ncol <- legend_ncol(length(file_levels), plot_height)
-  p_file <- ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = file)) +
-    geom_point(size = pt_size, alpha = pt_alpha) +
-    umap_coord() +
-    base_umap_theme +
-    guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
-                                ncol = file_ncol)) +
-    labs(title = paste0("UMAP - ", population, " - by file"),
-         color = "File")
-  save_categorical(p_file, create_safe_filename(paste0("umap_", pop_tag, "_by_file")),
-                   legend_strings = c(file_levels, "File"),
-                   ncol = file_ncol)
-  cat("Saved: by-file categorical plot\n")
-
-  # 7a-ter. Categorical plot coloured by WORKSPACE (all cells, same embedding).
-  # Only when more than one workspace contributed — a single-workspace run would
-  # otherwise gain a one-colour plot and a file that did not exist before.
-  #
-  # This is also the plot to read for batch effects: nothing here corrects for
-  # them, so workspaces separating into their own islands means the embedding is
-  # partly driven by acquisition, not biology.
-  wsp_levels <- unique(wsp_labels_per_cell)
-  if (length(wsp_levels) > 1) {
-    wsp_counts <- table(factor(umap_df$workspace, levels = wsp_levels))
-    wsp_lab <- sprintf("%s (n=%d)", wsp_levels,
-                       as.integer(wsp_counts[wsp_levels]))
-    wsp_cols <- stats::setNames(distinct_palette(length(wsp_levels)), wsp_levels)
-
-    df_ws <- umap_df
-    df_ws$workspace <- factor(df_ws$workspace, levels = wsp_levels)
-
-    wsp_ncol <- legend_ncol(length(wsp_levels), plot_height)
-    p_ws <- ggplot(df_ws, aes(x = UMAP1, y = UMAP2, color = workspace)) +
-      geom_point(size = pt_size, alpha = pt_alpha) +
-      scale_color_manual(values = wsp_cols, breaks = wsp_levels,
-                         labels = wsp_lab, drop = FALSE) +
-      umap_coord() +
-      base_umap_theme +
-      guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
-                                  ncol = wsp_ncol)) +
-      labs(title = paste0("UMAP - ", population, " - by workspace"),
-           color = "Workspace")
-    save_categorical(
-      p_ws, create_safe_filename(paste0("umap_", pop_tag, "_by_workspace")),
-      legend_strings = c(wsp_lab, "Workspace"),
-      ncol = wsp_ncol)
-    cat(sprintf("Saved: by-workspace categorical plot (%d workspaces)\n",
-                length(wsp_levels)))
+  # The overview plots, each drawing every cell, are collected as jobs and
+  # drawn in parallel by run_overview_jobs() below. Every job reads only
+  # shared, read-only objects and writes its own file.
+  overview_jobs <- list()
+  add_job <- function(name, fn) {
+    overview_jobs[[length(overview_jobs) + 1L]] <<- list(name = name, fn = fn)
+    invisible(NULL)
+  }
+  run_overview_jobs <- function() {
+    n_job <- length(overview_jobs)
+    if (!n_job) return(invisible(NULL))
+    started <- Sys.time()
+    invisible(parallel_lapply(seq_len(n_job), function(i) {
+      overview_jobs[[i]]$fn()
+      TRUE
+    }, n_cores = min(max(1L, as.integer(n_cores)), 12L)))
+    cat(sprintf("Saved %d overview plot(s) in %s\n", n_job,
+                format(round(difftime(Sys.time(), started), 1))))
   }
 
-  # 7a-bis. Categorical plot coloured by FlowJo subgate (all cells, same
-  # embedding). Colours follow the gating tree; the catch-all
-  # "(multiple)"/"(none)" levels get greys so real subgates keep the
-  # distinguishable hues. Legend labels carry the per-level cell count.
-  if (do_subpop) {
-    present_real <- intersect(subpop_labels, unique(combined_subpop))
-    catchall     <- intersect(c(.SUBPOP_MULTI, .SUBPOP_NONE), unique(combined_subpop))
-    sp_levels    <- c(present_real, catchall)
-
-    sp_counts <- table(factor(combined_subpop, levels = sp_levels))
-    sp_lab    <- sprintf("%s (n=%d)", sp_levels, as.integer(sp_counts[sp_levels]))
-
-    sp_cols <- character(0)
-    if (length(present_real)) {
-      sp_cols <- stats::setNames(
-        distinct_palette(length(present_real)), present_real)
-    }
-    if (.SUBPOP_MULTI %in% sp_levels) sp_cols[.SUBPOP_MULTI] <- "grey55"
-    if (.SUBPOP_NONE  %in% sp_levels) sp_cols[.SUBPOP_NONE]  <- "grey85"
-
-    df_sp <- umap_df
-    df_sp$subpop <- factor(df_sp$subpop, levels = sp_levels)
-
-    sp_ncol <- legend_ncol(length(sp_levels), plot_height)
-    p_sp <- ggplot(df_sp, aes(x = UMAP1, y = UMAP2, color = subpop)) +
+  add_job("by file", function() {
+    # 7a. Categorical plot coloured by file/sample (all cells).
+    file_levels <- sort(unique(umap_df$file))
+    file_ncol <- legend_ncol(length(file_levels), plot_height)
+    p_file <- ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = file)) +
       geom_point(size = pt_size, alpha = pt_alpha) +
-      scale_color_manual(values = sp_cols, breaks = sp_levels, labels = sp_lab,
-                         drop = FALSE) +
       umap_coord() +
       base_umap_theme +
       guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
-                                  ncol = sp_ncol)) +
-      labs(title = paste0("UMAP - ", population, " - by subpopulation (",
-                          subpop_mode_tag, ")"),
-           color = "Subpopulation")
-    save_categorical(
-      p_sp, create_safe_filename(paste0("umap_", pop_tag, "_by_subpopulation")),
-      legend_strings = c(sp_lab, "Subpopulation"),
-      ncol = sp_ncol)
+                                  ncol = file_ncol)) +
+      labs(title = paste0("UMAP - ", population, " - by file"),
+           color = "File")
+    save_categorical(p_file, create_safe_filename(paste0("umap_", pop_tag, "_by_file")),
+                     legend_strings = c(file_levels, "File"),
+                     ncol = file_ncol)
+    cat("Saved: by-file categorical plot\n")
+  })
 
-    # 7b-ii. ONE PLOT PER GATING LEVEL.
+  add_job("by workspace", function() {
+    # 7a-ter. Categorical plot coloured by WORKSPACE (all cells, same embedding).
+    # Only when more than one workspace contributed — a single-workspace run would
+    # otherwise gain a one-colour plot and a file that did not exist before.
     #
-    # The plot above answers "what is this cell, most specifically", which is
-    # why a CD4+ cell that also fires IL-2 appears as IL-2 and vanishes from the
-    # lineage picture. These answer "how does the population divide HERE": level
-    # 1 is the immediate children, level 2 theirs, and so on.
-    #
-    # Cells of the reference population that are in no gate at a level are NA
-    # and drawn grey, with na.translate = FALSE keeping them out of the legend.
-    # They are the parent doing nothing at this level, not a category — giving
-    # them a swatch is what made the earlier "(none)" class dominate the key.
-    for (ln in names(subpop_by_level)) {
-      lv_vec <- subpop_by_level[[ln]]
-      if (all(is.na(lv_vec))) next
-      keys   <- levels(droplevels(lv_vec))
-      lv_col <- stats::setNames(distinct_palette(length(keys)), keys)
-      lv_ncol <- legend_ncol(length(keys), plot_height)
-      df_lv <- umap_df
-      df_lv$level <- lv_vec
-      # NA first so the grey parent cells sit UNDER the coloured gates rather
-      # than speckling over them.
-      df_lv <- df_lv[order(!is.na(df_lv$level)), , drop = FALSE]
+    # This is also the plot to read for batch effects: nothing here corrects for
+    # them, so workspaces separating into their own islands means the embedding is
+    # partly driven by acquisition, not biology.
+    wsp_levels <- unique(wsp_labels_per_cell)
+    if (length(wsp_levels) > 1) {
+      wsp_counts <- table(factor(umap_df$workspace, levels = wsp_levels))
+      wsp_lab <- sprintf("%s (n=%d)", wsp_levels,
+                         as.integer(wsp_counts[wsp_levels]))
+      wsp_cols <- stats::setNames(distinct_palette(length(wsp_levels)), wsp_levels)
 
-      p_lv <- ggplot(df_lv, aes(x = UMAP1, y = UMAP2, color = level)) +
+      df_ws <- umap_df
+      df_ws$workspace <- factor(df_ws$workspace, levels = wsp_levels)
+
+      wsp_ncol <- legend_ncol(length(wsp_levels), plot_height)
+      p_ws <- ggplot(df_ws, aes(x = UMAP1, y = UMAP2, color = workspace)) +
         geom_point(size = pt_size, alpha = pt_alpha) +
-        scale_color_manual(values = lv_col, breaks = keys,
-                           na.value = "grey85", na.translate = FALSE,
+        scale_color_manual(values = wsp_cols, breaks = wsp_levels,
+                           labels = wsp_lab, drop = FALSE) +
+        umap_coord() +
+        base_umap_theme +
+        guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
+                                    ncol = wsp_ncol)) +
+        labs(title = paste0("UMAP - ", population, " - by workspace"),
+             color = "Workspace")
+      save_categorical(
+        p_ws, create_safe_filename(paste0("umap_", pop_tag, "_by_workspace")),
+        legend_strings = c(wsp_lab, "Workspace"),
+        ncol = wsp_ncol)
+      cat(sprintf("Saved: by-workspace categorical plot (%d workspaces)\n",
+                  length(wsp_levels)))
+    }
+  })
+
+  add_job("by subpopulation", function() {
+    # 7a-bis. Categorical plot coloured by FlowJo subgate (all cells, same
+    # embedding). Colours follow the gating tree; the catch-all
+    # "(multiple)"/"(none)" levels get greys so real subgates keep the
+    # distinguishable hues. Legend labels carry the per-level cell count.
+    if (do_subpop) {
+      present_real <- intersect(subpop_labels, unique(combined_subpop))
+      catchall     <- intersect(c(.SUBPOP_MULTI, .SUBPOP_NONE), unique(combined_subpop))
+      sp_levels    <- c(present_real, catchall)
+
+      sp_counts <- table(factor(combined_subpop, levels = sp_levels))
+      sp_lab    <- sprintf("%s (n=%d)", sp_levels, as.integer(sp_counts[sp_levels]))
+
+      sp_cols <- character(0)
+      if (length(present_real)) {
+        sp_cols <- stats::setNames(
+          distinct_palette(length(present_real)), present_real)
+      }
+      if (.SUBPOP_MULTI %in% sp_levels) sp_cols[.SUBPOP_MULTI] <- "grey55"
+      if (.SUBPOP_NONE  %in% sp_levels) sp_cols[.SUBPOP_NONE]  <- "grey85"
+
+      df_sp <- umap_df
+      df_sp$subpop <- factor(df_sp$subpop, levels = sp_levels)
+
+      sp_ncol <- legend_ncol(length(sp_levels), plot_height)
+      p_sp <- ggplot(df_sp, aes(x = UMAP1, y = UMAP2, color = subpop)) +
+        geom_point(size = pt_size, alpha = pt_alpha) +
+        scale_color_manual(values = sp_cols, breaks = sp_levels, labels = sp_lab,
                            drop = FALSE) +
         umap_coord() +
         base_umap_theme +
         guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
-                                    ncol = lv_ncol)) +
-        labs(title = paste0("UMAP - ", population, " - ", ln,
-                            " (", sum(!is.na(lv_vec)), " of ", length(lv_vec),
-                            " cells gated)"),
-             color = ln)
+                                    ncol = sp_ncol)) +
+        labs(title = paste0("UMAP - ", population, " - by subpopulation (",
+                            subpop_mode_tag, ")"),
+             color = "Subpopulation")
       save_categorical(
-        p_lv,
-        create_safe_filename(paste0("umap_", pop_tag, "_by_",
-                                    gsub(" ", "", ln))),
-        legend_strings = c(keys, ln), ncol = lv_ncol)
+        p_sp, create_safe_filename(paste0("umap_", pop_tag, "_by_subpopulation")),
+        legend_strings = c(sp_lab, "Subpopulation"),
+        ncol = sp_ncol)
+
+      # 7b-ii. ONE PLOT PER GATING LEVEL.
+      #
+      # The plot above answers "what is this cell, most specifically", which is
+      # why a CD4+ cell that also fires IL-2 appears as IL-2 and vanishes from the
+      # lineage picture. These answer "how does the population divide HERE": level
+      # 1 is the immediate children, level 2 theirs, and so on.
+      #
+      # Cells of the reference population that are in no gate at a level are NA
+      # and drawn grey, with na.translate = FALSE keeping them out of the legend.
+      # They are the parent doing nothing at this level, not a category — giving
+      # them a swatch is what made the earlier "(none)" class dominate the key.
+      for (ln in names(subpop_by_level)) {
+        lv_vec <- subpop_by_level[[ln]]
+        if (all(is.na(lv_vec))) next
+        keys   <- levels(droplevels(lv_vec))
+        lv_col <- stats::setNames(distinct_palette(length(keys)), keys)
+        lv_ncol <- legend_ncol(length(keys), plot_height)
+        df_lv <- umap_df
+        df_lv$level <- lv_vec
+        # NA first so the grey parent cells sit UNDER the coloured gates rather
+        # than speckling over them.
+        df_lv <- df_lv[order(!is.na(df_lv$level)), , drop = FALSE]
+
+        p_lv <- ggplot(df_lv, aes(x = UMAP1, y = UMAP2, color = level)) +
+          geom_point(size = pt_size, alpha = pt_alpha) +
+          scale_color_manual(values = lv_col, breaks = keys,
+                             na.value = "grey85", na.translate = FALSE,
+                             drop = FALSE) +
+          umap_coord() +
+          base_umap_theme +
+          guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
+                                      ncol = lv_ncol)) +
+          labs(title = paste0("UMAP - ", population, " - ", ln,
+                              " (", sum(!is.na(lv_vec)), " of ", length(lv_vec),
+                              " cells gated)"),
+               color = ln)
+        save_categorical(
+          p_lv,
+          create_safe_filename(paste0("umap_", pop_tag, "_by_",
+                                      gsub(" ", "", ln))),
+          legend_strings = c(keys, ln), ncol = lv_ncol)
+      }
+      cat("Saved: ", length(subpop_by_level), " per-level subpopulation plot(s)\n",
+          sep = "")
+      cat(sprintf("Saved: by-subpopulation categorical plot (%d subgate(s) + %d catch-all level(s))\n",
+                  length(present_real), length(catchall)))
     }
-    cat("Saved: ", length(subpop_by_level), " per-level subpopulation plot(s)\n",
-        sep = "")
-    cat(sprintf("Saved: by-subpopulation categorical plot (%d subgate(s) + %d catch-all level(s))\n",
-                length(present_real), length(catchall)))
-  }
+  })
 
   # 7a-quater. Sample annotations: for EACH column one plot coloured by it, and
   # then one plot per level with that level drawn over the whole embedding in
   # grey. One embedding, many views — the grey context is the point, because an
   # isolated subset gives you no idea where it sits relative to everything else,
   # which is exactly what a shared embedding is for.
-  for (cl in annot_cols) {
+  for (cl in annot_cols) local({
+    cl <- cl
     values <- umap_df[[paste0("annot_", cl)]]
     # Real levels first (sorted), the Unassigned catch-all last and in grey, so
     # it can never take a colour a real level needs.
@@ -2345,75 +3553,92 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
       cols[.ANNOT_UNASSIGNED] <- "grey70"
     }
 
-    df_a <- umap_df
-    df_a$.annot <- factor(values, levels = levels_all)
-
-    a_ncol <- legend_ncol(length(levels_all), plot_height)
-    p_a <- ggplot(df_a, aes(x = UMAP1, y = UMAP2, color = .annot)) +
-      geom_point(size = pt_size, alpha = pt_alpha) +
-      scale_color_manual(values = cols, breaks = levels_all, labels = lab,
-                         drop = FALSE) +
-      umap_coord() +
-      base_umap_theme +
-      guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
-                                  ncol = a_ncol)) +
-      labs(title = paste0("UMAP - ", population, " - by ", cl), color = cl)
-    save_categorical(
-      p_a,
-      create_safe_filename(paste0("umap_", pop_tag, "_annot_", cl, "_ALL")),
-      legend_strings = c(lab, cl), ncol = a_ncol)
-
-    # One plot per level: the whole embedding in grey, this level on top.
-    for (lv in levels_all) {
-      rows <- which(values == lv)
-      if (length(rows) == 0) next
-      p_lv <- ggplot(mapping = aes(x = UMAP1, y = UMAP2)) +
-        geom_point(data = umap_df, color = "grey88", size = pt_size,
-                   alpha = pt_alpha) +
-        geom_point(data = umap_df[rows, , drop = FALSE],
-                   color = unname(cols[lv]), size = pt_size, alpha = pt_alpha) +
+    add_job(paste0("annot ", cl), function() {
+      df_a <- umap_df
+      df_a$.annot <- factor(values, levels = levels_all)
+      a_ncol <- legend_ncol(length(levels_all), plot_height)
+      p_a <- ggplot(df_a, aes(x = UMAP1, y = UMAP2, color = .annot)) +
+        geom_point(size = pt_size, alpha = pt_alpha) +
+        scale_color_manual(values = cols, breaks = levels_all, labels = lab,
+                           drop = FALSE) +
         umap_coord() +
         base_umap_theme +
-        labs(title = paste0("UMAP - ", population, " - ", cl, ": ", lv),
-             subtitle = sprintf("%d of %d cells (grey = all cells)",
-                                length(rows), nrow(umap_df)))
-      save_one(p_lv, create_safe_filename(
-        paste0("umap_", pop_tag, "_annot_", cl, "_level_", lv)))
-    }
-    cat(sprintf("Saved: %s (1 coloured + %d level plot(s))\n", cl,
-                length(levels_all)))
-  }
+        guides(color = guide_legend(override.aes = list(size = 3, alpha = 1),
+                                    ncol = a_ncol)) +
+        labs(title = paste0("UMAP - ", population, " - by ", cl), color = cl)
+      save_categorical(
+        p_a,
+        create_safe_filename(paste0("umap_", pop_tag, "_annot_", cl, "_ALL")),
+        legend_strings = c(lab, cl), ncol = a_ncol,
+        subdir = run_subdir("annot", column = cl))
+    })
+
+    # One plot per level: the whole embedding in grey, this level on top.
+    for (lv in levels_all) local({
+      lv <- lv
+      rows <- which(values == lv)
+      if (length(rows)) add_job(paste0("annot ", cl, ": ", lv), function() {
+        p_lv <- ggplot(mapping = aes(x = UMAP1, y = UMAP2)) +
+          geom_point(data = umap_df, color = "grey88", size = pt_size,
+                     alpha = pt_alpha) +
+          geom_point(data = umap_df[rows, , drop = FALSE],
+                     color = unname(cols[lv]), size = pt_size, alpha = pt_alpha) +
+          umap_coord() +
+          base_umap_theme +
+          labs(title = paste0("UMAP - ", population, " - ", cl, ": ", lv),
+               subtitle = sprintf("%d of %d cells (grey = all cells)",
+                                  length(rows), nrow(umap_df)))
+        save_one(p_lv, create_safe_filename(
+          paste0("umap_", pop_tag, "_annot_", cl, "_level_", lv)),
+          subdir = run_subdir("annot", column = cl))
+      })
+    })
+  })
+
+  # 7b. Conjoint marker plots (all cells), one job each. ONE colour scale per
+  # marker, shared by the conjoint plot and every per-file plot below, so a
+  # given colour means the same expression value in every plot of this marker.
+  # The limits span the full min-max range of the marker across ALL pooled
+  # cells. Per-file subsets only ever cover part of that range.
+  marker_limits_all <- lapply(stats::setNames(nm = use_markers), function(m)
+    color_limits(colour_matrix[, m]))
+  for (marker in use_markers) local({
+    marker <- marker
+    marker_limits <- marker_limits_all[[marker]]
+    add_job(paste0("marker ", marker), function() {
+      df_all <- umap_df
+      df_all$expr <- colour_matrix[, marker]
+      p_all <- ggplot(df_all, aes(x = UMAP1, y = UMAP2, color = expr)) +
+        geom_point(size = pt_size, alpha = pt_alpha) +
+        viridis::scale_color_viridis(name = paste0(marker, norm_tag),
+                                     limits = marker_limits,
+                                     oob = scales::squish) +
+        umap_coord() +
+        base_umap_theme +
+        labs(title = paste0("UMAP - ", population, " - ", marker, " (all files)"))
+      save_one(
+        p_all,
+        create_safe_filename(paste0("umap_", pop_tag, "_marker_", marker, "_ALL")),
+        subdir = run_subdir("marker")
+      )
+    })
+  })
+
+  # The overview plots above, all at once. Each draws every cell on one core
+  # (about 1.3 min per plot at 8 million cells), and they are independent, so
+  # in a row they were half an hour of a cohort run. Forked, so umap_df and the
+  # matrices are shared copy-on-write; each worker still holds one plot's
+  # working copy, hence at most 12 of them.
+  run_overview_jobs()
 
   files_unique <- unique(file_labels)
 
-  # 7b & 7c. For each marker: one conjoint plot (all cells) + one plot per file.
+  # 7c. For each marker, one plot per file on the conjoint plot's colour scale.
   n_marker_done <- 0L
   for (marker in use_markers) {
     n_marker_done <- n_marker_done + 1L
     emit_progress("plot", n_marker_done, length(use_markers), marker)
-    # ONE colour scale per marker, shared by the conjoint plot and every per-file
-    # plot, so a given colour means the same expression value in every plot of
-    # this marker. The limits span the full min-max range of the marker across
-    # ALL pooled cells. Per-file subsets only ever cover part of that range.
-    marker_limits <- color_limits(colour_matrix[, marker])
-
-    # CONJOINT (all cells) — colour vector is combined_matrix[, marker], which is
-    # index-aligned to umap_df rows.
-    df_all <- umap_df
-    df_all$expr <- colour_matrix[, marker]
-
-    p_all <- ggplot(df_all, aes(x = UMAP1, y = UMAP2, color = expr)) +
-      geom_point(size = pt_size, alpha = pt_alpha) +
-      viridis::scale_color_viridis(name = paste0(marker, norm_tag),
-                                   limits = marker_limits,
-                                   oob = scales::squish) +
-      umap_coord() +
-      base_umap_theme +
-      labs(title = paste0("UMAP - ", population, " - ", marker, " (all files)"))
-    save_one(
-      p_all,
-      create_safe_filename(paste0("umap_", pop_tag, "_marker_", marker, "_ALL"))
-    )
+    marker_limits <- marker_limits_all[[marker]]
 
     # PER FILE — subset rows by file label; SAME coordinates and the SAME colour
     # scale as the conjoint plot, so colours are directly comparable.
@@ -2426,8 +3651,8 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
     # umap_df and combined_matrix are then shared copy-on-write instead of being
     # serialised to each worker.
     #
-    # The OUTER loop over markers stays serial: marker_limits has to be computed
-    # once per marker anyway, progress reads sensibly per marker, and 311 items
+    # The OUTER loop over markers stays serial: progress reads sensibly per
+    # marker, and 311 items
     # is already far more parallelism than any core count here will absorb.
     plot_one_file <- function(f) {
       rows <- which(file_labels == f)               # index-aligned subset
@@ -2446,7 +3671,8 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
       save_one(
         p_f,
         create_safe_filename(
-          paste0("umap_", pop_tag, "_marker_", marker, "_file_", f))
+          paste0("umap_", pop_tag, "_marker_", marker, "_file_", f)),
+        subdir = run_subdir("marker_file", marker = marker)
       )
       invisible(NULL)
     }
@@ -2461,3 +3687,203 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
   invisible(normalizePath(output_dir))
 }
 
+
+
+# =============================================================================
+# replot_from_saved() — redraw every plot of a finished run from what it saved
+# (cells.csv.gz, run_info.json, combination_counts.csv), without reading a
+# workspace or recomputing anything. A cohort run spends most of an hour on the
+# embedding; changing a point size, a plot dimension or the core count used for
+# drawing should not cost that again. The plots are written into `output_dir`
+# (default: the run's own folder), replacing the old ones.
+#
+# Markers colour by the saved value_<marker> columns. Those are the values the
+# run plotted (the gates layout) or embedded (the markers layout, after
+# --normalize_data); --normalize_umap is re-applied to them.
+# =============================================================================
+replot_from_saved <- function(run_dir, output_dir = run_dir, n_cores = 1L,
+                              point_size = NULL, point_alpha = NULL,
+                              plot_width = 10, plot_height = 8,
+                              output_formats = list(pdf = FALSE, png = TRUE,
+                                                    svg = FALSE)) {
+  # The layout's folders, or flat for a run before 2026-10-15 (run_find()).
+  need <- c(run_find(run_dir, "data", "cells.csv.gz"),
+            run_find(run_dir, "", "run_info.json"))
+  if (anyNA(need)) {
+    stop("replot needs cells.csv.gz and run_info.json in ", run_dir,
+         " (written by runs since 2026-10-14).", call. = FALSE)
+  }
+  n_cores <- resolve_cores(n_cores)
+  info <- jsonlite::fromJSON(need[2], simplifyVector = TRUE)
+  par <- info$parameters
+  cat("Replotting ", run_dir, " (", par$layout, " layout, ", info$cells,
+      " cells) with ", n_cores, " core(s)\n", sep = "")
+
+  t0 <- Sys.time()
+  cells <- if (requireNamespace("data.table", quietly = TRUE) &&
+               nzchar(Sys.which("zcat"))) {
+    as.data.frame(data.table::fread(cmd = paste("zcat", shQuote(need[1]))))
+  } else {
+    utils::read.csv(gzfile(need[1]), check.names = FALSE,
+                    stringsAsFactors = FALSE)
+  }
+  cat(sprintf("Read %s cells in %s\n", format(nrow(cells), big.mark = ","),
+              format(round(difftime(Sys.time(), t0), 1))))
+  label_col <- if ("combination" %in% names(cells)) "combination" else "label"
+  value_cols <- grep("^value_", names(cells), value = TRUE)
+  if (!length(value_cols)) {
+    stop("cells.csv.gz has no value_<marker> columns, so the marker plots ",
+         "cannot be coloured; rerun to save them.", call. = FALSE)
+  }
+  use_markers <- sub("^value_", "", value_cols)
+  values <- as.matrix(cells[, value_cols, drop = FALSE])
+  colnames(values) <- use_markers
+  normalize_umap <- par$normalize_umap %||% "none"
+  colour_matrix <- if (identical(normalize_umap, "none")) values
+                   else normalize_columns(values, normalize_umap)
+  annot_cols <- sub("^annot_", "", grep("^annot_", names(cells), value = TRUE))
+
+  umap_df <- data.frame(UMAP1 = cells$UMAP1, UMAP2 = cells$UMAP2,
+                        file = as.character(cells$sample),
+                        workspace = as.character(cells$workspace),
+                        subpop = as.character(cells[[label_col]]),
+                        stringsAsFactors = FALSE)
+  for (cl in annot_cols) {
+    umap_df[[paste0("annot_", cl)]] <- as.character(cells[[paste0("annot_", cl)]])
+  }
+  # Combinations get the styled plots below, so the plain subgate plot is drawn
+  # only for subgate labels, as in the run itself.
+  combos <- identical(par$layout, "gates") ||
+    identical(par$subpop_mode, "combinations")
+  subpop_labels <- if (combos) character(0) else
+    sort(setdiff(unique(umap_df$subpop), c(.SUBPOP_MULTI, .SUBPOP_NONE)))
+  population <- par$population
+
+  facets_started <- Sys.time()
+  plot_flowjo_umap_facets(
+    umap_df = umap_df, combined_matrix = values, use_markers = use_markers,
+    subpop_labels = subpop_labels, annot_cols = annot_cols,
+    population = population, output_dir = output_dir,
+    n_workspaces = length(unique(umap_df$workspace)),
+    subpop_mode_tag = par$subpop_mode %||% "", n_cores = n_cores,
+    colour_matrix = colour_matrix, subpop_by_level = list(),
+    normalize = "none", normalize_umap = normalize_umap,
+    point_size = point_size %||% 0.4, point_alpha = point_alpha %||% 0.6,
+    plot_width = plot_width, plot_height = plot_height,
+    output_formats = output_formats)
+
+  split_cols <- unlist(par$split_by)
+  split_cols <- split_cols[nzchar(split_cols)]
+  gate_index <- NULL
+  if ((combos || length(split_cols)) &&
+      exists("plot_gate_layout", mode = "function")) {
+    counts_file <- run_find(run_dir, "data", "combination_counts.csv")
+    counts <- if (combos && !is.na(counts_file))
+      utils::read.csv(counts_file, check.names = FALSE, stringsAsFactors = FALSE)
+      else NULL
+    gl_cells <- data.frame(
+      UMAP1 = cells$UMAP1, UMAP2 = cells$UMAP2,
+      sample = as.character(cells$sample),
+      workspace = as.character(cells$workspace),
+      combination = as.character(cells[[label_col]]),
+      weight = if ("weight" %in% names(cells)) cells$weight else 1,
+      fit = if ("fit" %in% names(cells)) as.logical(cells$fit) else TRUE,
+      stringsAsFactors = FALSE)
+    for (cl in annot_cols) {
+      gl_cells[[paste0("annot_", cl)]] <- umap_df[[paste0("annot_", cl)]]
+    }
+    bg_file <- run_find(run_dir, "data", "background_pairs.csv")
+    bg_map <- NULL
+    if (!is.null(par$background) && !is.na(bg_file)) {
+      bp <- utils::read.csv(bg_file, stringsAsFactors = FALSE)
+      bg_map <- stats::setNames(as.character(bp$background), as.character(bp$sample))
+    }
+    gate_index <- plot_gate_layout(
+      gl_cells, colour_matrix = colour_matrix, use_markers = use_markers,
+      population = population, output_dir = output_dir,
+      split_cols = split_cols,
+      level_order = parse_level_order(par$level_order),
+      split_reference = parse_split_reference(par$split_reference),
+      background = bg_map,
+      counts = counts, point_size = point_size, point_alpha = point_alpha,
+      normalize_umap = normalize_umap, plot_width = plot_width,
+      plot_height = plot_height, output_formats = output_formats,
+      n_cores = n_cores)
+  }
+  write_plot_index(file.path(output_dir, "plot_index.json"), gate_index,
+                   facet_plot_entries(output_dir, facets_started,
+                                      exclude = gate_index$file))
+  cat("Done. Plots written to: ", output_dir, " in ",
+      format(round(difftime(Sys.time(), t0), 1)), "\n", sep = "")
+  invisible(output_dir)
+}
+
+
+# -----------------------------------------------------------------------------
+# Checkpoints of umap_from_flowjo(): <output_dir>/checkpoints/<stage>.rds, each
+# list(key, saved, value). The key is the md5 of the settings the stage depends
+# on (base R only: tools::md5sum of the serialised settings), so a checkpoint
+# made with other settings is recognised and recomputed, never reused.
+# -----------------------------------------------------------------------------
+ckpt_key <- function(x) {
+  f <- tempfile(fileext = ".rds")
+  on.exit(unlink(f))
+  saveRDS(x, f, compress = FALSE, version = 2)
+  unname(tools::md5sum(f))
+}
+
+# What the inputs looked like: the workspace files, the FCS files and the
+# metadata table, by size and modification time. A re-exported workspace or an
+# edited metadata table changes the key; reading the files would take as long
+# as the extraction the checkpoint saves.
+ckpt_input_stamp <- function(wsp_path, fcs_dir, sample_metadata) {
+  stamp <- function(paths) {
+    paths <- sort(unique(paths[nzchar(paths) & file.exists(paths)]))
+    if (!length(paths)) return(NULL)
+    fi <- file.info(paths, extra_cols = FALSE)
+    data.frame(path = paths, size = fi$size,
+               mtime = as.numeric(fi$mtime), stringsAsFactors = FALSE)
+  }
+  wsp <- if (length(wsp_path) && dir.exists(wsp_path[1]))
+    list.files(wsp_path, pattern = "\\.wsp$", recursive = TRUE, full.names = TRUE,
+               ignore.case = TRUE) else wsp_path
+  fcs <- if (dir.exists(fcs_dir))
+    list.files(fcs_dir, pattern = "\\.fcs$", recursive = TRUE, full.names = TRUE,
+               ignore.case = TRUE) else character(0)
+  list(wsp = stamp(wsp), fcs = stamp(fcs),
+       metadata = stamp(if (is.null(sample_metadata)) character(0) else sample_metadata))
+}
+
+ckpt_load <- function(output_dir, stage, key) {
+  f <- file.path(output_dir, "checkpoints", paste0(stage, ".rds"))
+  if (!file.exists(f)) return(NULL)
+  obj <- tryCatch(readRDS(f), error = function(e) NULL)
+  if (is.null(obj) || !identical(obj$key, key)) {
+    cat("Checkpoint '", stage, "' was saved with other settings; recomputing ",
+        "it.\n", sep = "")
+    return(NULL)
+  }
+  cat("Resuming: '", stage, "' reused from checkpoints/", stage, ".rds (saved ",
+      obj$saved, ")\n", sep = "")
+  obj$value
+}
+
+# Written to a temporary name and renamed, so a run killed mid-write leaves
+# the previous checkpoint (or none), never a truncated one.
+ckpt_save <- function(output_dir, stage, key, value) {
+  d <- file.path(output_dir, "checkpoints")
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  f <- file.path(d, paste0(stage, ".rds"))
+  tmp <- paste0(f, ".part")
+  ok <- tryCatch({
+    saveRDS(list(key = key, saved = format(Sys.time(), "%Y-%m-%d %H:%M"),
+                 value = value), tmp, compress = FALSE)
+    file.rename(tmp, f)
+  }, error = function(e) {
+    cat("NOTE: checkpoint '", stage, "' not saved: ", conditionMessage(e), "\n",
+        sep = "")
+    FALSE
+  })
+  if (isTRUE(ok)) cat("Checkpoint saved: checkpoints/", stage, ".rds\n", sep = "")
+  invisible(ok)
+}
