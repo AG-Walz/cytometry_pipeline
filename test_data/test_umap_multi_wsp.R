@@ -1281,6 +1281,16 @@ ok("the extremes are pulled to the cut-offs, the rest is untouched",
      identical(cl[2:999, "A"], cm[2:999, "A"]))
 ok("a constant marker stays constant", all(cl[, "B"] == 5))
 
+# --- supercells and rare gates -------------------------------------------------
+cat("\n-- supercells and rare gates ----------------------------------------\n")
+labs <- c(rep("CD4", 9000), rep("CD8", 950), rep("CD4/IL2", 50), rep("(none)", 500))
+w <- supercell_rare_warning(labs, gamma = 29)
+ok("rare gated populations are named", is.character(w) && grepl("CD4/IL2: 50", w))
+ok("...not with gate separation above 0", is.null(supercell_rare_warning(labs, 29, 0.75)))
+ok("...not when no gate is rare", is.null(supercell_rare_warning(c(rep("a", 50), rep("b", 50)), 29)))
+ok("catch-alls do not count as gates",
+   is.null(supercell_rare_warning(c(rep("a", 500), rep("(none)", 2)), 29)))
+
 # --- gate separation ----------------------------------------------------------
 cat("\n-- gate separation --------------------------------------------------\n")
 m <- cbind(A = c(0, 2, 4, 6), B = c(10, 30, 50, 70))   # MADs 2.97 and 29.7

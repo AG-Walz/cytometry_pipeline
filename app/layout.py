@@ -551,7 +551,8 @@ def _fit_settings(state: dict) -> list:
                             "Groups each sample's cells into supercells of "
                             "similar cells and fits on their means: smaller "
                             "than the cohort, every phenotype kept in "
-                            "proportion."
+                            "proportion. Rare gated populations are averaged "
+                            "away unless Gate separation is above 0."
                         ),
                     ),
                 ],
