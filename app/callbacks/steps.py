@@ -1175,6 +1175,7 @@ def register_callbacks() -> None:
         Output("cmd-preview", "children"),
         Output("run-validation", "children"),
         Output("btn-run", "disabled"),
+        Output("btn-preview", "disabled"),
         *common.form_inputs(),
         Input("store-inspect", "data"),
         Input("poll", "n_intervals"),
@@ -1215,7 +1216,8 @@ def register_callbacks() -> None:
 
         from app.services.runner import RUNNER
 
-        return command, feedback, bool(problems) or RUNNER.busy
+        blocked = bool(problems) or RUNNER.busy
+        return command, feedback, blocked, blocked
 
     # -- theme and reset ---------------------------------------------------
 

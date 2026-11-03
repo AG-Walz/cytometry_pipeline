@@ -35,5 +35,19 @@ class Changed(unittest.TestCase):
         self.assertIn("Gap at each gate cut", self.labels(layout="gates", gate_gap=3))
 
 
+class Preview(unittest.TestCase):
+    def test_preview_is_small_and_separate(self):
+        from app.services import rscript
+        params = common.run_params(form(wsp="/w.wsp", fcs_dir="/f",
+                                        output_parent="/o", output_name="run1",
+                                        n_neighbors=30), ["/P"], {})
+        p = common.preview_params(params)
+        self.assertTrue(p["output_dir"].endswith("_preview"))
+        a = rscript.run_argv(p)
+        self.assertEqual(a[a.index("--downsample") + 1], "1000")
+        self.assertEqual(a[a.index("--n_neighbors") + 1], "30")   # settings kept
+        self.assertNotEqual(params["output_dir"], p["output_dir"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -319,6 +319,30 @@ def changed_settings(form: dict) -> list[tuple[str, object, object]]:
     return out
 
 
+#: Cells per sample in a quick preview (markers layout), and per gate
+#: combination per sample (gates layout).
+PREVIEW_CELLS_PER_SAMPLE = 1000
+PREVIEW_CELLS_PER_COMBINATION = 200
+
+
+def preview_params(params: dict) -> dict:
+    """The same run, small: a few minutes instead of an hour.
+
+    Every setting is kept, so the preview shows what the full run will look
+    like; only the number of cells drops (the fit set follows the usual rule:
+    up to 300,000 random cells, so 354 samples x 1,000 cells still fit fast),
+    plots are PNG only, and it goes to "<output>_preview" so it never
+    overwrites or resumes the full run.
+    """
+    p = dict(params)
+    p["output_dir"] = str(params["output_dir"]).rstrip("/") + "_preview"
+    p["downsample"] = PREVIEW_CELLS_PER_SAMPLE
+    p["fit_subset"] = "random"
+    p["cells_per_combination"] = PREVIEW_CELLS_PER_COMBINATION
+    p["output_formats"] = ["png"]
+    return p
+
+
 def form_states() -> list[State]:
     return [State(cid, prop) for _, cid, prop in FORM_FIELDS]
 
