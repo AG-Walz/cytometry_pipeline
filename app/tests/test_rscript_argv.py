@@ -64,5 +64,15 @@ class PointSize(unittest.TestCase):
         self.assertEqual(a[a.index("--point_size") + 1], "0.1")
 
 
+class Clip(unittest.TestCase):
+    def test_off_by_default(self):
+        self.assertNotIn("--clip_quantile", argv())
+
+    def test_chosen_in_both_layouts(self):
+        for layout in ("markers", "gates"):
+            a = argv(layout=layout, clip_quantile="0.001")
+            self.assertEqual(a[a.index("--clip_quantile") + 1], "0.001")
+
+
 if __name__ == "__main__":
     unittest.main()

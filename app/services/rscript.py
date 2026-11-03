@@ -227,6 +227,8 @@ def run_argv(params: dict) -> list[str]:
     # marker plots are coloured all the same.
     add("--normalize_umap", params.get("normalize_umap"),
         config.DEFAULTS["normalize_umap"])
+    add("--clip_quantile", params.get("clip_quantile"),
+        config.DEFAULTS["clip_quantile"])
     add("--n_cores", params.get("n_cores"), config.DEFAULTS["n_cores"])
     add("--n_neighbors", params.get("n_neighbors"), config.DEFAULTS["n_neighbors"])
     # Always passed: R's default depends on the layout (0.1 markers, 0.25
