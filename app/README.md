@@ -208,8 +208,23 @@ level order is malformed or names a column that is not split.
 
 **3 — Parameters.** The layout comes first:
 
-* **Gate-separated islands (recommended)**, `--layout gates`: every
-  combination of gate calls under the population gets its own island. Values
+* **Marker values** *(default)*, `--layout markers`: the embedding of the
+  marker values themselves. **Fit the embedding on** chooses what UMAP is fitted
+  on before every cell is projected onto it and plotted: **Random cells**
+  (**Random cells to fit on**, sent as `--umap_subsample`; default 300000, so
+  a larger run is fitted on that many and the rest projected; 0 = every cell) or
+  **SuperCellCyto supercells** (`--fit_subset supercell`, with **Cells per
+  supercell** as `--supercell_gamma`, **Supercell neighbours** as
+  `--supercell_k_knn` and **Max supercells** as `--supercell_max`, which
+  raises gamma on a large cohort so the fit stays at most that size; needs
+  the R package SuperCellCyto, see `install_extra_packages.R`). **CPU cores**
+  does not change the coordinates: it threads the plots and the neighbour
+  search, and the optimiser stays serial. Step 2's `combinations` colouring labels the
+  cells by gate combination as the gate layout does, without the gates
+  entering the embedding.
+* **Gate-separated islands**, `--layout gates`: every
+  combination of gate calls under the population is forced onto its own
+  island, so the map shows the gating rather than how similar the cells are. Values
   are re-centred within each sample on that sample's own cells of the same
   combination, rare combinations are kept rather than downsampled away, and
   the embedding is fitted on a set balanced across combinations. Its settings
@@ -221,22 +236,9 @@ level order is malformed or names a column that is not split.
   `--viability_pattern`, the regular expression for marker names that are
   never gate decisions (viability dyes by default; empty disables it), is
   CLI-only: add it to the printed command by hand.
-* **Marker values**, `--layout markers`: the embedding of the marker values
-  themselves, as before. **Fit the embedding on** chooses what UMAP is fitted
-  on before every cell is projected onto it and plotted: **Random cells**
-  (**Random cells to fit on**, sent as `--umap_subsample`; 0 = every cell) or
-  **SuperCellCyto supercells** (`--fit_subset supercell`, with **Cells per
-  supercell** as `--supercell_gamma`, **Supercell neighbours** as
-  `--supercell_k_knn` and **Max supercells** as `--supercell_max`, which
-  raises gamma on a large cohort so the fit stays at most that size; needs
-  the R package SuperCellCyto, see `install_extra_packages.R`). For the same
-  coordinates as a command-line run, set **CPU cores** to the same number:
-  with 0 the embedding runs on one core, a different optimiser. Step 2's `combinations` colouring labels the
-  cells by gate combination as the gate layout does, without the gates
-  entering the embedding.
 
-The form starts on the gate layout while R defaults to `markers`, so
-`--layout` is always written out, and so is `--min_dist`, whose R default
+The form starts on the marker layout, as R does, and `--layout` is always
+written out, and so is `--min_dist`, whose R default
 depends on the layout (0.1 for markers, 0.25 for gates; switching the layout
 swaps the field between the two unless you typed your own value). Everything
 else left at its R default is omitted from the command line, so the printed

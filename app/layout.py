@@ -631,19 +631,21 @@ def _step_params(state: dict) -> list:
             children=dmc.Stack(
                 [
                     dmc.Radio(
+                        value="markers",
+                        label=dict(config.LAYOUTS)["markers"],
+                        description=("An embedding of the marker values themselves: cells "
+                                     "that express alike lie close together."),
+                    ),
+                    dmc.Radio(
                         value="gates",
                         label=dict(config.LAYOUTS)["gates"],
                         description=(
-                            "Each combination of gate calls gets its own "
-                            "island: values are re-centred on every sample's "
-                            "own gate cuts, rare combinations are kept, and "
-                            "the fit is balanced across combinations."
+                            "Every combination of gate calls is forced onto "
+                            "its own island, so the map shows the gating, not "
+                            "how similar the cells are. Values are re-centred "
+                            "on each sample's gate cuts and the fit is "
+                            "balanced across combinations."
                         ),
-                    ),
-                    dmc.Radio(
-                        value="markers",
-                        label=dict(config.LAYOUTS)["markers"],
-                        description="An embedding of the marker values themselves.",
                     ),
                 ],
                 gap=8,
