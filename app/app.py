@@ -26,7 +26,7 @@ import dash_mantine_components as dmc  # noqa: E402
 from dash import Dash  # noqa: E402
 
 from app import config, layout  # noqa: E402
-from app.callbacks import execution, fcsnames, results, steps  # noqa: E402
+from app.callbacks import execution, fcsnames, results, steps, version  # noqa: E402
 from app.components import filebrowser  # noqa: E402
 from app.services import serving, session_state  # noqa: E402
 
@@ -51,6 +51,7 @@ def create_app() -> Dash:
     fcsnames.register_callbacks()
     execution.register_callbacks()
     results.register_callbacks()
+    version.register_callbacks()
     serving.register_route(app.server)
     return app
 

@@ -1320,6 +1320,11 @@ def build_layout(state: dict):
                         dmc.Group(
                             [
                                 dmc.Title("FlowJo → UMAP", order=3),
+                                # Which code this instance runs, and whether
+                                # it is the newest (callbacks/version.py).
+                                html.Div(id="version-badge"),
+                                dcc.Interval(id="version-poll",
+                                             interval=10 * 60 * 1000),
                             ],
                             gap="sm",
                             align="center",
