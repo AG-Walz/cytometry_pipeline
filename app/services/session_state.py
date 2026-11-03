@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 
-from app.config import CACHE_DIR, DEFAULTS, FORM_START, SESSION_FILE
+from app.config import (CACHE_DIR, DEFAULTS, FORM_START, FORM_START_VERSION,
+                        SESSION_FILE)
 
 
 def load() -> dict:
@@ -19,10 +20,9 @@ def load() -> dict:
     A key never remembered starts at ``FORM_START`` where that has one, else at
     the R default.
 
-    A session saved before the gate layout existed has no "layout" key. It
-    opens on ``FORM_START``'s layout, so it also takes that layout's min_dist:
-    the remembered one was chosen for the marker layout and would otherwise
-    pack the gate islands with it. Every other remembered value is kept.
+    A session with no "layout" key, or saved under an older FORM_START
+    (``form_start_version``), opens on ``FORM_START``'s layout and that
+    layout's min_dist. Every other remembered value is kept.
     """
     state = {**DEFAULTS, **FORM_START}
     try:
@@ -35,7 +35,11 @@ def load() -> dict:
     for key, value in saved.items():
         if key in DEFAULTS:
             state[key] = value
-    if "layout" not in saved:
+    # A session saved under an older FORM_START remembers that start, not a
+    # choice: until version 2 the form opened on the gate layout, and nearly
+    # every remembered "gates" is that default. Those keys start over once;
+    # everything else remembered is kept.
+    if "layout" not in saved or saved.get("form_start_version") != FORM_START_VERSION:
         state.update(FORM_START)
     return state
 
@@ -50,6 +54,7 @@ def save(state: dict) -> None:
     """
     payload = load()
     payload.update({k: v for k, v in state.items() if k in DEFAULTS})
+    payload["form_start_version"] = FORM_START_VERSION
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = SESSION_FILE.with_suffix(".json.tmp")

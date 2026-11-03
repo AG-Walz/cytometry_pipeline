@@ -46,8 +46,8 @@ SUBPOP_MODES = ("furthest", "cd4cd8", "direct", "deepest", "combinations",
                 "none")
 #: --layout values, in the order the form lists them.
 LAYOUTS = (
-    ("gates", "Gate-separated islands (recommended)"),
     ("markers", "Marker values"),
+    ("gates", "Gate-separated islands"),
 )
 NORMALIZE_METHODS = ("none", "zscore", "minmax")
 # uwot's supported distance metrics.
@@ -95,9 +95,8 @@ DEFAULTS: dict = {
     "subpop_mode": "furthest",
     "explicit_subpop": False,
     "subpop_select": [],
-    # R's default is "markers"; the form starts on "gates" (FORM_START below).
-    # run_argv passes --layout always, so the omission rule cannot turn the
-    # form's choice back into R's default.
+    # The form starts on "markers", R's default too (FORM_START below).
+    # run_argv passes --layout always, so the printed command says which.
     "layout": "markers",
     # Gate layout only. Keep these equal to the R defaults: they are what
     # run_argv compares against to decide whether a flag is needed.
@@ -152,11 +151,19 @@ DEFAULTS: dict = {
 #: Where the form deliberately starts somewhere other than the R default. Used
 #: for a fresh session and by Reset form; a remembered choice still wins.
 FORM_START: dict = {
-    "layout": "gates",
-    # The gate layout's tuned min_dist (rounder islands). The layout switch
-    # swaps 0.1 and 0.25 while the user has not set a value of their own.
-    "min_dist": 0.25,
+    # Marker values, not the gate islands. The gate layout puts every gate
+    # combination on its own island BY CONSTRUCTION, so its picture says how
+    # the gates were drawn, not how similar the cells are; as the default it
+    # produced runs nobody had asked for (J445, 2026-11-03).
+    "layout": "markers",
+    # The layout switch swaps 0.1 and 0.25 (the gate layout's) while the user
+    # has not set a value of their own.
+    "min_dist": 0.1,
 }
+
+#: Bumped when FORM_START changes in a way a remembered session should follow.
+#: 2: the start moved from the gate layout to marker values (2026-11-03).
+FORM_START_VERSION = 2
 
 #: min_dist each layout starts from; see FORM_START and steps.layout_min_dist.
 LAYOUT_MIN_DIST: dict = {"markers": 0.1, "gates": 0.25}
