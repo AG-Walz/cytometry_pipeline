@@ -113,7 +113,9 @@ DEFAULTS: dict = {
     # projected (--fit_subset): "random" cells (random_fit_cells of them, sent
     # as --umap_subsample; 0 = all) or SuperCellCyto "supercell" means.
     "fit_subset": "random",
-    "random_fit_cells": 0,
+    # 300000, the R default (-1) spelt out: a run with more cells is fitted on
+    # that many and the rest projected; a smaller one is fitted on every cell.
+    "random_fit_cells": 300000,
     "supercell_gamma": 20,
     "supercell_k_knn": 5,
     # At most this many supercells are fitted on; R raises gamma to match.
