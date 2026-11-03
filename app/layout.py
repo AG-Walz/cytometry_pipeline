@@ -722,15 +722,25 @@ def _step_params(state: dict) -> list:
             id="fit-wrap",
             style={"display": "none"} if gates else {},
             children=[
-                _number(
-                    "in-gate-separation", "Gate separation",
-                    state["gate_separation"], min=0, max=5, step=0.25,
-                    decimalScale=2,
-                    description=(
-                        "Pushes cells of different gates apart, between one "
-                        "continuum (0) and gate islands (2+). 0.5-1 makes "
-                        "gated populations compact clusters next to their "
-                        "parents. Uses the subpopulation colouring's gates."),
+                # A slider, not a number: the setting is a position between two
+                # pictures, and the marks say which end is which. Tested on
+                # J445: 0.5-1 is the middle ground, 2 already the islands.
+                dmc.Text("Gate separation", size="sm", fw=500),
+                dmc.Text(
+                    "From one continuum of marker values (left) to every gate "
+                    "on its own island (right). In between, gated populations "
+                    "become compact clusters next to the cells they come "
+                    "from. Uses the subpopulation colouring's gates.",
+                    size="xs", c="dimmed", mb=6),
+                dmc.Slider(
+                    id="in-gate-separation",
+                    value=float(state["gate_separation"] or 0),
+                    min=0, max=config.GATE_SEPARATION_MAX, step=0.05,
+                    marks=[{"value": v, "label": lab}
+                           for v, lab in config.GATE_SEPARATION_MARKS],
+                    label=None, labelAlwaysOn=False, size="md", mb=28,
+                    # Room for the end labels, which are centred on the ends.
+                    style={"marginLeft": 44, "marginRight": 40},
                 ),
                 dmc.Space(h=12),
                 *_fit_settings(state),

@@ -53,6 +53,19 @@ LAYOUTS = (
     ("gates", "Gate-separated islands"),
 )
 NORMALIZE_METHODS = ("none", "zscore", "minmax")
+#: The Gate separation slider (--gate_separation): its end and its labelled
+#: stops. On J445 (2026-11-03) 0.5-1 was the middle ground and 2 already the
+#: gate islands, so the scale stops at 2.5 and the labels sit where the
+#: picture changes.
+GATE_SEPARATION_MAX = 2.5
+GATE_SEPARATION_MARKS = (
+    (0, "Marker values"),
+    (0.5, "0.5"),
+    (1, "Middle ground"),
+    (1.5, "1.5"),
+    (2.5, "Gate islands"),
+)
+
 #: Marker colour scales, value -> label. "same" is R's default (--normalize_umap).
 COLOUR_SCALES = (
     ("same", "Same as the embedding"),
@@ -134,7 +147,7 @@ DEFAULTS: dict = {
     # normalisation (R's default), or one of NORMALIZE_METHODS to override.
     "normalize_umap": "same",
     # Markers layout: gate columns' weight (--gate_separation). 0 = off.
-    "gate_separation": 0,
+    "gate_separation": 0.0,
     "downsample": 0,
     # Worker processes for the per-file plots, which are ~90% of a run.
     # 0 = decide automatically (all cores but one, capped by the cgroup quota).

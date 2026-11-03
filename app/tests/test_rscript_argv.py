@@ -44,6 +44,11 @@ class GateSeparation(unittest.TestCase):
         a = argv(gate_separation=0.75)
         self.assertEqual(a[a.index("--gate_separation") + 1], "0.75")
 
+    def test_slider_floats(self):
+        self.assertNotIn("--gate_separation", argv(gate_separation=0.0))
+        a = argv(gate_separation=1.0)
+        self.assertEqual(float(a[a.index("--gate_separation") + 1]), 1.0)
+
     def test_gates_layout_does_not(self):
         self.assertNotIn("--gate_separation", argv(layout="gates", gate_separation=1))
 
