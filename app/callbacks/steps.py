@@ -127,6 +127,36 @@ def register_callbacks() -> None:
         return dmc.Group(badges, gap="xs")
 
     @callback(
+        Output("changed-settings", "children"),
+        *common.form_inputs(),
+    )
+    def changed_settings_box(*values):
+        """Step 4: every setting that differs from its default, in one place."""
+        changed = common.changed_settings(common.as_dict(values))
+        if not changed:
+            return dmc.Text("All settings at their defaults.", size="xs",
+                            c="dimmed")
+
+        def show(v):
+            if v in (None, ""):
+                return "auto"
+            if isinstance(v, (list, tuple)):
+                return ", ".join(map(str, v)) or "none"
+            return str(v)
+
+        return dmc.Stack([
+            dmc.Text("Changed from the defaults", size="sm", fw=500),
+            dmc.Group([
+                dmc.Tooltip(
+                    dmc.Badge(f"{label}: {show(v)}", color="blue",
+                              variant="light", size="sm", tt="none"),
+                    label=f"Default: {show(d)}", withArrow=True)
+                for label, v, d in changed], gap="xs"),
+            dmc.Text("Reset form (top right) puts them all back.", size="xs",
+                     c="dimmed"),
+        ], gap=4)
+
+    @callback(
         Output("params-badge", "children"),
         Input("in-metric", "value"),
         Input("in-seed", "value"),

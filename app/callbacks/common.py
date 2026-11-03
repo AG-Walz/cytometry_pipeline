@@ -249,6 +249,76 @@ def workspace_problem(wsp: str) -> str:
     return f"Workspace path does not exist: {wsp}"
 
 
+#: Settings shown in "Changed from the defaults" (step 4), with how they read.
+#: Paths, population and markers are the run's inputs, not settings, and are
+#: left out. Gate- and fit-set settings only count in their own layout.
+SETTING_LABELS = (
+    ("layout", "Layout"),
+    ("normalize", "Normalisation"),
+    ("normalize_umap", "Colour scale"),
+    ("clip_quantile", "Clip extremes"),
+    ("gate_separation", "Gate separation"),
+    ("downsample", "Downsample"),
+    ("n_neighbors", "n_neighbors"),
+    ("min_dist", "min_dist"),
+    ("metric", "Metric"),
+    ("seed", "Seed"),
+    ("n_cores", "CPU cores"),
+    ("point_size", "Point size"),
+    ("point_alpha", "Point alpha"),
+    ("plot_width", "Plot width"),
+    ("plot_height", "Plot height"),
+    ("output_formats", "Formats"),
+    ("subpop_mode", "Subpopulations"),
+    ("match_mode", "FCS matching"),
+    ("group", "Sample group"),
+    ("allow_missing_samples", "Missing FCS allowed"),
+    ("resume", "Reuse saved steps"),
+)
+_MARKERS_ONLY = {"normalize", "gate_separation", "downsample"}
+
+
+def _same(a, b) -> bool:
+    """Equal as the user sees it: 15 == 15.0, ["png"] == ("png",), "" == None."""
+    if a in ("", None) and b in ("", None):
+        return True
+    if isinstance(a, (list, tuple)) or isinstance(b, (list, tuple)):
+        return sorted(map(str, a or [])) == sorted(map(str, b or []))
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return str(a) == str(b)
+
+
+def changed_settings(form: dict) -> list[tuple[str, object, object]]:
+    """(label, value, default) for every setting that differs from its default.
+
+    Remembered sessions carry values over from earlier runs; a point size of
+    0.1 or n_neighbors of 80 chosen once kept coming back unnoticed (J445,
+    2026-11-03). Saying them out loud next to the Run button is the fix.
+    """
+    layout = form.get("layout") or config.FORM_START["layout"]
+    defaults = {**config.DEFAULTS, **config.FORM_START,
+                "min_dist": config.LAYOUT_MIN_DIST.get(layout, 0.1)}
+    keys = list(SETTING_LABELS)
+    if layout == "gates":
+        keys += list(GATE_PARAMS)
+    else:
+        fit = form.get("fit_subset") or config.DEFAULTS["fit_subset"]
+        keys += [kv for kv in FIT_PARAMS
+                 if kv[0] == "fit_subset"
+                 or (fit == "supercell") == kv[0].startswith("supercell")]
+    out = []
+    for key, label in keys:
+        if layout == "gates" and key in _MARKERS_ONLY:
+            continue
+        value = form.get(key)
+        if key not in defaults or _same(value, defaults[key]):
+            continue
+        out.append((label, value, defaults[key]))
+    return out
+
+
 def form_states() -> list[State]:
     return [State(cid, prop) for _, cid, prop in FORM_FIELDS]
 
