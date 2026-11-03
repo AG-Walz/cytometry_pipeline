@@ -42,6 +42,7 @@ RUN_SUBDIR = "_run"
 LOG_NAME = "run.log"
 STATUS_NAME = "status.json"
 EXIT_NAME = "exit_code"
+TMP_NAME = "tmp"
 
 
 def paths_for(output_dir: str | os.PathLike) -> tuple[Path, Path]:
@@ -51,6 +52,21 @@ def paths_for(output_dir: str | os.PathLike) -> tuple[Path, Path]:
 
 def exit_path_for(output_dir: str | os.PathLike) -> Path:
     return Path(output_dir) / RUN_SUBDIR / EXIT_NAME
+
+
+def tmp_dir_for(output_dir: str | os.PathLike) -> Path:
+    """Where the run's temporary files go.
+
+    UMAP_APP_TMPDIR wins when set; otherwise a folder inside the run's own
+    bookkeeping directory, i.e. on the volume the results are written to. Not
+    /tmp: an Annoy index over millions of cells and flowWorkspace's HDF5
+    cytoframes run to gigabytes, the hosts' root disks are small, and a full
+    /tmp surfaced as an HDF5 read error rather than as "disk full".
+    """
+    override = os.environ.get("UMAP_APP_TMPDIR", "").strip()
+    if override:
+        return Path(override)
+    return Path(output_dir) / RUN_SUBDIR / TMP_NAME
 
 
 def is_alive(pid: int) -> bool:
@@ -119,10 +135,21 @@ def launch(argv: list[str], cwd: str, output_dir: str, kind: str,
         # be unknowable and completion could only be GUESSED at from what it
         # printed. A one-line shell wrapper writes the real code down instead.
         # "$@" keeps the argument boundaries exactly as given.
-        wrapper = f'"$@"; printf %s "$?" > {shlex.quote(str(exit_path))}'
+        #
+        # TMPDIR is set in the child's ENVIRONMENT, not by the R script: R fixes
+        # tempdir() when it starts, so a Sys.setenv(TMPDIR=) inside the script
+        # moves nothing. R removes its own Rtmp* folder on a clean exit; the
+        # per-run folder is removed after it, and kept if anything is left.
+        tmp_dir = tmp_dir_for(output_dir)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ, TMPDIR=str(tmp_dir), TMP=str(tmp_dir),
+                   TEMP=str(tmp_dir))
+        wrapper = (f'"$@"; printf %s "$?" > {shlex.quote(str(exit_path))}; '
+                   f'rmdir {shlex.quote(str(tmp_dir))} 2>/dev/null; true')
         proc = subprocess.Popen(
             ["/bin/sh", "-c", wrapper, "sh", *argv],
             cwd=cwd,
+            env=env,
             stdout=log_file,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,

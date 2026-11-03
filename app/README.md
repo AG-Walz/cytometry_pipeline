@@ -45,6 +45,7 @@ gets a filesystem browser and a job runner.
 |----------------------|---------|
 | `UMAP_RSCRIPT` | How to invoke R. Defaults to `Rscript`. Set to `conda run -n cytometry_env Rscript` if Python and R are in different environments. |
 | `UMAP_APP_CACHE` | Where the remembered form state is stored (default `~/.cache/umap_flowjo_app`). |
+| `UMAP_APP_TMPDIR` | Temporary folder for runs (Annoy index, HDF5 cytoframes; gigabytes on a large cohort). Default: `<output_dir>/_run/tmp`, i.e. on the results volume rather than `/tmp`. |
 
 ---
 
