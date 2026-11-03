@@ -343,6 +343,58 @@ def preview_params(params: dict) -> dict:
     return p
 
 
+#: A run's settings record (_run/settings.json "options", R option names) ->
+#: form keys. Only settings: the workspace, FCS folder, population and markers
+#: are the run's inputs and stay as they are in the form.
+_SETTINGS_TO_FORM = {
+    "layout": "layout", "normalize_data": "normalize",
+    "normalize_umap": "normalize_umap", "clip_quantile": "clip_quantile",
+    "gate_separation": "gate_separation", "downsample": "downsample",
+    "n_neighbors": "n_neighbors", "min_dist": "min_dist", "metric": "metric",
+    "seed": "seed", "n_cores": "n_cores", "point_size": "point_size",
+    "point_alpha": "point_alpha", "plot_width": "plot_width",
+    "plot_height": "plot_height", "subpop_mode": "subpop_mode",
+    "match_mode": "match_mode", "group": "group",
+    "allow_missing_samples": "allow_missing_samples",
+    "marker_aliases": "marker_aliases", "fit_subset": "fit_subset",
+    "supercell_gamma": "supercell_gamma", "supercell_k_knn": "supercell_k_knn",
+    "supercell_max": "supercell_max", "gate_gap": "gate_gap",
+    "gate_tier_ratio": "gate_tier_ratio", "gate_softness": "gate_softness",
+    "supervise": "supervise", "cells_per_combination": "cells_per_combination",
+    "min_combination_cells": "min_combination_cells",
+}
+
+
+def form_from_settings(options: dict) -> dict:
+    """Form values from a run's recorded options (settings.json "options").
+
+    Every option R saw is in the record, defaults included, so this sets the
+    form to exactly that run -- not to that run's defaults read with today's.
+    """
+    out: dict = {}
+    for opt, key in _SETTINGS_TO_FORM.items():
+        if opt in options:
+            out[key] = options[opt]
+    if "clip_quantile" in out:
+        out["clip_quantile"] = str(out["clip_quantile"] or 0)
+    if "normalize" in options and options.get("normalize"):
+        out["normalize"] = options["normalize"]          # deprecated alias
+    if "output_formats" in options:
+        fm = options["output_formats"] or ""
+        out["output_formats"] = [f.strip() for f in str(fm).split(",") if f.strip()]
+    if "no_resume" in options:
+        out["resume"] = not bool(options["no_resume"])
+    if "umap_subsample" in options:
+        sub = options["umap_subsample"]
+        if (out.get("layout") or options.get("layout")) == "gates":
+            out["umap_subsample"] = 0 if sub in (None, -1) else sub
+        else:
+            out["random_fit_cells"] = (config.DEFAULTS["random_fit_cells"]
+                                       if sub in (None, -1) else sub)
+    return {k: v for k, v in out.items()
+            if any(name == k for name, _, _ in FORM_FIELDS)}
+
+
 def form_states() -> list[State]:
     return [State(cid, prop) for _, cid, prop in FORM_FIELDS]
 

@@ -49,5 +49,27 @@ class Preview(unittest.TestCase):
         self.assertNotEqual(params["output_dir"], p["output_dir"])
 
 
+class LoadSettings(unittest.TestCase):
+    def test_a_recorded_run_becomes_form_values(self):
+        opts = {"layout": "markers", "normalize_data": "zscore",
+                "n_neighbors": 30, "min_dist": 0.05, "point_size": None,
+                "output_formats": "png,svg", "no_resume": True,
+                "umap_subsample": -1, "clip_quantile": 0.001,
+                "gate_separation": 0.75, "wsp": "/somewhere.wsp"}
+        f = common.form_from_settings(opts)
+        self.assertEqual(f["normalize"], "zscore")
+        self.assertEqual(f["n_neighbors"], 30)
+        self.assertIsNone(f["point_size"])
+        self.assertEqual(f["output_formats"], ["png", "svg"])
+        self.assertFalse(f["resume"])
+        self.assertEqual(f["random_fit_cells"], config.DEFAULTS["random_fit_cells"])
+        self.assertEqual(f["clip_quantile"], "0.001")
+        self.assertNotIn("wsp", f)        # inputs are not settings
+
+    def test_gates_fit_budget(self):
+        f = common.form_from_settings({"layout": "gates", "umap_subsample": -1})
+        self.assertEqual(f["umap_subsample"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
