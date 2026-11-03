@@ -108,6 +108,7 @@ def _split_panel(results: results_scan.Results, column: str):
     """One split column: all levels side by side, each level, the fold-change maps."""
     levels = results.split_level.get(column) or []
     diffs = results.split_diff.get(column) or []
+    polys = results.split_poly.get(column) or []
     panel = results.split_panel.get(column)
     children = []
     if panel is not None:
@@ -118,7 +119,11 @@ def _split_panel(results: results_scan.Results, column: str):
     if diffs:
         children += [dmc.Text("Change in frequency against the reference level", size="xs",
                               c="dimmed", mb=4),
-                     _grid(diffs)]
+                     _grid(diffs), dmc.Space(h=10)]
+    if polys:
+        children += [dmc.Text("Polyfunctionality: positive gates per cell", size="xs",
+                              c="dimmed", mb=4),
+                     _grid(polys)]
     return html.Div(children)
 
 
@@ -224,7 +229,8 @@ def _load_settings_outputs():
 
 #: Form keys "Use these settings" can set (common.form_from_settings).
 _LOADABLE = sorted({*common._SETTINGS_TO_FORM.values(), "output_formats",
-                    "resume", "umap_subsample", "random_fit_cells"})
+                    "resume", "polyfunctionality", "umap_subsample",
+                    "random_fit_cells"})
 
 
 def register_callbacks() -> None:
@@ -370,8 +376,10 @@ def register_callbacks() -> None:
             for column in results.split_columns:
                 n_levels = len(results.split_level.get(column) or [])
                 n_diffs = len(results.split_diff.get(column) or [])
-                label = f"{column} — {n_levels} level(s)" + (
-                    f", {n_diffs} fold-change map(s)" if n_diffs else "")
+                n_polys = len(results.split_poly.get(column) or [])
+                label = f"{column} — {n_levels or n_polys} level(s)" + (
+                    f", {n_diffs} fold-change map(s)" if n_diffs else "") + (
+                    f", {n_polys} polyfunctionality map(s)" if n_polys else "")
                 split_items.append(
                     dmc.AccordionItem(
                         [

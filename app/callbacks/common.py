@@ -41,6 +41,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("markers", "in-markers", "value"),
     ("explicit_subpop", "sw-explicit", "checked"),
     ("subpop_mode", "subpop-mode", "value"),
+    ("polyfunctionality", "sw-polyfunctionality", "checked"),
     ("layout", "in-layout", "value"),
     ("gate_gap", "in-gate-gap", "value"),
     ("gate_tier_ratio", "in-gate-tier-ratio", "value"),
@@ -270,6 +271,7 @@ SETTING_LABELS = (
     ("plot_height", "Plot height"),
     ("output_formats", "Formats"),
     ("subpop_mode", "Subpopulations"),
+    ("polyfunctionality", "Polyfunctionality maps"),
     ("match_mode", "FCS matching"),
     ("group", "Sample group"),
     ("allow_missing_samples", "Missing FCS allowed"),
@@ -384,6 +386,8 @@ def form_from_settings(options: dict) -> dict:
         out["output_formats"] = [f.strip() for f in str(fm).split(",") if f.strip()]
     if "no_resume" in options:
         out["resume"] = not bool(options["no_resume"])
+    if "no_polyfunctionality" in options:
+        out["polyfunctionality"] = not bool(options["no_polyfunctionality"])
     if "umap_subsample" in options:
         sub = options["umap_subsample"]
         if (out.get("layout") or options.get("layout")) == "gates":
@@ -506,6 +510,7 @@ def run_params(form: dict, populations: list[str],
         "markers": form.get("markers") or [],
         "subpop_mode": form.get("subpop_mode"),
         "subpop_select": subpop_selection(form, populations),
+        "polyfunctionality": bool(form.get("polyfunctionality", True)),
         "layout": form.get("layout") or config.FORM_START["layout"],
         **{key: form.get(key) for key, _ in GATE_PARAMS},
         **{key: form.get(key) for key, _ in FIT_PARAMS},

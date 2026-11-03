@@ -1262,6 +1262,7 @@ def register_callbacks() -> None:
         Output("in-filter-values", "value", allow_duplicate=True),
         Output("in-filter-mode", "value"),
         Output("sw-resume", "checked"),
+        Output("sw-polyfunctionality", "checked"),
         Input("btn-reset", "n_clicks"),
         State({"comp": "fb-input", "bid": ALL}, "value"),
         prevent_initial_call=True,
@@ -1301,4 +1302,5 @@ def register_callbacks() -> None:
             [],
             d["filter_mode"],
             d["resume"],
+            d["polyfunctionality"],
         )
