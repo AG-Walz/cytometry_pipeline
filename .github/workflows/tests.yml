@@ -1,0 +1,69 @@
+# Runs the test suites on every PR into dev or main, and on pushes to them.
+#
+# Until 2026-11-03 nothing ran on a PR but GitGuardian, so a "temporary"
+# change that made --n_cores switch the UMAP optimiser sat on main unnoticed.
+# Two jobs, so the quick app tests report in a minute while the R environment
+# (Bioconductor, ~15 min the first time, cached after) is still building.
+name: tests
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: App (Dash) tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the app's Python packages
+        run: pip install "dash>=3.0" "dash-mantine-components>=2.0" dash-iconify pandas openpyxl
+      - name: Run app tests
+        run: python -m unittest discover -s app/tests -t . -v
+
+  r:
+    name: R tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          environment-name: cytometry_env
+          cache-environment: true
+          cache-downloads: true
+      - name: testthat suites (src/*/tests)
+        run: |
+          status=0
+          for d in src/*/tests; do
+            echo "::group::$d"
+            Rscript -e "r <- as.data.frame(testthat::test_dir('$d', reporter = 'summary', stop_on_failure = FALSE)); cat('\n', '$d', 'passed', sum(r\$passed), 'failed', sum(r\$failed), 'errors', sum(r\$error), '\n'); if (sum(r\$failed) + sum(r\$error) > 0) quit(status = 1)" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+      - name: Standalone test scripts (test_data/test_*.R)
+        run: |
+          status=0
+          for f in test_data/test_*.R; do
+            echo "::group::$f"
+            Rscript "$f" || { echo "::error file=$f::$f failed"; status=1; }
+            echo "::endgroup::"
+          done
+          exit $status
