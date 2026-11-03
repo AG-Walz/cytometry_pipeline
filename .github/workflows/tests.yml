@@ -51,19 +51,28 @@ jobs:
           cache-downloads: true
       - name: testthat suites (src/*/tests)
         run: |
+          set +e
           status=0
           for d in src/*/tests; do
             echo "::group::$d"
-            Rscript -e "r <- as.data.frame(testthat::test_dir('$d', reporter = 'summary', stop_on_failure = FALSE)); cat('\n', '$d', 'passed', sum(r\$passed), 'failed', sum(r\$failed), 'errors', sum(r\$error), '\n'); if (sum(r\$failed) + sum(r\$error) > 0) quit(status = 1)" || status=1
+            Rscript -e "r <- as.data.frame(testthat::test_dir('$d', reporter = 'summary', stop_on_failure = FALSE)); bad <- sum(r\$failed) + sum(as.logical(r\$error)); cat('\n', '$d', 'passed', sum(r\$passed), 'failed', sum(r\$failed), 'errors', sum(as.logical(r\$error)), '\n'); quit(status = if (bad > 0) 1 else 0)"
+            rc=$?
             echo "::endgroup::"
+            echo "$d: exit $rc"
+            [ $rc -eq 0 ] || { echo "::error::$d failed (exit $rc)"; status=1; }
           done
           exit $status
       - name: Standalone test scripts (test_data/test_*.R)
+        if: always()
         run: |
+          set +e
           status=0
           for f in test_data/test_*.R; do
             echo "::group::$f"
-            Rscript "$f" || { echo "::error file=$f::$f failed"; status=1; }
+            Rscript "$f"
+            rc=$?
             echo "::endgroup::"
+            echo "$f: exit $rc"
+            [ $rc -eq 0 ] || { echo "::error file=$f::$f failed (exit $rc)"; status=1; }
           done
           exit $status
