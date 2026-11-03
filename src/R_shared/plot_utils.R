@@ -203,6 +203,44 @@ create_safe_filename <- function(name, max_length = 100) {
   safe
 }
 
+#' Sanitised, length-capped, collision-free tags for labels used in filenames.
+#'
+#' create_safe_filename() truncates a COMPOSED name, and what it eats is the
+#' tail — which is exactly where the discriminating component sits, because the
+#' sample name comes last. Two effects, both silent:
+#'
+#'   * the surviving length of the sample name depends on how long the OTHER
+#'     components are, so the same sample yields a different tag for a 3-letter
+#'     marker than for a 6-letter one, and a gallery that recovers sample names
+#'     from filenames sees one sample as several;
+#'   * two samples sharing a long prefix truncate to the SAME name, and the
+#'     second plot overwrites the first with no warning and no error.
+#'
+#' Capping each label on its own, once, fixes both: a label's tag no longer
+#' depends on its neighbours in the filename, and any that still coincide are
+#' numbered apart.
+#'
+#' @param labels Character vector of labels (e.g. sample names).
+#' @param max_length Budget for each individual tag.
+#' @return Named character vector, label -> tag, in the order given.
+safe_label_tags <- function(labels, max_length = 40) {
+  labels <- as.character(labels)
+  tags <- vapply(labels, create_safe_filename, character(1),
+                 max_length = max_length, USE.NAMES = FALSE)
+  dup <- duplicated(tags) | duplicated(tags, fromLast = TRUE)
+  if (any(dup)) {
+    # Numbered in the order the labels arrived, so the mapping is stable and a
+    # re-run rewrites the same files instead of producing a second set.
+    for (t in unique(tags[dup])) {
+      ix <- which(tags == t)
+      stem <- substr(t, 1, max(1L, max_length - 3L))
+      tags[ix] <- paste0(stem, "_", sprintf("%02d", seq_along(ix)))
+    }
+  }
+  names(tags) <- labels
+  tags
+}
+
 #' Create compact display names from long strings
 #' @param names Character vector of names
 #' @param max_length Maximum display length
