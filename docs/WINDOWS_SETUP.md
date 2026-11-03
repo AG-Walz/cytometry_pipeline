@@ -1,5 +1,8 @@
 # Windows Setup Guide — Cytometry Pipeline
 
+> Only want the FlowJo → UMAP **app**? [WSL_SETUP.md](WSL_SETUP.md) runs it
+> inside WSL2 with one setup script, and is the shorter route.
+
 A step-by-step guide to install and run the cytometry pipeline on a fresh Windows 10 or 11 computer. No prior programming experience is assumed.
 
 **Time required**: approximately 45-90 minutes (mostly waiting for downloads and installs).

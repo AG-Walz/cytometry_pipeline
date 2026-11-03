@@ -1,5 +1,8 @@
 #!/usr/bin/env Rscript
 library(optparse)
+# flowFrames arrive via readRDS; their S4 methods (nrow, [, ...) only
+# dispatch once flowCore is attached.
+suppressPackageStartupMessages(library(flowCore))
 
 option_list <- list(
   make_option("--input_rds_dir", type = "character",
