@@ -53,5 +53,16 @@ class GateSeparation(unittest.TestCase):
         self.assertNotIn("--gate_separation", argv(layout="gates", gate_separation=1))
 
 
+class PointSize(unittest.TestCase):
+    def test_auto_sends_nothing(self):
+        a = argv()
+        self.assertNotIn("--point_size", a)
+        self.assertNotIn("--point_alpha", a)
+
+    def test_a_chosen_size_is_sent(self):
+        a = argv(point_size=0.1)
+        self.assertEqual(a[a.index("--point_size") + 1], "0.1")
+
+
 if __name__ == "__main__":
     unittest.main()
