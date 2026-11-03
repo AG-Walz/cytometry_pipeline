@@ -72,6 +72,15 @@ run_test <- function(name, expr) {
     pass <<- pass + 1
     TRUE
   }, error = function(e) {
+    # An optional package that is not installed (ComBat's sva, dbscan,
+    # harmony, ...) is a skip, not a failure: the servers install them
+    # separately (install_extra_packages.R), CI's environment.yml does not.
+    if (grepl("there is no package called", conditionMessage(e), fixed = TRUE)) {
+      cat(sprintf("SKIP: %s\n", conditionMessage(e)))
+      test_results[[name]] <<- paste("SKIP:", conditionMessage(e))
+      if (exists("skip", inherits = TRUE)) skip <<- skip + 1
+      return(NA)
+    }
     cat(sprintf("FAIL: %s\n", e$message))
     test_results[[name]] <<- paste("FAIL:", e$message)
     fail <<- fail + 1
