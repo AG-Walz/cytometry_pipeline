@@ -199,7 +199,10 @@ def run_argv(params: dict) -> list[str]:
                     "umap_subsample"):
             add(f"--{key}", params.get(key), config.DEFAULTS[key])
     else:
-        add("--normalize", params.get("normalize"),
+        # --normalize_data, not the deprecated --normalize alias: the alias
+        # made every run log a deprecation warning and, being the same flag
+        # for "embedding" and "colours" in old runs, read as both.
+        add("--normalize_data", params.get("normalize"),
             config.DEFAULTS["normalize"])
         add("--downsample", params.get("downsample"),
             config.DEFAULTS["downsample"])
