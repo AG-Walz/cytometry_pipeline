@@ -944,7 +944,23 @@ def _step_run(state: dict) -> list:
         dmc.Space(h=14),
         html.Div(id="run-validation"),
         dmc.Space(h=10),
-        dmc.Button("Run UMAP", id="btn-run", fullWidth=True, size="md"),
+        dmc.Group(
+            [
+                dmc.Button("Run UMAP", id="btn-run", size="md",
+                           style={"flex": 3}),
+                dmc.Tooltip(
+                    dmc.Button("Quick preview", id="btn-preview", size="md",
+                               variant="light", fullWidth=True),
+                    label=("The same settings on about 1,000 cells per sample "
+                           "(200 per gate combination in the gate layout), "
+                           "PNG only, into <folder>_preview. A few minutes "
+                           "instead of an hour: check the look before the "
+                           "full run."),
+                    multiline=True, w=300, withArrow=True,
+                    style={"flex": 2}),
+            ],
+            grow=True, gap="sm", wrap="nowrap",
+        ),
         # Why the last run failed, was cancelled or left samples out (see
         # execution.poll). Right under the button, where the eye already is.
         dmc.Space(h=10),
