@@ -28,17 +28,48 @@ MAX_LINES = 20000
 #: They are intercepted here rather than shown: they are for the progress bar,
 #: and one per sample would bury the log they share a stream with. R owns the
 #: counting; this only reads it. Keep in step with PROGRESS_PREFIX there.
+#: ``elapsed`` is optional so a log written before R started emitting it still
+#: parses — the bar then loses its timings, not its position. It sits before
+#: ``label``, which stays last because a label may contain anything at all.
 _PROGRESS_RE = re.compile(
-    r"^::progress:: phase=(\S+) done=(\d+) total=(\d+) label=(.*)$"
+    r"^::progress:: phase=(\S+) done=(\d+) total=(\d+)"
+    r"(?: elapsed=([0-9.]+))? label=(.*)$"
 )
 
-#: How each phase reads in the UI, in the order they occur.
+#: Every phase a run can report, IN ORDER, with how it reads in the UI and how
+#: much of the run it is expected to take.
+#:
+#: The weights are what make the bar honest about the shape of a run rather than
+#: just its position: the four embedding phases are not four equal quarters, and
+#: a bar that draws them as such tells someone watching the 20-minute neighbour
+#: search that they are 5% through when they are nearer half. They are only
+#: PRIORS — as each phase finishes, its measured duration replaces its weight
+#: (see Runner._phase_weights), so the estimate converges on the machine and the
+#: data actually in front of it. Derived from a 9.8M-cell, 328-sample run and
+#: the 500k-cell measurements recorded in src/R_shared/stats_utils.R.
 PROGRESS_PHASES = {
     "load": "Building gating sets",
     "extract": "Extracting cells",
-    "embed": "Computing the embedding",
+    "embed_nn": "Neighbour search",
+    "embed_init": "Initialising the layout",
+    "embed": "Optimising the embedding",
     "plot": "Drawing plots",
 }
+
+#: Prior share of a run, per phase. Relative, not absolute — only the ratios are
+#: used. Kept beside PROGRESS_PHASES so a new phase cannot be added without one.
+PHASE_WEIGHTS = {
+    "load": 8.0,
+    "extract": 10.0,
+    "embed_nn": 45.0,
+    "embed_init": 7.0,
+    "embed": 20.0,
+    "plot": 10.0,
+}
+
+#: The order phases occur in, which is the order they are drawn in. Taken from
+#: PROGRESS_PHASES rather than repeated, so the two cannot disagree.
+PHASE_ORDER = list(PROGRESS_PHASES)
 
 IDLE = "idle"
 RUNNING = "running"
@@ -67,6 +98,10 @@ class Runner:
         #: Latest ::progress:: line, and when its phase began (for the ETA).
         self._progress: dict = {}
         self._phase_started_at: float | None = None
+        #: {phase: [first_elapsed, last_elapsed]} in the R process's own
+        #: seconds. What turns the segmented bar from a guess into a
+        #: measurement as the run proceeds; see _phase_weights.
+        self._phase_times: dict[str, list[float]] = {}
         #: Set when following a run that is not our child (see attach()).
         self._detached_dir: str | None = None
         self._detached_pid: int = 0
@@ -87,6 +122,7 @@ class Runner:
             self._returncode = None
             self._progress = {}
             self._phase_started_at = None
+            self._phase_times = {}
             self._started_at = time.time()
             self._finished_at = None
             self._cancelling = False
@@ -134,7 +170,7 @@ class Runner:
                 line = line.rstrip("\n")
                 hit = _PROGRESS_RE.match(line)
                 if hit:
-                    phase, done, total, label = hit.groups()
+                    phase, done, total, elapsed, label = hit.groups()
                     with self._lock:
                         # Each phase restarts the clock: they are different work
                         # at different speeds, so extrapolating "Drawing plots"
@@ -148,6 +184,7 @@ class Runner:
                             "total": int(total),
                             "label": label,
                         }
+                        self._note_phase_time(phase, elapsed)
                     continue
                 with self._lock:
                     if len(self._lines) < MAX_LINES:
@@ -266,6 +303,7 @@ class Runner:
             self._finished_at = None if status.get("running") else time.time()
             self._progress = {}
             self._phase_started_at = None
+            self._phase_times = {}
             self._lines = []
         self._refresh_detached()
         return True
@@ -294,12 +332,18 @@ class Runner:
 
         keep: list[str] = []
         progress: dict = {}
+        seen: list[tuple[str, str | None]] = []
         for line in lines:
             hit = _PROGRESS_RE.match(line)
             if hit:
-                phase, done, total, label = hit.groups()
+                phase, done, total, elapsed, label = hit.groups()
                 progress = {"phase": phase, "done": int(done),
                             "total": int(total), "label": label}
+                # Rebuilt from the log every poll, because for a detached run
+                # the log is the only memory there is: a browser reopened an
+                # hour into a run has to recover how long each earlier phase
+                # took from what R wrote, not from anything held here.
+                seen.append((phase, elapsed))
                 continue
             keep.append(line)
 
@@ -308,6 +352,9 @@ class Runner:
                 self._truncated = True
                 keep = keep[-MAX_LINES:]
             self._lines = keep
+            self._phase_times = {}
+            for phase, elapsed in seen:
+                self._note_phase_time(phase, elapsed)
             if progress.get("phase") != self._progress.get("phase"):
                 # Re-derived after an attach, so the phase clock starts now
                 # rather than pretending to know when the phase began. The ETA
@@ -332,6 +379,91 @@ class Runner:
                 self._returncode = code
                 self._status = DONE
                 self._generation += 1
+
+    def _note_phase_time(self, phase: str, elapsed: str | None) -> None:
+        """Record when a phase was first and last heard from.
+
+        Caller holds the lock. ``elapsed`` is R's own seconds-since-start (see
+        emit_progress in src/R_shared/io_utils.R), so it needs no shared clock
+        and survives the app being restarted mid-run. A line without it — an
+        older R, or another emitter — is simply not counted; the phase keeps its
+        prior weight rather than getting a wrong one.
+        """
+        if elapsed is None:
+            return
+        try:
+            value = float(elapsed)
+        except ValueError:
+            return
+        span = self._phase_times.get(phase)
+        if span is None:
+            self._phase_times[phase] = [value, value]
+        else:
+            span[1] = value
+
+    def _phase_weights(self) -> dict[str, float]:
+        """Relative width of each phase's segment.
+
+        Caller holds the lock. A phase that has FINISHED is worth what it
+        actually took; one that has not is worth its prior, rescaled so the
+        priors and the measurements are in the same units. That rescaling is the
+        whole trick: without it, a run whose measured seconds are large next to
+        the priors would draw every unfinished phase as a sliver, and the bar
+        would lurch every time a phase ended.
+
+        With nothing measured yet this returns the priors unchanged, which is
+        the right answer for the first seconds of a run.
+        """
+        measured = {p: max(0.0, s[1] - s[0]) for p, s in self._phase_times.items()}
+        current = self._progress.get("phase")
+        # The current phase is still growing, so its measurement is a lower
+        # bound, not a duration. It keeps its prior until it is behind us.
+        done_phases = {p: v for p, v in measured.items()
+                       if p != current and v > 0}
+        if not done_phases:
+            return dict(PHASE_WEIGHTS)
+        prior_of_done = sum(PHASE_WEIGHTS.get(p, 1.0) for p in done_phases)
+        scale = (sum(done_phases.values()) / prior_of_done) if prior_of_done else 1.0
+        return {
+            p: done_phases.get(p, PHASE_WEIGHTS.get(p, 1.0) * scale)
+            for p in PHASE_ORDER
+        }
+
+    def _phase_view(self) -> list[dict]:
+        """One entry per phase, in order: its width, its state, its fill.
+
+        Caller holds the lock. This is the whole segmented bar — the callback
+        that draws it works nothing out.
+        """
+        weights = self._phase_weights()
+        total_weight = sum(weights.values()) or 1.0
+        current = self._progress.get("phase")
+        seen_current = False
+        out = []
+        for phase in PHASE_ORDER:
+            if phase == current:
+                seen_current = True
+                done, total = self._progress.get("done", 0), self._progress.get("total", 1)
+                fill = max(0.0, min(1.0, done / total)) if total else 0.0
+                state = "running"
+            elif phase in self._phase_times and not seen_current:
+                fill, state = 1.0, "done"
+            elif seen_current:
+                fill, state = 0.0, "pending"
+            else:
+                # Never reported and already behind us: a phase this run does
+                # not have (no plots, or an embedding fed pre-computed
+                # coordinates). Drawn as skipped rather than silently dropped,
+                # so the shape of the bar still matches the run.
+                fill, state = 0.0, "skipped"
+            out.append({
+                "phase": phase,
+                "label": PROGRESS_PHASES.get(phase, phase),
+                "weight": round(100.0 * weights.get(phase, 0.0) / total_weight, 2),
+                "fill": round(fill, 4),
+                "state": state,
+            })
+        return out
 
     @staticmethod
     def _looks_finished(lines: list[str]) -> bool:
@@ -388,11 +520,26 @@ class Runner:
             return {}
         done, total = p["done"], p["total"]
         fraction = max(0.0, min(1.0, done / total))
+
+        phases = self._phase_view()
+        # How much of the WHOLE run is behind us: every phase's share of the bar
+        # times how full it is. This is the number the estimate comes from, and
+        # it is why the estimate no longer collapses when a phase changes — the
+        # old one extrapolated the current phase alone, so "Drawing plots" at
+        # 1/300 predicted hours a second after a 20-minute search finished.
+        overall = sum(s["weight"] * s["fill"] for s in phases) / 100.0
+
         remaining = None
-        if (self._phase_started_at is not None and done >= 3 and done < total
+        run_elapsed = max((s[1] for s in self._phase_times.values()), default=0.0)
+        if self._status == RUNNING and overall > 0.02 and run_elapsed > 5:
+            remaining = run_elapsed * (1.0 - overall) / overall
+        elif (self._phase_started_at is not None and done >= 3 and done < total
                 and self._status == RUNNING):
+            # No usable elapsed in the log (an older R). Fall back to the
+            # phase-local estimate rather than showing nothing.
             per_item = (time.time() - self._phase_started_at) / done
             remaining = per_item * (total - done)
+
         return {
             "phase": p["phase"],
             "phase_label": PROGRESS_PHASES.get(p["phase"], p["phase"]),
@@ -400,6 +547,8 @@ class Runner:
             "total": total,
             "label": p.get("label", ""),
             "percent": round(fraction * 100),
+            "overall_percent": round(overall * 100),
+            "phases": phases,
             "remaining": remaining,
         }
 

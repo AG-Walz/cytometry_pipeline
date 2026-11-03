@@ -2400,7 +2400,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              report_json = NULL,
                              method = "umap",
                              n_cores = 1L,
-                             embed_cores = 1L,
+                             embed_cores = 0L,
+                             embed_sgd_cores = 1L,
                              umap_init = "auto",
                              umap_subsample = 0L,
                              layout = "markers",
@@ -2422,7 +2423,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              resume = TRUE,
                              background = NULL,
                              pair_by = NULL,
-                             umap_model = NULL) {
+                             umap_model = NULL,
+                             nn_method = NULL) {
   require(ggplot2)
   if (!requireNamespace("viridis", quietly = TRUE)) {
     stop("Package 'viridis' is required for marker colour scales.")
@@ -2431,17 +2433,28 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # Resolved ONCE, here, so every phase and every log line agrees on the number
   # — and so "0" (decide for me) becomes a concrete count the run can report.
   n_cores <- resolve_cores(n_cores)
-  # embed_cores is NOT n_cores, deliberately. Threading the embedding switches
-  # uwot to its batch optimiser, which is a DIFFERENT optimiser: same seed,
-  # different coordinates. Tying it to the plotting worker count meant the app
-  # (which defaults to every core) and pipeline F's DIMRED (which passes no
-  # threads at all) computed different embeddings from identical inputs, and
-  # nothing said so. Threading the embedding is now its own explicit choice,
-  # defaulting to the reproducible serial optimiser, and it is worth ~1% of a
-  # run — the plots are the cost, not this.
-  embed_cores <- resolve_cores(embed_cores)
+  # TWO embedding knobs, because uwot has two thread pools and only one of them
+  # can change the answer (see run_umap in R_shared/stats_utils.R):
+  #
+  #   embed_cores      the NEIGHBOUR SEARCH — Annoy index, kNN query, smooth-kNN
+  #                    calibration. Deterministic at any thread count, so it
+  #                    defaults to the whole machine like everything else.
+  #   embed_sgd_cores  the OPTIMISER. Threading it means uwot's batch optimiser,
+  #                    which is a DIFFERENT optimiser: same seed, different
+  #                    coordinates. Defaults to serial, and stays there unless
+  #                    someone asks for it by name.
+  #
+  # These used to be one number defaulting to 1, on the grounds that the
+  # embedding was "worth ~1% of a run — the plots are the cost". That holds at a
+  # few hundred thousand cells and is badly wrong past a few million: a 9.8M-cell
+  # run spent 22 minutes building the Annoy index on ONE thread of a 28-core
+  # machine, before a single-threaded kNN query over the same 9.8M points. The
+  # reproducibility that bought was never at risk from the search.
+  embed_cores     <- resolve_cores(embed_cores)
+  embed_sgd_cores <- resolve_cores(embed_sgd_cores)
   cat("Cores: ", n_cores, " for plotting, ", embed_cores,
-      " for the embedding.\n", sep = "")
+      " for the neighbour search, ", embed_sgd_cores,
+      " for the optimiser.\n", sep = "")
 
   # --- Layout, metadata splits and sample filter: checked BEFORE the load. ----
   # A misspelt column should cost seconds, not the hour a cohort takes to load.
@@ -2767,11 +2780,12 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   cat("Computing shared ", method, " over ", nrow(combined_matrix),
       " cells x ", ncol(combined_matrix), " markers (n_neighbors=", n_neighbors,
       ", min_dist=", min_dist, ", metric=", metric, ", seed=", seed,
-      ", threads=", embed_cores, ")...\n", sep = "")
-  if (embed_cores > 1L) {
-    cat("  Threaded embedding uses uwot's batch optimiser: reproducible from ",
-        "the seed, but NOT identical to a 1-core run, or to pipeline F unless ",
-        "it is given the same --embed_cores.\n", sep = "")
+      ", search threads=", embed_cores, ")...\n", sep = "")
+  if (embed_sgd_cores > 1L) {
+    cat("  The OPTIMISER is threaded (", embed_sgd_cores, "), which means ",
+        "uwot's batch optimiser: reproducible from the seed, but NOT identical ",
+        "to a serial-optimiser run. The neighbour search's threads do not ",
+        "affect the coordinates.\n", sep = "")
   }
   # Said BEFORE the call: the neighbour search runs before the first epoch and
   # reports nothing, so without this the bar would sit empty through a phase
@@ -2843,7 +2857,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     "embedding", key_fitset, layout, method, fit_subset,
     if (!is.null(model_file)) ckpt_input_stamp(model_file, "", NULL),
     if (supercell_fit) NULL else umap_subsample, n_neighbors, min_dist, metric,
-    seed, umap_init, embed_cores,
+    seed, umap_init, embed_sgd_cores, nn_method,
     if (gates_layout) list(gate_gap, gate_tier_ratio, gate_softness, supervise)))
   model_saved <- FALSE
   save_model <- function(model) {
@@ -2904,26 +2918,32 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     model_saved <- TRUE
   }
   embedding_resumed <- !is.null(umap_coords)
-  emit_progress("embed", 0L, 100L, "neighbour graph + initialisation")
+  # From here on the sub-phases report themselves: emit_uwot_stage()
+  # (R_shared/stats_utils.R) translates uwot's stage announcements into
+  # embed_nn / embed_init, and the epoch callback carries the optimisation.
+  emit_progress("embed_nn", 0L, 3L, "starting the neighbour search")
   if (embedding_resumed) {
     # Coordinates from the checkpoint; nothing to compute.
   } else if (!is.null(model_file)) {
     umap_coords <- run_umap(
       combined_matrix, n_neighbors = n_neighbors, min_dist = min_dist,
-      metric = metric, seed = seed, n_threads = embed_cores, progress = TRUE,
+      metric = metric, seed = seed, n_threads = embed_cores,
+      sgd_threads = embed_sgd_cores, nn_method = nn_method, progress = TRUE,
       verbose = TRUE, init = umap_init, model = saved_model,
       transform_threads = max(embed_cores, n_cores))
   } else if (supercell_fit) {
     umap_coords <- run_umap(
       combined_matrix, n_neighbors = n_neighbors, min_dist = min_dist,
-      metric = metric, seed = seed, n_threads = embed_cores, progress = TRUE,
+      metric = metric, seed = seed, n_threads = embed_cores,
+      sgd_threads = embed_sgd_cores, nn_method = nn_method, progress = TRUE,
       verbose = TRUE, init = umap_init, fit_matrix = sc_fit$matrix,
       transform_threads = max(embed_cores, n_cores), on_fit = save_model,
       model = saved_model)
   } else if (gates_layout) {
     umap_coords <- run_umap(
       features, n_neighbors = n_neighbors, min_dist = min_dist,
-      metric = metric, seed = seed, n_threads = embed_cores, progress = TRUE,
+      metric = metric, seed = seed, n_threads = embed_cores,
+      sgd_threads = embed_sgd_cores, nn_method = nn_method, progress = TRUE,
       verbose = TRUE, init = umap_init,
       y = if (supervise > 0) factor(gl$combination[fit_idx]) else NULL,
       target_weight = supervise, fit_idx = fit_idx,
@@ -2938,7 +2958,9 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       output_dir  = output_dir,
       params = list(n_neighbors = n_neighbors, umap_min_dist = min_dist,
                     metric = metric, seed = seed, draw_plots = FALSE,
-                    n_threads = embed_cores, progress = TRUE, verbose = TRUE,
+                    n_threads = embed_cores, sgd_threads = embed_sgd_cores,
+                    nn_method = nn_method,
+                    progress = TRUE, verbose = TRUE,
                     umap_init = umap_init, umap_subsample = umap_subsample,
                     output_formats = output_formats,
                     plot_width = plot_width, plot_height = plot_height)

@@ -224,15 +224,68 @@ run_pca <- function(expr_matrix, n_components = 2, scale = TRUE) {
 #' @return Matrix of UMAP coordinates. When a model was fitted on a subset
 #'   (subsample, fit_idx or fit_matrix) it rides along as attr(, "model"), so a
 #'   caller can save it (uwot::save_uwot) and project further cells later.
+#' @param sgd_threads Threads for the optimiser; more than 1 switches uwot to
+#'   its batch optimiser (reproducible, but different coordinates).
+#' @param nn_method Neighbour index: NULL (uwot decides), "annoy" or "hnsw".
+# -----------------------------------------------------------------------------
+# uwot's stage announcements, turned into progress a GUI can draw.
+#
+# Between "Read N rows" and the first optimisation epoch uwot does the work that
+# dominates a large run — the Annoy index, the kNN query, the smooth-kNN
+# calibration, the initialisation — and none of it is countable. A watcher
+# therefore saw an empty bar for the longest part of the run, which is
+# indistinguishable from a hang.
+#
+# uwot does ANNOUNCE each stage: tsmessage() is message() with a timestamp, so
+# the announcements are conditions and a calling handler can translate them. The
+# handler deliberately does NOT muffle them, so the log still reads as it did.
+#
+# Matching on another package's wording is a parser for a format nobody agreed
+# to, and it will drift. It is confined to this one function for exactly that
+# reason, it matches only on stems that have been stable across uwot releases,
+# and an unrecognised message costs nothing — the phase simply does not advance,
+# which is the behaviour we had before.
+# -----------------------------------------------------------------------------
+emit_uwot_stage <- function(text) {
+  if (!exists("emit_progress", mode = "function")) return(invisible(NULL))
+  # 3 = index, query, calibration. The graph is what these three produce.
+  if (grepl("Building Annoy index", text, fixed = TRUE)) {
+    emit_progress("embed_nn", 0L, 3L, "building the neighbour index")
+  } else if (grepl("Searching Annoy index", text, fixed = TRUE)) {
+    emit_progress("embed_nn", 1L, 3L, "searching the neighbour index")
+  } else if (grepl("Commencing smooth kNN", text, fixed = TRUE)) {
+    emit_progress("embed_nn", 2L, 3L, "calibrating distances")
+  } else if (grepl("Initializing from", text, fixed = TRUE)) {
+    # The first word of the initialisation is also the last word of the
+    # neighbour graph — uwot does not say "finished", so its successor says it.
+    emit_progress("embed_nn", 3L, 3L, "neighbour graph complete")
+    emit_progress("embed_init", 0L, 1L,
+                  trimws(sub(".*Initializing from ", "", text)))
+  } else if (grepl("Commencing optimization", text, fixed = TRUE)) {
+    emit_progress("embed_init", 1L, 1L, "layout initialised")
+  }
+  invisible(NULL)
+}
+
+#' Run `expr`, translating uwot's stage messages into progress lines.
+with_uwot_progress <- function(expr) {
+  withCallingHandlers(expr, message = function(m) {
+    emit_uwot_stage(conditionMessage(m))
+    # No invokeRestart("muffleMessage"): the message is still uwot's to print.
+  })
+}
+
 run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
                      n_components = 2, metric = "euclidean", seed = 42,
                      n_threads = 1L, progress = FALSE, verbose = FALSE,
                      init = "auto", subsample = 0L, chunk = 250000L,
                      y = NULL, target_weight = 0.5, fit_idx = NULL,
                      transform_threads = NULL, fit_matrix = NULL,
-                     on_fit = NULL, model = NULL) {
+                     on_fit = NULL, model = NULL,
+                     sgd_threads = 1L, nn_method = NULL) {
   set.seed(seed)
-  n_threads <- max(1L, as.integer(n_threads))
+  n_threads   <- max(1L, as.integer(n_threads))
+  sgd_threads <- max(1L, as.integer(sgd_threads))
   n_obs <- nrow(expr_matrix)
 
   # A caller-chosen fit set (e.g. one balanced across populations) replaces the
@@ -329,21 +382,60 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
     }
   }
 
-  # THREADS AND REPRODUCIBILITY. n_sgd_threads defaults to asynchronous Hogwild
-  # SGD, where the interleaving of updates decides the result — so the same seed
-  # gives a different embedding. batch = TRUE updates at the end of each epoch
-  # instead, which makes multi-threaded SGD reproducible again. Serial stays the
-  # default so an existing analysis does not change under someone's feet.
+  # THREADS AND REPRODUCIBILITY — TWO POOLS, AND ONLY ONE OF THEM IS A RISK.
+  #
+  # uwot takes `n_threads` for the neighbour search (Annoy index build, kNN
+  # query, smooth-kNN calibration) and `n_sgd_threads` for the optimiser, and
+  # `n_sgd_threads` defaults to 0 — serial — INDEPENDENTLY of n_threads. Only
+  # the optimiser is order-sensitive: asynchronous Hogwild SGD lets the
+  # interleaving of updates decide the result, so the same seed gives a
+  # different embedding, and batch = TRUE (update at the end of each epoch)
+  # is what makes threaded SGD reproducible again — at a different answer.
+  #
+  # The neighbour search is deterministic at ANY thread count. This function
+  # used to tie the two together, so the only way to ask for a threaded search
+  # was to also switch optimisers; the default therefore pinned BOTH to one
+  # core, and a 9.8M-cell run spent 22 minutes building an Annoy index on a
+  # single thread of a 28-core machine to protect coordinates the search could
+  # not have changed. Verified on 20,000 x 6: n_threads 1 vs 8 with the
+  # optimiser serial gives max|difference| = 0, while batch = TRUE gives 7.09.
+  #
+  # So: thread the search freely, and keep the optimiser serial unless someone
+  # asks for it by name.
   base_args <- list(n_neighbors = n_neighbors,
                     min_dist = min_dist,
                     n_components = n_components,
                     metric = metric,
                     init = init,
                     n_threads = n_threads,
+                    n_sgd_threads = 0L,
                     verbose = isTRUE(verbose))
-  if (n_threads > 1L) {
-    base_args$n_sgd_threads <- n_threads
+  if (sgd_threads > 1L) {
+    base_args$n_sgd_threads <- sgd_threads
     base_args$batch <- TRUE
+  }
+
+  # THE ONE PART OF THE NEIGHBOUR SEARCH THREADS CANNOT REACH.
+  #
+  # uwot's Annoy path is annoy_build() then annoy_search(), and only the SECOND
+  # takes n_threads — building the index is single-threaded however many cores
+  # are free. On 9.8M cells that was 22 minutes of a 97-minute neighbour phase,
+  # and no thread count will move it.
+  #
+  # hnsw_build() DOES take n_threads, so nn_method = "hnsw" is the only way to
+  # parallelise the whole search. It is a different approximate index, so it
+  # gives a different neighbour graph and therefore different coordinates —
+  # which is why it is opt-in and never inferred.
+  #
+  # NULL (the default) is left alone rather than replaced with "annoy": uwot
+  # picks an EXACT search for small inputs, and forcing the approximate one
+  # would quietly change the answer for every small run.
+  if (!is.null(nn_method) && nzchar(nn_method)) {
+    if (identical(nn_method, "hnsw") &&
+        !requireNamespace("RcppHNSW", quietly = TRUE)) {
+      stop("nn_method = \"hnsw\" needs the RcppHNSW package.", call. = FALSE)
+    }
+    base_args$nn_method <- nn_method
   }
   if (!is.null(cb)) base_args$epoch_callback <- cb
   # A PCA start is SCALED. Unscaled, it is the data's own principal component
@@ -379,8 +471,8 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
              else if (is.null(fit_idx)) subsample <= 0L || subsample >= n_obs
              else n_fit == n_obs
   if (fit_all) {
-    coords <- do.call(uwot::umap, c(list(X = expr_matrix),
-                                    fit_args(seq_len(n_obs))))
+    coords <- with_uwot_progress(
+      do.call(uwot::umap, c(list(X = expr_matrix), fit_args(seq_len(n_obs)))))
     .warn_spread(coords)
     return(coords)
   }
@@ -413,9 +505,9 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
     idx <- fit_idx
   }
   if (is.null(model)) {
-    model <- do.call(uwot::umap, c(list(
+    model <- with_uwot_progress(do.call(uwot::umap, c(list(
       X = if (is.null(fit_matrix)) expr_matrix[idx, , drop = FALSE] else fit_matrix,
-      ret_model = TRUE), fit_args(idx)))
+      ret_model = TRUE), fit_args(idx))))
     if (is.function(on_fit)) on_fit(model)
   } else if (!project_only) {
     if (nrow(model$embedding) != (if (length(idx)) length(idx) else n_fit)) {
