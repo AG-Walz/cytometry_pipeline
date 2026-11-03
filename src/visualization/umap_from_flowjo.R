@@ -2385,7 +2385,7 @@ write_gate_run_info <- function(path, parameters, seed, embed_threads,
                                 tiers = NULL, decisions = NULL, filled = NULL,
                                 n_cells, n_fit, n_samples,
                                 samples_left_out, combinations,
-                                supercells = NULL) {
+                                supercells = NULL, embedding = NULL) {
   if (!requireNamespace("jsonlite", quietly = TRUE)) {
     message("run_info.json not written: install jsonlite.")
     return(invisible(NULL))
@@ -2430,7 +2430,9 @@ write_gate_run_info <- function(path, parameters, seed, embed_threads,
     cells = n_cells, fit_cells = n_fit, samples = n_samples,
     samples_left_out = I(samples_left_out),
     combinations = as.list(combinations),
-    supercells = supercells)
+    supercells = supercells,
+    # embedding_check(): whether the map is fit to look at, and why not.
+    embedding = embedding)
   # The full settings (every option, inputs, host) live in the run's settings
   # record, written when the run started; see R_shared/run_record.R.
   settings <- file.path(dirname(path), "_run", "settings.json")
@@ -3157,6 +3159,11 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   }
   stopifnot(nrow(umap_coords) == nrow(combined_matrix))
   rm(embed_matrix)
+  emb_check <- embedding_check(umap_coords)
+  if (isTRUE(emb_check$suspect)) {
+    cat("WARNING: this embedding looks wrong. ",
+        paste(emb_check$reasons, collapse = " "), "\n", sep = "")
+  }
   # The random fit set (--umap_subsample) goes through run_dimred(), which
   # has no hook to save the model early; it comes back attached to the
   # coordinates and is saved now. Any model already saved is not written twice.
@@ -3297,6 +3304,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       tiers = gl$tiers, decisions = gl$decisions, filled = gl$filled,
       n_cells = nrow(umap_df), n_fit = length(fit_idx),
       n_samples = length(sample_labels),
+      embedding = emb_check,
       samples_left_out = names(ext$sample_keep)[!ext$sample_keep],
       combinations = sort(tapply(gl$weight, gl$combination, sum),
                           decreasing = TRUE))
@@ -3370,6 +3378,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
               else if (umap_subsample > 0) min(umap_subsample, nrow(umap_df))
               else nrow(umap_df),
       n_samples = length(sample_labels),
+      embedding = emb_check,
       samples_left_out = names(ext$sample_keep)[!ext$sample_keep],
       combinations = sort(table(combined_subpop), decreasing = TRUE),
       supercells = if (is.null(sc_fit)) NULL else list(

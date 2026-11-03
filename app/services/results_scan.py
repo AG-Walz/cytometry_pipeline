@@ -138,6 +138,8 @@ class Results:
     settings_files: list[Path] = field(default_factory=list)
     settings: dict = field(default_factory=dict)
     command: str = ""
+    #: run_info.json's "embedding" (embedding_check() in R): suspect + reasons.
+    embedding: dict = field(default_factory=dict)
     other: list[Plot] = field(default_factory=list)
     markers: list[str] = field(default_factory=list)
     samples: list[str] = field(default_factory=list)
@@ -355,6 +357,12 @@ def _read_settings(directory: Path, results: Results) -> None:
         results.command = (run_dir / "command.sh").read_text(encoding="utf-8")
     except OSError:
         results.command = ""
+    try:
+        info = json.loads((directory / "run_info.json").read_text(encoding="utf-8"))
+        emb = info.get("embedding") if isinstance(info, dict) else None
+        results.embedding = emb if isinstance(emb, dict) else {}
+    except (OSError, ValueError):
+        results.embedding = {}
 
 
 def scan(output_dir: str | os.PathLike) -> Results:

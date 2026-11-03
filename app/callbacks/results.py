@@ -292,6 +292,17 @@ def register_callbacks() -> None:
 
         sections: list = []
 
+        # A map that failed is said above the plots, where it is seen.
+        if results.embedding.get("suspect"):
+            reasons = results.embedding.get("reasons") or []
+            if isinstance(reasons, str):
+                reasons = [reasons]
+            sections.append(dmc.Alert(
+                dmc.Stack([dmc.Text(r, size="sm") for r in reasons], gap=4),
+                title="This embedding looks wrong",
+                color="orange", variant="light"))
+            sections.append(dmc.Space(h=10))
+
         if not results.has_preview:
             sections.append(
                 dmc.Alert(

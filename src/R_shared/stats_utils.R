@@ -560,6 +560,52 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
   coords
 }
 
+#' Is this embedding fit to look at? Checked once it exists, recorded in
+#' run_info.json and shown by the app above the plots, so a failed map is said
+#' where it is seen rather than in a log nobody reads (J445, 2026-11-02: a map
+#' 550 units wide went unnoticed until the plots were opened).
+#'
+#' @param coords Two-column matrix of coordinates.
+#' @param max_span Central 98% of cells wider than this (units) = the
+#'   optimisation did not converge; a UMAP with spread 1 spans a few tens.
+#' @param max_stretch Full range over the 1st-99th percentile range above this
+#'   = a few far-off cells stretch the axes and squeeze the map.
+#' @return list(suspect, span, core_span, stretch, outliers, reasons).
+embedding_check <- function(coords, max_span = 100, max_stretch = 4) {
+  coords <- as.matrix(coords)[, 1:2, drop = FALSE]
+  ok <- stats::complete.cases(coords)
+  coords <- coords[ok, , drop = FALSE]
+  if (!nrow(coords)) {
+    return(list(suspect = TRUE, span = NA, core_span = NA, stretch = NA,
+                outliers = 0L, reasons = I("no coordinates")))
+  }
+  span <- max(apply(coords, 2, function(v) diff(range(v))))
+  lo <- apply(coords, 2, stats::quantile, 0.01, names = FALSE)
+  hi <- apply(coords, 2, stats::quantile, 0.99, names = FALSE)
+  core <- max(hi - lo)
+  stretch <- if (core > 0) span / core else NA_real_
+  # Cells further than one core width outside the 1-99% box.
+  pad <- core
+  far <- sum(coords[, 1] < lo[1] - pad | coords[, 1] > hi[1] + pad |
+             coords[, 2] < lo[2] - pad | coords[, 2] > hi[2] + pad)
+  reasons <- character(0)
+  # Judged on the central 98% of cells, so a handful of far-off cells is
+  # reported as what it is (below), not as a failed optimisation.
+  if (core > max_span) {
+    reasons <- c(reasons, sprintf(paste0(
+      "The map is %d units wide, where a normal UMAP spans a few tens: the ",
+      "optimisation did not converge, and the plots will look like scattered ",
+      "specks."), round(core)))
+  } else if (is.finite(stretch) && stretch > max_stretch && far > 0) {
+    reasons <- c(reasons, sprintf(paste0(
+      "%d cell(s) lie far outside the map and stretch the axes %.1f-fold, so ",
+      "the map itself is drawn small."), far, stretch))
+  }
+  list(suspect = length(reasons) > 0, span = round(span, 1),
+       core_span = round(core, 1), stretch = round(stretch, 2),
+       outliers = far, reasons = I(reasons))
+}
+
 # A UMAP layout with spread 1 spans a few tens of units. Far more means the
 # optimisation never pulled the points together (a badly scaled start), and
 # every plot drawn from it would be specks; said loudly rather than plotted
