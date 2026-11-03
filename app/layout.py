@@ -939,6 +939,9 @@ def _step_run(state: dict) -> list:
             ],
         ),
         dmc.Space(h=14),
+        # Every setting that differs from its default (steps.changed_settings_box).
+        html.Div(id="changed-settings"),
+        dmc.Space(h=14),
         html.Div(id="run-validation"),
         dmc.Space(h=10),
         dmc.Button("Run UMAP", id="btn-run", fullWidth=True, size="md"),
