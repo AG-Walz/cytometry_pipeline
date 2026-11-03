@@ -137,11 +137,61 @@ def _data_files(results: results_scan.Results):
     )
 
 
-def _data_section(results: results_scan.Results) -> list:
-    """The "Data files" heading and links, or [] when there are none."""
-    if not results.data_files:
+def _settings_section(results: results_scan.Results) -> list:
+    """"Settings used": how the run ended, its code version, and the command
+    that repeats it with every option spelt out. [] for runs without a record.
+    """
+    if not results.command and not results.settings:
         return []
-    return [
+    s = results.settings
+    git = s.get("git") or {}
+    status = s.get("status", "")
+    if status == "running":
+        # R writes the outcome when it ends; "running" on a finished folder
+        # means the process was killed before it could.
+        status = "running (or stopped without finishing)"
+    facts = [
+        f"Started {s.get('started', '?')} on {(s.get('host') or {}).get('name', '?')}",
+        f"status: {status or '?'}"
+        + (f", {s['minutes']} min" if s.get("minutes") is not None else ""),
+        f"code: {git.get('describe') or git.get('commit') or '?'}"
+        + (" (with local changes)" if git.get("dirty") else ""),
+    ]
+    children = [
+        dmc.Divider(label="Settings used", labelPosition="left"),
+        dmc.Space(h=8),
+        dmc.Text(" · ".join(facts), size="xs", c="dimmed"),
+    ]
+    if s.get("error"):
+        children.append(dmc.Text(f"Error: {s['error']}", size="xs", c="red"))
+    if results.command:
+        children += [
+            dmc.Space(h=6),
+            dmc.Text("Repeat this run: bash _run/command.sh (every option is "
+                     "written out, defaults included).", size="xs"),
+            dmc.Code(results.command, block=True,
+                     style={"fontSize": "11px", "maxHeight": "260px",
+                            "overflow": "auto"}),
+        ]
+    children += [
+        dmc.Space(h=6),
+        dmc.Group(
+            [dmc.Anchor(p.name, href=f"/plot/download?path={quote(str(p))}",
+                        size="xs", target="_blank")
+             for p in results.settings_files],
+            gap="md"),
+        dmc.Space(h=16),
+    ]
+    return children
+
+
+def _data_section(results: results_scan.Results) -> list:
+    """"Settings used", then the "Data files" heading and links; [] when there
+    is neither."""
+    settings = _settings_section(results)
+    if not results.data_files:
+        return settings
+    return settings + [
         dmc.Divider(label="Data files", labelPosition="left"),
         dmc.Space(h=8),
         _data_files(results),

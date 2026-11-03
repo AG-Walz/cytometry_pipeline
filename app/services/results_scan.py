@@ -133,6 +133,11 @@ class Results:
     split_columns: list[str] = field(default_factory=list)
     #: CSV/JSON outputs (cells.csv.gz, run_info.json, ...), for download.
     data_files: list[Path] = field(default_factory=list)
+    #: The settings record R wrote when the run started (_run/settings.json,
+    #: _run/command.sh), and what it says. Empty for runs before 2026-11-03.
+    settings_files: list[Path] = field(default_factory=list)
+    settings: dict = field(default_factory=dict)
+    command: str = ""
     other: list[Plot] = field(default_factory=list)
     markers: list[str] = field(default_factory=list)
     samples: list[str] = field(default_factory=list)
@@ -334,6 +339,24 @@ def _run_files(directory: Path) -> list[Path]:
     return sorted(found, key=lambda p: p.name.lower())
 
 
+def _read_settings(directory: Path, results: Results) -> None:
+    """The run's settings record, if it has one. Never raises: a run without
+    one (older, or killed before R started) simply shows none."""
+    run_dir = directory / "_run"
+    for name in ("settings.json", "command.sh"):
+        if (run_dir / name).is_file():
+            results.settings_files.append(run_dir / name)
+    try:
+        results.settings = json.loads(
+            (run_dir / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        results.settings = {}
+    try:
+        results.command = (run_dir / "command.sh").read_text(encoding="utf-8")
+    except OSError:
+        results.command = ""
+
+
 def scan(output_dir: str | os.PathLike) -> Results:
     """Group every plot file of the run in ``output_dir`` for display, and
     list its data files. Plots are identified by file name wherever they sit:
@@ -361,6 +384,8 @@ def scan(output_dir: str | os.PathLike) -> Results:
             plot_files.append(path)
         elif ext in DATA_EXTENSIONS:
             results.data_files.append(path)
+
+    _read_settings(directory, results)
 
     index = read_plot_index(directory)
     columns = _split_columns([p.stem for p in plot_files],
