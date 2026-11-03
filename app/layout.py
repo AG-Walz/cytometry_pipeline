@@ -317,6 +317,17 @@ def _step_gates(state: dict) -> list:
             ],
         ),
         html.Div(id="subpop-chips"),
+        dmc.Space(h=10),
+        dmc.Switch(
+            id="sw-polyfunctionality",
+            label=hint("Polyfunctionality maps", (
+                "With gate combinations (the 'combinations' mode or the gate "
+                "layout): every cell coloured by how many gates below its "
+                "lineage it is in, more gates larger and on top, as in the "
+                "MTB cohort maps. The whole run and each level of every split "
+                "column. Off: --no_polyfunctionality.")),
+            checked=state["polyfunctionality"],
+        ),
         dmc.Space(h=16),
         dmc.Divider(label="Markers", labelPosition="center"),
         dmc.Space(h=10),

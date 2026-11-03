@@ -910,6 +910,38 @@ so a change against V0 mixes time with differences between patients, and one
 patient can drive the change of a rare combination. For tests, start from the
 per-sample counts in `combination_counts.csv`.
 
+### Polyfunctionality maps
+
+A run whose cells are labelled by gate combination (`--subpop_mode
+combinations` or `--layout gates`) also draws, unless `--no_polyfunctionality`,
+the maps of the MTB cohort (`scripts/plot_polyfunctionality.R
+--size_by_polyfunctionality`): every cell coloured by how many of the gates
+below its lineage it is in, `CD4+ | IFNy+ TNFa+` counting 2. The gates are the
+last tier of the run's gate decisions (IFNy, IL-2, TNFa and CD107a in MTB), so
+the scale runs 0 to 4 even when no cell is positive for all of them. The
+colours are the five MTB blues, light (0) to dark (4; the same ramp for
+another number of gates), and a cell is drawn `1 + 2 * n / k` times the base
+size and on top of those with fewer, so 1x to 3x for four gates. The base size
+is `--point_size`, else 0.4 or the automatic size if that is smaller; the
+alpha is `--point_alpha`, else 0.85. Cells whose label has no tier below the
+lineage, and `other (rare)`, have no count and are not drawn.
+
+Written to `polyfunctionality/`, on the frame of the whole embedding so the
+maps line up:
+
+* `umap_<pop>_polyfunctionality`: every cell of the run. The legend gives the
+  cells and percentage with each count, of the cells shown (weighted in the
+  gates layout).
+* `polyfunctionality/<col>/umap_<pop>_polyfunctionality_<col>_<level>`: one
+  per level of each `--split_by` column, in its level order.
+* `polyfunctionality_per_sample.csv`: per sample and count, `sample`,
+  `n_positive`, `cells`, `percent` (of the sample's counted cells) and the
+  annotation columns, for tests or plots of your own.
+
+Unlike the MTB script, the run does not cross columns (patient x timepoint x
+stimulation) or draw equal cells per map: use `scripts/plot_polyfunctionality.R`
+or `scripts/plot_polyfunctionality_timepoints.R` on the finished run for those.
+
 ---
 
 ## Quoting on the command line
@@ -985,13 +1017,14 @@ group: "1"                                          # quoted: keep it a string
 | `--markers` | all common | Comma-separated subset of marker names to use/plot. With `--layout gates`: exactly these markers become features; gate-decided ones get the gap transform, the others enter without a jump |
 | `--subpop_mode` | `furthest` | Subgate set for the subpopulation plot: `furthest`, `cd4cd8`, `direct`, `deepest`, `combinations`, `none` (see [above](#subpopulation-colouring)). No effect with `--layout gates` |
 | `--subpop_select` | — | Comma-separated explicit gate list (relative path or bare name) used as the colour partition, overriding `--subpop_mode`. No effect with `--layout gates` |
+| `--no_polyfunctionality` | off | Do not draw the [polyfunctionality maps](#polyfunctionality-maps), which a run labelled by gate combination draws by default |
 | `--gate_separation` | `0` | Markers layout: a middle ground between one continuum and the gate islands. Each cell's gate label (the subpopulation colouring, `--subpop_mode`) is added to the embedding as a column worth this many typical marker spreads (median MAD), so cells of different gates are pushed apart while the marker structure inside each stays. `0.5`-`1`: gated populations become compact clusters next to their parents; `2` or more: islands. Colours and saved values are unaffected. Not with `--layout gates` or `--umap_model` |
 | `--normalize_data` | `none` | Per-marker normalisation of the values the **embedding** is computed from: `none`, `zscore`, `minmax`. Changing it moves the points; it is a different analysis. Ignored with `--layout gates`, with a warning |
 | `--normalize_umap` | `same` | Scale of the **marker colours**. `same`: the scale the embedding was computed on, so a z-scored embedding is coloured by z-scores and a plain one by FlowJo values. `none` (FlowJo values), `zscore`, `minmax` choose one explicitly. Recolours only; nothing moves. With `--replot` it recolours a finished run (default: the run's own scale) |
 | `--normalize` | none | Deprecated alias of `--normalize_data`; passing both is an error |
 | `--output_dir` | `umap_flowjo` | Output directory for plots |
 | `--output_formats` | `png` | Comma-separated formats: `png,pdf,svg`. SVG/PDF hold one vector point per cell (hundreds of MB per plot on millions of cells) |
-| `--downsample` | `0` | Max cells per sample after gating (`0` = no downsampling). Ignored with `--layout gates`, which samples per combination instead |
+| `--downsample` | `0` | Max cells per sample after gating (`0` = no downsampling). Ignored with `--layout gates`, which samples per combination instead. With `--subpop_mode combinations` a sample also keeps one cell of every gate-call pattern the random draw missed, so a few more than this may be kept and every pattern's full count stays labelled |
 | `--layout` | `markers` | `markers`: embed the FlowJo values of the markers, as described above. `gates`: gate-anchored features, combination labels, stratified sampling, balanced fit and the muted plot style (see [Gate-separated layout](#gate-separated-layout)) |
 | `--gate_gap` | `2` | `gates` layout: jump added at each gate cut of the deepest tier, in feature units (shallower tiers get it times `--gate_tier_ratio` per tier). The within-side term is bounded by 1, so the two sides of a gate are more than `2 * (gate_gap - 1)` apart |
 | `--gate_tier_ratio` | `2` | `gates` layout: how much larger the jump is one tier up the gating tree; with 2, CD4 and CD8 get twice the cytokines' jump and the islands of one lineage gather in one region. Must be 1 or more |
@@ -1043,6 +1076,8 @@ thousand per-sample plots:
   splits/<column>/                  per-level plots and the side-by-side panel
   changes/<column>/                 fold-change maps, combination_frequencies_ and
                                     combination_change_<column>.csv
+  polyfunctionality/[<column>/]     positive gates per cell: the whole run, each
+                                    split level, polyfunctionality_per_sample.csv
   data/                             cells.csv.gz, supercells.csv.gz,
                                     combination_counts.csv, gate_decisions.csv,
                                     separation_metrics.csv, background_pairs.csv,

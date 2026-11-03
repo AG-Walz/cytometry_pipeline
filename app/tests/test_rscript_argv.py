@@ -76,3 +76,16 @@ class Clip(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Polyfunctionality(unittest.TestCase):
+    def test_on_by_default_and_not_written(self):
+        self.assertNotIn("--no_polyfunctionality", argv())
+
+    def test_off_is_a_flag(self):
+        self.assertIn("--no_polyfunctionality", argv(polyfunctionality=False))
+
+    def test_a_run_record_sets_the_switch(self):
+        from app.callbacks import common
+        self.assertFalse(common.form_from_settings(
+            {"no_polyfunctionality": True})["polyfunctionality"])
