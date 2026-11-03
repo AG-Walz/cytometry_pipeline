@@ -988,7 +988,7 @@ group: "1"                                          # quoted: keep it a string
 | `--normalize_umap` | `none` | Per-marker normalisation of the values the **marker colours** are taken from, applied after the embedding exists. Changing it recolours the same coordinates and moves nothing |
 | `--normalize` | none | Deprecated alias of `--normalize_data`; passing both is an error |
 | `--output_dir` | `umap_flowjo` | Output directory for plots |
-| `--output_formats` | `svg` | Comma-separated formats: `png,pdf,svg` |
+| `--output_formats` | `png` | Comma-separated formats: `png,pdf,svg`. SVG/PDF hold one vector point per cell (hundreds of MB per plot on millions of cells) |
 | `--downsample` | `0` | Max cells per sample after gating (`0` = no downsampling). Ignored with `--layout gates`, which samples per combination instead |
 | `--layout` | `markers` | `markers`: embed the FlowJo values of the markers, as described above. `gates`: gate-anchored features, combination labels, stratified sampling, balanced fit and the muted plot style (see [Gate-separated layout](#gate-separated-layout)) |
 | `--gate_gap` | `2` | `gates` layout: jump added at each gate cut of the deepest tier, in feature units (shallower tiers get it times `--gate_tier_ratio` per tier). The within-side term is bounded by 1, so the two sides of a gate are more than `2 * (gate_gap - 1)` apart |
@@ -1212,7 +1212,7 @@ umap_from_flowjo(
   population = "Lymphocytes/Single Cells/Viable cells",
   output_dir = "results/umap_viable",
   subpop_mode = "furthest",
-  output_formats = list(pdf = FALSE, png = FALSE, svg = TRUE)
+  output_formats = list(pdf = FALSE, png = TRUE, svg = FALSE)
 )
 ```
 

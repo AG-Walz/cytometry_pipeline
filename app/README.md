@@ -290,8 +290,8 @@ Marker and sample dropdowns filter the marker sections; a sample filter
 also hides the annotation and split sections, which are not per sample. The
 run's tables (`cells.csv.gz`, `combination_frequencies_<column>.csv`,
 `separation_metrics.csv`, `run_info.json` and the rest) are listed under
-**Data files** for download. Clicking an image opens it full size. PNG is preferred for preview and is the form's default output format
-(the CLI's own default stays `svg`): an SVG of a large embedding carries one
+**Data files** for download. Clicking an image opens it full size. PNG is preferred for preview and is the default output format, in the form
+and in the CLI: an SVG of a large embedding carries one
 node per cell and can be tens of megabytes, so an SVG over 8 MB is offered
 for download instead of being embedded.
 
