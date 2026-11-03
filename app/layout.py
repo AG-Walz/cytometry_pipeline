@@ -695,6 +695,18 @@ def _step_params(state: dict) -> list:
             disabled=gates,
         ),
         dmc.Space(h=12),
+        dmc.Select(
+            id="in-colour-scale",
+            label="Marker colour scale",
+            description=("What the marker plots are coloured by. 'Same as the "
+                         "embedding' shows the values the map was computed "
+                         "from: z-scores for a z-scored run, FlowJo values "
+                         "otherwise. Recolours only; the points do not move."),
+            data=[{"value": v, "label": lab} for v, lab in config.COLOUR_SCALES],
+            value=state["normalize_umap"],
+            allowDeselect=False,
+        ),
+        dmc.Space(h=12),
         _number(
             "in-downsample",
             "Downsample (cells per sample)",

@@ -986,7 +986,7 @@ group: "1"                                          # quoted: keep it a string
 | `--subpop_mode` | `furthest` | Subgate set for the subpopulation plot: `furthest`, `cd4cd8`, `direct`, `deepest`, `combinations`, `none` (see [above](#subpopulation-colouring)). No effect with `--layout gates` |
 | `--subpop_select` | — | Comma-separated explicit gate list (relative path or bare name) used as the colour partition, overriding `--subpop_mode`. No effect with `--layout gates` |
 | `--normalize_data` | `none` | Per-marker normalisation of the values the **embedding** is computed from: `none`, `zscore`, `minmax`. Changing it moves the points; it is a different analysis. Ignored with `--layout gates`, with a warning |
-| `--normalize_umap` | `none` | Per-marker normalisation of the values the **marker colours** are taken from, applied after the embedding exists. Changing it recolours the same coordinates and moves nothing |
+| `--normalize_umap` | `same` | Scale of the **marker colours**. `same`: the scale the embedding was computed on, so a z-scored embedding is coloured by z-scores and a plain one by FlowJo values. `none` (FlowJo values), `zscore`, `minmax` choose one explicitly. Recolours only; nothing moves. With `--replot` it recolours a finished run (default: the run's own scale) |
 | `--normalize` | none | Deprecated alias of `--normalize_data`; passing both is an error |
 | `--output_dir` | `umap_flowjo` | Output directory for plots |
 | `--output_formats` | `png` | Comma-separated formats: `png,pdf,svg`. SVG/PDF hold one vector point per cell (hundreds of MB per plot on millions of cells) |
@@ -1093,7 +1093,7 @@ embedding without reading a workspace or recomputing anything:
 
 | File | Content |
 |------|---------|
-| `cells.csv.gz` | *markers*. Every cell: `UMAP1`, `UMAP2`, `sample`, `workspace`, `label` (subgate or, with `--subpop_mode combinations`, gate combination), `supercell` (with `--fit_subset supercell`: its supercell's number within the sample, NA for a sample too small to group), one `annot_<col>` column per annotation and one `value_<marker>` column per embedded marker (the values UMAP saw, after `--normalize_data`) |
+| `cells.csv.gz` | *markers*. Every cell: `UMAP1`, `UMAP2`, `sample`, `workspace`, `label` (subgate or, with `--subpop_mode combinations`, gate combination), `supercell` (with `--fit_subset supercell`: its supercell's number within the sample, NA for a sample too small to group), one `annot_<col>` column per annotation and one `value_<marker>` column per embedded marker: the FlowJo values, before any normalisation, so `--replot --normalize_umap` can show any scale exactly (runs before 2026-11-03 saved the values UMAP saw; `run_info.json`'s `values_scale` says which) |
 | `supercells.csv.gz` | *markers*, `--fit_subset supercell`. The fit set, one row per supercell: `sample`, `supercell`, `cells` (its size) and the mean of each marker. Written as soon as SuperCellCyto finishes |
 | `umap_model.uwot` | The fitted UMAP model, whenever the embedding was fitted on a subset and the rest projected (supercells, `--umap_subsample`, the gates layout's balanced fit). `uwot::load_uwot()` reads it and `uwot::umap_transform()` places new cells on the same map. Written right after the embedding |
 | `run_info.json` | *markers*. As in the gates layout, with the fit set (`fit_subset`, gamma and k_knn or `umap_subsample`), the embedded markers, the supercell count and how long SuperCellCyto took, and the cell count per label |

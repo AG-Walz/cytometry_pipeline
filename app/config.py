@@ -53,6 +53,13 @@ LAYOUTS = (
     ("gates", "Gate-separated islands"),
 )
 NORMALIZE_METHODS = ("none", "zscore", "minmax")
+#: Marker colour scales, value -> label. "same" is R's default (--normalize_umap).
+COLOUR_SCALES = (
+    ("same", "Same as the embedding"),
+    ("none", "FlowJo values"),
+    ("zscore", "z-score"),
+    ("minmax", "min-max"),
+)
 # uwot's supported distance metrics.
 UMAP_METRICS = ("euclidean", "cosine", "manhattan", "hamming", "correlation")
 OUTPUT_FORMATS = ("svg", "png", "pdf")
@@ -123,6 +130,9 @@ DEFAULTS: dict = {
     # At most this many supercells are fitted on; R raises gamma to match.
     "supercell_max": 100000,
     "normalize": "none",
+    # Scale of the marker colours: "same" follows the embedding's
+    # normalisation (R's default), or one of NORMALIZE_METHODS to override.
+    "normalize_umap": "same",
     "downsample": 0,
     # Worker processes for the per-file plots, which are ~90% of a run.
     # 0 = decide automatically (all cores but one, capped by the cgroup quota).

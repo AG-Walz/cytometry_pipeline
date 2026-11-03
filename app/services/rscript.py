@@ -221,6 +221,10 @@ def run_argv(params: dict) -> list[str]:
         else:
             add("--umap_subsample", params.get("random_fit_cells"),
                 config.DEFAULTS["random_fit_cells"])
+    # Both layouts: the gates layout has no embedding normalisation, but its
+    # marker plots are coloured all the same.
+    add("--normalize_umap", params.get("normalize_umap"),
+        config.DEFAULTS["normalize_umap"])
     add("--n_cores", params.get("n_cores"), config.DEFAULTS["n_cores"])
     add("--n_neighbors", params.get("n_neighbors"), config.DEFAULTS["n_neighbors"])
     # Always passed: R's default depends on the layout (0.1 markers, 0.25

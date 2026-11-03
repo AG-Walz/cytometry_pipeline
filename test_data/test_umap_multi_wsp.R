@@ -1226,6 +1226,30 @@ ok("...still inside the budget", all(nchar(st) <= 30))
 
 eq("a short label is left alone", unname(safe_label_tags("sample_1", 40)), "sample_1")
 
+# --- marker colour scale -----------------------------------------------------
+cat("\n-- marker colour scale ---------------------------------------------\n")
+# "same" (the default) colours by the scale the embedding was computed on.
+eq("'same' follows a z-scored embedding", resolve_colour_scale("same", "zscore"), "zscore")
+eq("'same' follows a plain embedding", resolve_colour_scale("same", "none"), "none")
+eq("NULL is 'same'", resolve_colour_scale(NULL, "minmax"), "minmax")
+eq("an explicit scale wins", resolve_colour_scale("none", "zscore"), "none")
+
+raw <- cbind(A = c(10, 20, 30, 60), B = c(1, 1, 2, 4))
+z <- normalize_columns(raw, "zscore")
+mm <- normalize_columns(raw, "minmax")
+eq("re-plot from FlowJo values: z-score computed",
+   colour_values_for(raw, "none", "zscore"), list(matrix = z, scale = "zscore"))
+eq("re-plot from FlowJo values: FlowJo values kept",
+   colour_values_for(raw, "none", "none"), list(matrix = raw, scale = "none"))
+# z-score and min-max are affine per marker, so each converts to the other.
+ok("an old run saved as z-scores converts to min-max exactly",
+   isTRUE(all.equal(colour_values_for(z, "zscore", "minmax")$matrix, mm)))
+w <- tryCatch(colour_values_for(z, "zscore", "none"), warning = function(w) w)
+ok("FlowJo values cannot be recovered from z-scores: it warns",
+   inherits(w, "warning") && grepl("cannot be shown as FlowJo values", conditionMessage(w)))
+eq("...and keeps the saved scale",
+   suppressWarnings(colour_values_for(z, "zscore", "none"))$scale, "zscore")
+
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
 
 # --- summary -----------------------------------------------------------------

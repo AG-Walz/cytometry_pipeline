@@ -237,6 +237,13 @@ level order is malformed or names a column that is not split.
   never gate decisions (viability dyes by default; empty disables it), is
   CLI-only: add it to the printed command by hand.
 
+**Per-marker normalisation** (`--normalize_data`) changes what the embedding
+is computed from; **Marker colour scale** (`--normalize_umap`) only changes
+what the marker plots are coloured by. Its default, **Same as the embedding**,
+shows the values the map was built from: z-scores for a z-scored run, FlowJo
+values otherwise. Choose FlowJo values, z-score or min-max to override it; the
+points do not move.
+
 The form starts on the marker layout, as R does, and `--layout` is always
 written out, and so is `--min_dist`, whose R default
 depends on the layout (0.1 for markers, 0.25 for gates; switching the layout
