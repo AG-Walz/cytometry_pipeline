@@ -54,10 +54,9 @@ NORMALIZE_METHODS = ("none", "zscore", "minmax")
 UMAP_METRICS = ("euclidean", "cosine", "manhattan", "hamming", "correlation")
 OUTPUT_FORMATS = ("svg", "png", "pdf")
 
-#: The R script's own --output_formats default. The form default below differs
-#: on purpose (PNG previews; SVG of a large embedding does not), so run_argv
-#: compares against THIS to decide whether the flag needs to be passed.
-R_DEFAULT_OUTPUT_FORMATS = ("svg",)
+#: The R script's own --output_formats default. run_argv compares against THIS
+#: to decide whether the flag needs to be passed.
+R_DEFAULT_OUTPUT_FORMATS = ("png",)
 
 #: Defaults for every form field, mirroring the R CLI.
 DEFAULTS: dict = {

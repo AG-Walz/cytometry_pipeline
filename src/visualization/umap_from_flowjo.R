@@ -2389,7 +2389,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              metric = "euclidean", seed = 42L,
                              point_size = NULL, point_alpha = NULL,
                              plot_width = 10, plot_height = 8,
-                             output_formats = list(pdf = FALSE, png = FALSE, svg = TRUE),
+                             output_formats = list(pdf = FALSE, png = TRUE, svg = FALSE),
                              list_populations = FALSE,
                              allow_missing_samples = FALSE,
                              population_map = NULL,
@@ -2777,6 +2777,18 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # below are this path's own — the standard by-sample plot is not one of them.
   # The gates layout calls run_umap() directly: it needs the fit set and the
   # supervision, which only run_umap() takes.
+  # Vector formats store every point. Said before the hour of embedding, so the
+  # choice can be undone while it is still cheap: the 2026-11-02 J445 run wrote
+  # 8.5 GB, a 417 MB SVG and a 100 MB PDF per plot for 2.86M cells.
+  vector_formats <- intersect(c("svg", "pdf"),
+                              names(Filter(isTRUE, output_formats)))
+  if (length(vector_formats) && nrow(combined_matrix) > 500000L) {
+    cat("NOTE: ", paste(toupper(vector_formats), collapse = " and "),
+        " store one vector point per cell; at ",
+        format(nrow(combined_matrix), big.mark = ","), " cells each plot will ",
+        "be hundreds of megabytes. PNG alone is usually what is wanted.\n",
+        sep = "")
+  }
   cat("Computing shared ", method, " over ", nrow(combined_matrix),
       " cells x ", ncol(combined_matrix), " markers (n_neighbors=", n_neighbors,
       ", min_dist=", min_dist, ", metric=", metric, ", seed=", seed,
