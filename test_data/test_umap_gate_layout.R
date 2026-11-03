@@ -1323,6 +1323,21 @@ if (requireNamespace("uwot", quietly = TRUE)) {
   up <- suppressMessages(run_umap(wide, n_neighbors = 15, init = "pca", seed = 1))
   ok("run_umap(init = \"pca\"): a scaled start, so a normal-width layout",
      max(apply(up, 2, function(v) diff(range(v)))) < 60)
+  # The batch optimiser (threaded SGD) runs 500 epochs, not uwot's 200 for a
+  # large input, which is set for the serial optimiser.
+  epochs_seen <- NULL
+  emit_progress <- function(phase, done, total, label) {
+    if (identical(phase, "embed")) epochs_seen <<- total
+  }
+  big <- matrix(rnorm(10500 * 3), ncol = 3, dimnames = list(NULL, c("A", "B", "C")))
+  invisible(suppressMessages(run_umap(big, n_neighbors = 5, seed = 1,
+                                      sgd_threads = 2L, progress = TRUE)))
+  eq("run_umap(sgd_threads > 1): the batch optimiser gets 500 epochs",
+     epochs_seen, 500L)
+  invisible(suppressMessages(run_umap(big, n_neighbors = 5, seed = 1,
+                                      progress = TRUE)))
+  eq("...the serial optimiser keeps uwot's own count", epochs_seen, 200L)
+  rm(emit_progress)
   ok(".warn_spread(): warns on a layout hundreds of units wide, not on a normal one",
      inherits(tryCatch(.warn_spread(cbind(c(-150, 150), c(0, 1))),
                        warning = function(w) w), "warning") &&
