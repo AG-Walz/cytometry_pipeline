@@ -250,10 +250,10 @@ depends on the layout (0.1 for markers, 0.25 for gates; switching the layout
 swaps the field between the two unless you typed your own value). Everything
 else left at its R default is omitted from the command line, so the printed
 command stays readable, and a layout's own settings are only passed with that
-layout. Point size and alpha left at 0.4 and 0.6 are omitted too, which lets R
-size the points of the styled plots (combinations, splits, panels and the
-conjoint marker plots) automatically for each combination's density; any other
-value applies to every plot.
+layout. Point size and alpha left empty ("auto") are omitted too: R then sizes
+the points for the number of cells drawn (about 1.1 for 10k cells, 0.3 for
+1M, 0.2 for 3M; per-sample plots for their own count, styled plots per
+combination). A value typed in applies to every plot.
 
 **4 — Run.** Choose a parent directory and a folder name (pre-filled with the
 population and a timestamp, so consecutive runs never overwrite each other).

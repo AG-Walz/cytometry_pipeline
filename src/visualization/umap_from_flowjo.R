@@ -3409,8 +3409,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     colour_matrix = ext$colour_matrix,
     subpop_by_level = if (gates_layout) list() else ext$subpop_by_level %||% list(),
     normalize = ext$normalize_data, normalize_umap = ext$normalize_umap,
-    point_size = point_size %||% 0.4,
-    point_alpha = point_alpha %||% 0.6, plot_width = plot_width,
+    point_size = point_size, point_alpha = point_alpha, plot_width = plot_width,
     plot_height = plot_height, output_formats = output_formats)
 
   gate_index <- NULL
@@ -3479,7 +3478,7 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
                                     colour_matrix = NULL,
                                     normalize_umap = NULL,
                                     subpop_by_level = list(),
-                                    point_size = 0.4, point_alpha = 0.6,
+                                    point_size = NULL, point_alpha = NULL,
                                     plot_width = 10, plot_height = 8,
                                     output_formats = list(pdf = FALSE,
                                                           png = FALSE,
@@ -3512,8 +3511,23 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
 
   # --- 7. Plotting. ----------------------------------------------------------
   make_outdir(output_dir)
-  pt_size  <- point_size
-  pt_alpha <- point_alpha
+  # Point size and alpha: given, or chosen for the number of cells drawn
+  # (auto_point_size() / auto_point_alpha() in umap_style.R, the rule the
+  # styled plots already use). A fixed 0.4 was right for a hundred thousand
+  # cells and a solid smear at three million; a fixed small size left a small
+  # sample's plot nearly empty. Per-sample plots are sized for their own count.
+  .auto_size  <- if (exists("auto_point_size", mode = "function")) auto_point_size
+                 else function(n) 0.4
+  .auto_alpha <- if (exists("auto_point_alpha", mode = "function")) auto_point_alpha
+                 else function(n) 0.6
+  auto_size  <- is.null(point_size)
+  auto_alpha <- is.null(point_alpha)
+  pt_size  <- if (auto_size) .auto_size(nrow(umap_df)) else point_size
+  pt_alpha <- if (auto_alpha) .auto_alpha(nrow(umap_df)) else point_alpha
+  cat(sprintf("Points: size %.2f%s, alpha %.2f%s for %s cells.\n",
+              pt_size, if (auto_size) " (auto)" else "",
+              pt_alpha, if (auto_alpha) " (auto)" else "",
+              format(nrow(umap_df), big.mark = ",")))
 
   # Capped so a deep gate path cannot crowd out the sample tag that follows it
   # in the per-file plot names. A full boolean gate name runs past 60 characters
@@ -3905,7 +3919,8 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
       df_f <- df_f[draw_order_by_value(df_f$expr), , drop = FALSE]
 
       p_f <- ggplot(df_f, aes(x = UMAP1, y = UMAP2, color = expr)) +
-        geom_point(size = pt_size, alpha = pt_alpha) +
+        geom_point(size = if (auto_size) .auto_size(length(rows)) else pt_size,
+                   alpha = if (auto_alpha) .auto_alpha(length(rows)) else pt_alpha) +
         viridis::scale_color_viridis(name = paste0(marker, norm_tag),
                                      limits = marker_limits,
                                      oob = scales::squish) +
@@ -4031,7 +4046,7 @@ replot_from_saved <- function(run_dir, output_dir = run_dir, n_cores = 1L,
     subpop_mode_tag = par$subpop_mode %||% "", n_cores = n_cores,
     colour_matrix = colour_matrix, subpop_by_level = list(),
     normalize = "none", normalize_umap = normalize_umap,
-    point_size = point_size %||% 0.4, point_alpha = point_alpha %||% 0.6,
+    point_size = point_size, point_alpha = point_alpha,
     plot_width = plot_width, plot_height = plot_height,
     output_formats = output_formats)
 

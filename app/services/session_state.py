@@ -39,8 +39,13 @@ def load() -> dict:
     # choice: until version 2 the form opened on the gate layout, and nearly
     # every remembered "gates" is that default. Those keys start over once;
     # everything else remembered is kept.
-    if "layout" not in saved or saved.get("form_start_version") != FORM_START_VERSION:
+    version = saved.get("form_start_version") or 1
+    if "layout" not in saved or version < 2:
         state.update(FORM_START)
+    if version < 3:
+        for key, old_default in (("point_size", 0.4), ("point_alpha", 0.6)):
+            if state.get(key) == old_default:
+                state[key] = None
     return state
 
 
