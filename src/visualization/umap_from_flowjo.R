@@ -66,6 +66,7 @@
 #   metadata/<column>/                coloured by an annotation, one per level
 #   splits/<column>/                  per-level plots and the panel
 #   changes/<column>/                 fold-change maps, frequency and change tables
+#   polyfunctionality/[<column>/]     positive gates per cell, whole run and per level
 #   data/                             cells, supercells, counts, decisions, pairs
 #   model/                            umap_model.uwot
 #   checkpoints/                      resume (see ckpt_save)
@@ -84,6 +85,8 @@ run_subdir <- function(kind, column = NULL, marker = NULL) {
          split_panel = file.path("splits", part(column)),
          diff       = file.path("changes", part(column)),
          table      = file.path("changes", part(column)),
+         poly       = "polyfunctionality",
+         poly_split = file.path("polyfunctionality", part(column)),
          data       = "data",
          model      = "model",
          "")
@@ -2592,7 +2595,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              umap_model = NULL,
                              nn_method = NULL,
                              gate_separation = 0,
-                             clip_quantile = 0) {
+                             clip_quantile = 0,
+                             polyfunctionality = TRUE) {
   require(ggplot2)
   if (!requireNamespace("viridis", quietly = TRUE)) {
     stop("Package 'viridis' is required for marker colour scales.")
@@ -3496,6 +3500,17 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
           "umap_split_plots.R was not sourced), so the combination, split and ",
           "fold-change plots were not drawn.\n", sep = "")
     }
+    # Positive gates per cell: only gate-combination labels can be counted.
+    if (!is.null(gl) && isTRUE(polyfunctionality) &&
+        exists("plot_polyfunctionality", mode = "function")) {
+      gate_index <- rbind(gate_index, plot_polyfunctionality(
+        cells, population = population, output_dir = output_dir,
+        split_cols = split_cols, level_order = level_order_list,
+        point_size = point_size, point_alpha = point_alpha,
+        plot_width = plot_width, plot_height = plot_height,
+        output_formats = output_formats, n_cores = n_cores,
+        gates = polyfunctional_gates(gl$tiers)))
+    }
   }
 
   # What was drawn, for the app: the gate-layout index plus the plots the
@@ -4035,7 +4050,8 @@ replot_from_saved <- function(run_dir, output_dir = run_dir, n_cores = 1L,
                               normalize_umap = NULL,
                               plot_width = 10, plot_height = 8,
                               output_formats = list(pdf = FALSE, png = TRUE,
-                                                    svg = FALSE)) {
+                                                    svg = FALSE),
+                              polyfunctionality = TRUE) {
   # The layout's folders, or flat for a run before 2026-10-15 (run_find()).
   need <- c(run_find(run_dir, "data", "cells.csv.gz"),
             run_find(run_dir, "", "run_info.json"))
@@ -4156,6 +4172,19 @@ replot_from_saved <- function(run_dir, output_dir = run_dir, n_cores = 1L,
       normalize_umap = normalize_umap, plot_width = plot_width,
       plot_height = plot_height, output_formats = output_formats,
       n_cores = n_cores)
+    if (combos && isTRUE(polyfunctionality) &&
+        exists("plot_polyfunctionality", mode = "function")) {
+      dec_file <- run_find(run_dir, "data", "gate_decisions.csv")
+      pf_gates <- if (!is.na(dec_file) && exists("marker_tiers", mode = "function"))
+        polyfunctional_gates(marker_tiers(utils::read.csv(dec_file,
+          check.names = FALSE, stringsAsFactors = FALSE)))
+      gate_index <- rbind(gate_index, plot_polyfunctionality(
+        gl_cells, population = population, output_dir = output_dir,
+        split_cols = split_cols, level_order = parse_level_order(par$level_order),
+        point_size = point_size, point_alpha = point_alpha,
+        plot_width = plot_width, plot_height = plot_height,
+        output_formats = output_formats, n_cores = n_cores, gates = pf_gates))
+    }
   }
   write_plot_index(file.path(output_dir, "plot_index.json"), gate_index,
                    facet_plot_entries(output_dir, facets_started,

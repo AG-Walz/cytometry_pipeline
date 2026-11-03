@@ -192,6 +192,13 @@ the button says so. Fill in the rest in a spreadsheet and upload it. Generating
 the names rather than typing them matters: a retyped `MTB016` for a file called
 `MTB16_...` silently fails to match.
 
+**Polyfunctionality maps** (on by default; off passes
+`--no_polyfunctionality`) apply when the cells are labelled by gate
+combination, i.e. with the `combinations` mode or the gate layout: every cell
+coloured by how many gates below its lineage it is in, more gates larger and
+on top, in the blues of the MTB cohort maps. See
+[Polyfunctionality maps](../docs/scripts/umap-from-flowjo.md#polyfunctionality-maps).
+
 With a metadata source, three more controls apply:
 
 | Control | Flag | What it does |
@@ -286,12 +293,12 @@ the flat folders of older runs, and skips `checkpoints/`. Files are grouped
 into:
 
 * **Overview** — `by_combination` first (gate layout, or any run split by
-  metadata), then `by_file`,
+  metadata), then the polyfunctionality map (gate combinations), then `by_file`,
   `by_workspace` (only when several workspaces were loaded) and
   `by_subpopulation`
 * **Split by metadata**: one accordion per split column, holding the panel with all
   levels, then each level, then the fold-change maps against the reference
-  level, in the order R drew them
+  level, then the polyfunctionality map of each level, in the order R drew them
 * **Markers — all samples** — one conjoint plot per marker
 * **Markers — per sample** — one accordion per marker, whose images are only
   loaded once you open it. A full panel across several samples is hundreds of

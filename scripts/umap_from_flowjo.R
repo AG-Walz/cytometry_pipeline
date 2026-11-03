@@ -418,6 +418,16 @@ option_list <- list(
                             "for an explicit mutually-exclusive set, e.g. the 16 ",
                             "Boolean functional combos. A cell in >1 listed gate ",
                             "is '(multiple)'; in none is '(none)'.")),
+  make_option("--no_polyfunctionality", action = "store_true", default = FALSE,
+              help = paste0("Do NOT draw the polyfunctionality maps. By default ",
+                            "a run whose cells are labelled by gate combination ",
+                            "(--subpop_mode combinations or --layout gates) also ",
+                            "colours every cell by how many gates below its ",
+                            "lineage it is in (0 to 4 of IFNy, IL-2, TNFa, CD107a ",
+                            "in MTB), more positive gates larger and on top, in ",
+                            "the MTB cohort's blues: the whole run and each level ",
+                            "of every --split_by column, into polyfunctionality/, ",
+                            "with polyfunctionality_per_sample.csv.")),
   make_option("--output_dir", type = "character", default = "umap_flowjo",
               help = "Output directory for plots [default %default]"),
   make_option("--output_formats", type = "character", default = "png",
@@ -548,7 +558,7 @@ source(file.path(src_dir, "visualization", "umap_gate_layout.R"))
 # SuperCellCyto fit set (--fit_subset supercell); the package itself is only
 # needed when that is chosen.
 source(file.path(src_dir, "visualization", "umap_supercells.R"))
-for (f in c("umap_style.R", "umap_split_plots.R")) {
+for (f in c("umap_style.R", "umap_split_plots.R", "umap_polyfunctionality.R")) {
   if (file.exists(file.path(src_dir, "visualization", f))) {
     source(file.path(src_dir, "visualization", f))
   }
@@ -592,7 +602,8 @@ if (!is.null(opt$replot)) {
                        opt$normalize_umap,
     plot_width     = opt$plot_width,
     plot_height    = opt$plot_height,
-    output_formats = parse_formats(opt$output_formats))
+    output_formats = parse_formats(opt$output_formats),
+    polyfunctionality = !opt$no_polyfunctionality)
   quit(status = 0)
 }
 
@@ -680,6 +691,7 @@ withCallingHandlers(umap_from_flowjo(
   pair_by          = split_csv(opt$pair_by),
   umap_model       = opt$umap_model,
   gate_separation  = opt$gate_separation,
-  clip_quantile    = opt$clip_quantile
+  clip_quantile    = opt$clip_quantile,
+  polyfunctionality = !opt$no_polyfunctionality
 ), error = function(e) finish_run_record(run_record, "failed", e))
 finish_run_record(run_record, "completed")

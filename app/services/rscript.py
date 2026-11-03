@@ -242,6 +242,10 @@ def run_argv(params: dict) -> list[str]:
     add("--plot_width", params.get("plot_width"), config.DEFAULTS["plot_width"])
     add("--plot_height", params.get("plot_height"), config.DEFAULTS["plot_height"])
 
+    # Polyfunctionality maps are R's default; only turning them off is a flag.
+    if params.get("polyfunctionality") is False:
+        argv.append("--no_polyfunctionality")
+
     # Resuming is R's default; only turning it off is a flag.
     if params.get("resume") is False:
         argv.append("--no_resume")

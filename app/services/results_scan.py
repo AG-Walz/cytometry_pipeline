@@ -12,6 +12,8 @@ them as::
     umap_<pop>_split_<col>_<level>.<ext>   (--split_by)
     umap_<pop>_split_<col>_panel.<ext>
     umap_<pop>_diff_<col>_<level>.<ext>
+    umap_<pop>_polyfunctionality.<ext>               (gate combinations)
+    umap_<pop>_polyfunctionality_<col>_<level>.<ext>
 
 and then replaces every character outside ``[A-Za-z0-9_.-]`` with ``_``. That
 sanitising means the marker and sample names recovered here are the *sanitised*
@@ -49,7 +51,8 @@ PLOT_INDEX = "plot_index.json"
 SKIP_DIRS = {"checkpoints", "_run"}
 #: Index kinds the gallery files by the index; any other kind (marker plots,
 #: the overview plots) is filed by its name as before.
-INDEX_KINDS = ("combination", "split", "split_panel", "diff")
+INDEX_KINDS = ("combination", "split", "split_panel", "diff",
+               "polyfunctionality", "polyfunctionality_split")
 
 
 @dataclass
@@ -130,6 +133,8 @@ class Results:
     split_panel: dict[str, Plot] = field(default_factory=dict)
     split_level: dict[str, list[Plot]] = field(default_factory=dict)
     split_diff: dict[str, list[Plot]] = field(default_factory=dict)
+    #: Polyfunctionality maps per split column, in the order R drew them.
+    split_poly: dict[str, list[Plot]] = field(default_factory=dict)
     split_columns: list[str] = field(default_factory=list)
     #: CSV/JSON outputs (cells.csv.gz, run_info.json, ...), for download.
     data_files: list[Path] = field(default_factory=list)
@@ -260,6 +265,8 @@ def _classify_indexed(entry: dict) -> tuple[str, str, str, str] | None:
     level, reference = entry.get("level") or "", entry.get("reference") or ""
     if kind == "combination":
         return "combination", "", "", "Coloured by gate combination"
+    if kind == "polyfunctionality":
+        return "polyfunctionality", "", "", "Polyfunctionality: positive gates per cell"
     if not column:
         return None
     if kind == "split_panel":
@@ -269,6 +276,8 @@ def _classify_indexed(entry: dict) -> tuple[str, str, str, str] | None:
     if kind == "diff":
         against = f" vs {reference}" if reference else ", change"
         return "split_diff", column, level, f"{column}: {level}{against}"
+    if kind == "polyfunctionality_split":
+        return "split_poly", column, level, f"{column}: {level}, polyfunctionality"
     return None
 
 
@@ -287,6 +296,12 @@ def _classify(stem: str, entry: dict | None = None,
             return indexed
     if stem.endswith("_by_combination"):
         return "combination", "", "", "Coloured by gate combination"
+    if stem.endswith("_polyfunctionality"):
+        return "polyfunctionality", "", "", "Polyfunctionality: positive gates per cell"
+    if "_polyfunctionality_" in stem:
+        tail = stem.split("_polyfunctionality_", 1)[1]
+        column, level = _column_and_level(tail, split_columns or [])
+        return "split_poly", column, level, f"{column}: {level}, polyfunctionality"
     token = _split_token(stem)
     if token:
         tail = stem.split(token, 1)[1]
@@ -416,7 +431,7 @@ def scan(output_dir: str | os.PathLike) -> Results:
     for stem in order:
         plot = plots[stem]
         section = plot.section
-        if section in ("overview", "combination"):
+        if section in ("overview", "combination", "polyfunctionality"):
             results.overview.append(plot)
         elif section == "split_panel":
             results.split_panel[plot.marker] = plot
@@ -424,6 +439,8 @@ def scan(output_dir: str | os.PathLike) -> Results:
             results.split_level.setdefault(plot.marker, []).append(plot)
         elif section == "split_diff":
             results.split_diff.setdefault(plot.marker, []).append(plot)
+        elif section == "split_poly":
+            results.split_poly.setdefault(plot.marker, []).append(plot)
         elif section == "marker_all":
             results.marker_all[plot.marker] = plot
         elif section == "marker_file":
@@ -447,11 +464,11 @@ def scan(output_dir: str | os.PathLike) -> Results:
     def _split_rank(plot: Plot) -> tuple:
         return (plot.rank is None, plot.rank or 0, natural_key(plot.sample))
 
-    for per_column in (results.split_level, results.split_diff):
+    for per_column in (results.split_level, results.split_diff, results.split_poly):
         for plots_ in per_column.values():
             plots_.sort(key=_split_rank)
     split_plots = list(results.split_panel.values()) + [
-        p for d in (results.split_level, results.split_diff)
+        p for d in (results.split_level, results.split_diff, results.split_poly)
         for ps in d.values() for p in ps]
     first_rank: dict[str, tuple] = {}
     for plot in split_plots:
@@ -465,9 +482,11 @@ def scan(output_dir: str | os.PathLike) -> Results:
     # naturally than alphabetical: from the finest grouping to the coarsest.
     _overview_order = ("_by_file", "_by_workspace", "_by_subpopulation")
 
-    def _overview_rank(plot: Plot) -> int:
+    def _overview_rank(plot: Plot) -> float:
         if plot.section == "combination":
             return -1
+        if plot.section == "polyfunctionality":
+            return -0.5
         for i, suffix in enumerate(_overview_order):
             if plot.key.endswith(suffix):
                 return i

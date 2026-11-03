@@ -126,6 +126,9 @@ DEFAULTS: dict = {
     "subpop_mode": "furthest",
     "explicit_subpop": False,
     "subpop_select": [],
+    # Polyfunctionality maps of a gate-combination run (R's default); off
+    # passes --no_polyfunctionality.
+    "polyfunctionality": True,
     # The form starts on "markers", R's default too (FORM_START below).
     # run_argv passes --layout always, so the printed command says which.
     "layout": "markers",
