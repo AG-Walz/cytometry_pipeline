@@ -1250,6 +1250,27 @@ ok("FlowJo values cannot be recovered from z-scores: it warns",
 eq("...and keeps the saved scale",
    suppressWarnings(colour_values_for(z, "zscore", "none"))$scale, "zscore")
 
+# --- draw order ---------------------------------------------------------------
+cat("\n-- draw order -------------------------------------------------------\n")
+lab <- c(rep("CD4", 6), rep("(none)", 3), "CD4/IL2", rep("CD8", 2), NA)
+o <- draw_order_by_category(lab, bottom = "(none)")
+drawn <- lab[o]
+ok("the rarest category is drawn last (on top)", identical(drawn[length(drawn)], "CD4/IL2"))
+ok("catch-alls and NA are drawn first (underneath)",
+   all(is.na(drawn[1:4]) | drawn[1:4] == "(none)"))
+ok("larger categories go under smaller ones",
+   max(which(drawn == "CD4")) < min(which(drawn == "CD8")))
+ok("the order is a permutation, and the same every time",
+   identical(sort(o), seq_along(lab)) &&
+     identical(o, draw_order_by_category(lab, bottom = "(none)")))
+ok("drawing order does not touch the caller's random stream", {
+  set.seed(7); a <- runif(1); set.seed(7); invisible(draw_order_shuffled(10)); b <- runif(1)
+  identical(a, b)
+})
+v <- c(3, NA, -1, 10, 0)
+eq("marker values: NA first, then low to high (high on top)",
+   v[draw_order_by_value(v)], c(NA, -1, 0, 3, 10))
+
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
 
 # --- summary -----------------------------------------------------------------

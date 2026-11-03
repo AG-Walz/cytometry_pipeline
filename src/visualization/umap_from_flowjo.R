@@ -882,6 +882,37 @@ colour_values_for <- function(values, values_scale, target) {
   list(matrix = normalize_columns(values, target), scale = target)
 }
 
+# DRAW ORDER. ggplot draws rows in order, so whatever comes last is on top.
+# Cells used to be drawn sample by sample, so each sample's cells covered the
+# ones before -- and a population of a few hundred cells (CD4/IL2 in J445: 326
+# of 2.86M) was painted over by the common cells of every later sample.
+#
+# Categories: largest first, rarest last (on top); catch-alls (`bottom`, e.g.
+# "(none)") under everything; shuffled within a category so no sample sits on
+# top of the others. Seeded, so a re-plot draws the same picture.
+draw_order_by_category <- function(x, bottom = character(0), seed = 42L) {
+  x <- as.character(x)
+  freq <- table(x, useNA = "no")
+  rank <- match(x, names(sort(freq, decreasing = TRUE)))
+  rank[is.na(x) | x %in% bottom] <- 0L
+  order(rank, .draw_shuffle(length(x), seed))
+}
+
+# Continuous values (marker colours): low first, high on top, so the few
+# positive cells of a mostly-negative marker are not buried. NA first.
+draw_order_by_value <- function(v) order(!is.na(v), v)
+
+# A random order (by sample, by workspace): nobody's cells on top by rank.
+draw_order_shuffled <- function(n, seed = 42L) order(.draw_shuffle(n, seed))
+
+.draw_shuffle <- function(n, seed) {
+  old <- if (exists(".Random.seed", envir = globalenv())) get(".Random.seed", envir = globalenv())
+  on.exit(if (is.null(old)) rm(".Random.seed", envir = globalenv())
+          else assign(".Random.seed", old, envir = globalenv()))
+  set.seed(seed)
+  stats::runif(n)
+}
+
 # The run-wide display label for one sample of one GATINGSET.
 #
 # The whole point is the key translation. `w` names a GatingSet, and a workspace
@@ -3508,7 +3539,8 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
     # 7a. Categorical plot coloured by file/sample (all cells).
     file_levels <- sort(unique(umap_df$file))
     file_ncol <- legend_ncol(length(file_levels), plot_height)
-    p_file <- ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = file)) +
+    p_file <- ggplot(umap_df[draw_order_shuffled(nrow(umap_df)), , drop = FALSE],
+                     aes(x = UMAP1, y = UMAP2, color = file)) +
       geom_point(size = pt_size, alpha = pt_alpha) +
       umap_coord() +
       base_umap_theme +
@@ -3539,6 +3571,7 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
 
       df_ws <- umap_df
       df_ws$workspace <- factor(df_ws$workspace, levels = wsp_levels)
+      df_ws <- df_ws[draw_order_shuffled(nrow(df_ws)), , drop = FALSE]
 
       wsp_ncol <- legend_ncol(length(wsp_levels), plot_height)
       p_ws <- ggplot(df_ws, aes(x = UMAP1, y = UMAP2, color = workspace)) +
@@ -3583,6 +3616,8 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
 
       df_sp <- umap_df
       df_sp$subpop <- factor(df_sp$subpop, levels = sp_levels)
+      df_sp <- df_sp[draw_order_by_category(
+        df_sp$subpop, bottom = c(.SUBPOP_MULTI, .SUBPOP_NONE)), , drop = FALSE]
 
       sp_ncol <- legend_ncol(length(sp_levels), plot_height)
       p_sp <- ggplot(df_sp, aes(x = UMAP1, y = UMAP2, color = subpop)) +
@@ -3622,7 +3657,8 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
         df_lv$level <- lv_vec
         # NA first so the grey parent cells sit UNDER the coloured gates rather
         # than speckling over them.
-        df_lv <- df_lv[order(!is.na(df_lv$level)), , drop = FALSE]
+        # Then the rarest gate last, so it is not buried under the common ones.
+        df_lv <- df_lv[draw_order_by_category(df_lv$level), , drop = FALSE]
 
         p_lv <- ggplot(df_lv, aes(x = UMAP1, y = UMAP2, color = level)) +
           geom_point(size = pt_size, alpha = pt_alpha) +
@@ -3673,6 +3709,8 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
     add_job(paste0("annot ", cl), function() {
       df_a <- umap_df
       df_a$.annot <- factor(values, levels = levels_all)
+      df_a <- df_a[draw_order_by_category(df_a$.annot,
+                                          bottom = .ANNOT_UNASSIGNED), , drop = FALSE]
       a_ncol <- legend_ncol(length(levels_all), plot_height)
       p_a <- ggplot(df_a, aes(x = UMAP1, y = UMAP2, color = .annot)) +
         geom_point(size = pt_size, alpha = pt_alpha) +
@@ -3725,6 +3763,7 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
     add_job(paste0("marker ", marker), function() {
       df_all <- umap_df
       df_all$expr <- colour_matrix[, marker]
+      df_all <- df_all[draw_order_by_value(df_all$expr), , drop = FALSE]
       p_all <- ggplot(df_all, aes(x = UMAP1, y = UMAP2, color = expr)) +
         geom_point(size = pt_size, alpha = pt_alpha) +
         viridis::scale_color_viridis(name = paste0(marker, norm_tag),
@@ -3782,6 +3821,7 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
       if (length(rows) == 0) return(invisible(NULL)) # nothing for this file
       df_f <- umap_df[rows, , drop = FALSE]
       df_f$expr <- colour_matrix[rows, marker]      # aligned colour vector
+      df_f <- df_f[draw_order_by_value(df_f$expr), , drop = FALSE]
 
       p_f <- ggplot(df_f, aes(x = UMAP1, y = UMAP2, color = expr)) +
         geom_point(size = pt_size, alpha = pt_alpha) +
