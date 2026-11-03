@@ -206,6 +206,8 @@ def run_argv(params: dict) -> list[str]:
             config.DEFAULTS["normalize"])
         add("--downsample", params.get("downsample"),
             config.DEFAULTS["downsample"])
+        add("--gate_separation", params.get("gate_separation"),
+            config.DEFAULTS["gate_separation"])
         # The fit set: random cells (the form's own count, as --umap_subsample,
         # which in the gate layout means the balanced budget instead) or
         # SuperCellCyto supercells with their two settings.

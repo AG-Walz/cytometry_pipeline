@@ -721,7 +721,20 @@ def _step_params(state: dict) -> list:
         html.Div(
             id="fit-wrap",
             style={"display": "none"} if gates else {},
-            children=_fit_settings(state),
+            children=[
+                _number(
+                    "in-gate-separation", "Gate separation",
+                    state["gate_separation"], min=0, max=5, step=0.25,
+                    decimalScale=2,
+                    description=(
+                        "Pushes cells of different gates apart, between one "
+                        "continuum (0) and gate islands (2+). 0.5-1 makes "
+                        "gated populations compact clusters next to their "
+                        "parents. Uses the subpopulation colouring's gates."),
+                ),
+                dmc.Space(h=12),
+                *_fit_settings(state),
+            ],
         ),
         _number(
             "in-cores",

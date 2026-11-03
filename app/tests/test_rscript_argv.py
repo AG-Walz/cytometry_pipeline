@@ -36,5 +36,17 @@ class ColourScale(unittest.TestCase):
             self.assertEqual(a[a.index("--normalize_umap") + 1], "none")
 
 
+class GateSeparation(unittest.TestCase):
+    def test_off_by_default(self):
+        self.assertNotIn("--gate_separation", argv())
+
+    def test_markers_layout_passes_it(self):
+        a = argv(gate_separation=0.75)
+        self.assertEqual(a[a.index("--gate_separation") + 1], "0.75")
+
+    def test_gates_layout_does_not(self):
+        self.assertNotIn("--gate_separation", argv(layout="gates", gate_separation=1))
+
+
 if __name__ == "__main__":
     unittest.main()

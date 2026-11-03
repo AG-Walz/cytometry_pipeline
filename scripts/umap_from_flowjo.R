@@ -182,6 +182,16 @@ option_list <- list(
                             "whole, and 0 means 100000. Ignored with ",
                             "--fit_subset supercell. ",
                             "[default %default]")),
+  make_option("--gate_separation", type = "double", default = 0,
+              help = paste0("Markers layout: push cells of different gates ",
+                            "apart, a middle ground between one continuum ",
+                            "(0) and the gate islands. Each cell's gate label ",
+                            "(the subpopulation colouring, see --subpop_mode) ",
+                            "is added to the embedding as a column worth this ",
+                            "many typical marker spreads. 0.5-1: gated ",
+                            "populations become compact clusters next to ",
+                            "their parents; 2 or more: islands. ",
+                            "[default %default]")),
   make_option("--fit_subset", type = "character", default = "random",
               help = paste0("Markers layout: what UMAP is fitted on before ",
                             "every cell is projected onto it. 'random': ",
@@ -663,6 +673,7 @@ withCallingHandlers(umap_from_flowjo(
   resume           = !opt$no_resume,
   background       = opt$background,
   pair_by          = split_csv(opt$pair_by),
-  umap_model       = opt$umap_model
+  umap_model       = opt$umap_model,
+  gate_separation  = opt$gate_separation
 ), error = function(e) finish_run_record(run_record, "failed", e))
 finish_run_record(run_record, "completed")

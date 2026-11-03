@@ -905,6 +905,40 @@ draw_order_by_value <- function(v) order(!is.na(v), v)
 # A random order (by sample, by workspace): nobody's cells on top by rank.
 draw_order_shuffled <- function(n, seed = 42L) order(.draw_shuffle(n, seed))
 
+# GATE SEPARATION: a middle ground between the markers layout (one continuum,
+# rare gated populations smeared along the big ones) and the gates layout
+# (every gate combination its own island).
+#
+# Each cell's gate label becomes one indicator column, multiplied by `weight`
+# times the typical spread of the embedded markers (the median of their MADs),
+# and appended to what UMAP embeds. Two cells in different gates are then that
+# much further apart; cells in the same gate are unaffected. 0 is the plain
+# markers layout; tested on J445 (300k cells, 2026-11-03): 0.5-1 detaches the
+# gated populations into compact clusters that stay next to their parents,
+# and 2 or more is already the gate islands. A continuous knob, which uwot's
+# label supervision is not: there, any weight from 0.02 up gave full islands.
+#
+# @return The indicator columns (cells x labels), named "gate:<label>", or
+#   NULL when weight is 0 or there is only one label.
+gate_separation_columns <- function(labels, embed_matrix, weight) {
+  weight <- as.numeric(weight)
+  if (!length(weight) || !is.finite(weight) || weight <= 0) return(NULL)
+  labels <- as.character(labels)
+  labels[is.na(labels)] <- "(none)"
+  levs <- sort(unique(labels))
+  if (length(levs) < 2L) return(NULL)
+  spread <- stats::median(apply(embed_matrix, 2, stats::mad), na.rm = TRUE)
+  if (!is.finite(spread) || spread <= 0) {
+    spread <- stats::median(apply(embed_matrix, 2, stats::sd), na.rm = TRUE)
+  }
+  if (!is.finite(spread) || spread <= 0) spread <- 1
+  step <- weight * spread
+  out <- matrix(0, nrow = length(labels), ncol = length(levs),
+                dimnames = list(NULL, paste0("gate:", levs)))
+  out[cbind(seq_along(labels), match(labels, levs))] <- step
+  out
+}
+
 .draw_shuffle <- function(n, seed) {
   old <- if (exists(".Random.seed", envir = globalenv())) get(".Random.seed", envir = globalenv())
   on.exit(if (is.null(old)) rm(".Random.seed", envir = globalenv())
@@ -2502,7 +2536,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              background = NULL,
                              pair_by = NULL,
                              umap_model = NULL,
-                             nn_method = NULL) {
+                             nn_method = NULL,
+                             gate_separation = 0) {
   require(ggplot2)
   if (!requireNamespace("viridis", quietly = TRUE)) {
     stop("Package 'viridis' is required for marker colour scales.")
@@ -2572,6 +2607,19 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     warning("--fit_subset supercell is ignored in the gates layout, which fits ",
             "on a set balanced across gate combinations.", call. = FALSE)
     fit_subset <- "random"
+  }
+  gate_separation <- suppressWarnings(as.numeric(gate_separation))
+  if (!length(gate_separation) || is.na(gate_separation) || gate_separation < 0) {
+    stop("--gate_separation must be a number of 0 or more.", call. = FALSE)
+  }
+  if (gate_separation > 0 && gates_layout) {
+    warning("--gate_separation is ignored with --layout gates, which separates ",
+            "the gates already.", call. = FALSE)
+    gate_separation <- 0
+  }
+  if (gate_separation > 0 && !is.null(umap_model) && nzchar(umap_model)) {
+    stop("--gate_separation cannot be combined with --umap_model: the saved ",
+         "map was fitted on other columns.", call. = FALSE)
   }
   # An existing map: no fit at all, every cell projected onto the saved model.
   # The gates layout's features depend on the cohort they were built from, so
@@ -2917,12 +2965,32 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # Markers layout, supercell fit set: SuperCellCyto groups each sample's cells
   # into supercells of about supercell_gamma cells; UMAP is fitted on their
   # means and every cell is projected onto that model.
+  # What the markers layout embeds: the markers, plus the gate columns when
+  # --gate_separation is above 0 (see gate_separation_columns()). Colours and
+  # saved values are unaffected; only the distances UMAP sees change.
+  embed_matrix <- combined_matrix
+  if (!gates_layout && gate_separation > 0) {
+    gcols <- gate_separation_columns(combined_subpop, combined_matrix,
+                                     gate_separation)
+    if (is.null(gcols)) {
+      cat("Gate separation: only one gate label among the cells; nothing to ",
+          "separate.\n", sep = "")
+    } else {
+      embed_matrix <- cbind(combined_matrix, gcols)
+      cat(sprintf(paste0("Gate separation %g: %d gate label(s) (%s colouring) ",
+                         "added to the embedding as columns; cells in ",
+                         "different gates are pushed apart.\n"),
+                  gate_separation, ncol(gcols), subpop_mode))
+    }
+    rm(gcols)
+  }
   sc_fit <- NULL
   key_fitset <- key_extract
   if (supercell_fit) {
     key_fitset <- ckpt_key(list("supercells", key_extract, supercell_gamma,
                                 as.integer(supercell_k_knn),
-                                as.integer(supercell_max), seed))
+                                as.integer(supercell_max), seed,
+                                if (gate_separation > 0) gate_separation))
     if (use_ckpt) sc_fit <- ckpt_load(output_dir, "supercells", key_fitset)
   }
   if (supercell_fit && is.null(sc_fit)) {
@@ -2942,7 +3010,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                   format(nrow(combined_matrix), big.mark = ","),
                   format(as.integer(supercell_max), big.mark = ",")))
     }
-    sc_fit <- supercell_fit_matrix(combined_matrix, file_labels,
+    sc_fit <- supercell_fit_matrix(embed_matrix, file_labels,
                                    gamma = gamma_used,
                                    k_knn = supercell_k_knn,
                                    n_workers = n_cores)
@@ -2977,6 +3045,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     if (!is.null(model_file)) ckpt_input_stamp(model_file, "", NULL),
     if (supercell_fit) NULL else umap_subsample, n_neighbors, min_dist, metric,
     seed, umap_init, embed_sgd_cores, nn_method,
+    if (gate_separation > 0) gate_separation,
     if (gates_layout) list(gate_gap, gate_tier_ratio, gate_softness, supervise)))
   model_saved <- FALSE
   save_model <- function(model) {
@@ -3045,14 +3114,14 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     # Coordinates from the checkpoint; nothing to compute.
   } else if (!is.null(model_file)) {
     umap_coords <- run_umap(
-      combined_matrix, n_neighbors = n_neighbors, min_dist = min_dist,
+      embed_matrix, n_neighbors = n_neighbors, min_dist = min_dist,
       metric = metric, seed = seed, n_threads = embed_cores,
       sgd_threads = embed_sgd_cores, nn_method = nn_method, progress = TRUE,
       verbose = TRUE, init = umap_init, model = saved_model,
       transform_threads = max(embed_cores, n_cores))
   } else if (supercell_fit) {
     umap_coords <- run_umap(
-      combined_matrix, n_neighbors = n_neighbors, min_dist = min_dist,
+      embed_matrix, n_neighbors = n_neighbors, min_dist = min_dist,
       metric = metric, seed = seed, n_threads = embed_cores,
       sgd_threads = embed_sgd_cores, nn_method = nn_method, progress = TRUE,
       verbose = TRUE, init = umap_init, fit_matrix = sc_fit$matrix,
@@ -3072,7 +3141,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
       model = saved_model)
   } else {
     dimred <- run_dimred(
-      expr_matrix = combined_matrix,
+      expr_matrix = embed_matrix,
       method      = method,
       output_dir  = output_dir,
       params = list(n_neighbors = n_neighbors, umap_min_dist = min_dist,
@@ -3087,6 +3156,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     umap_coords <- dimred$coords
   }
   stopifnot(nrow(umap_coords) == nrow(combined_matrix))
+  rm(embed_matrix)
   # The random fit set (--umap_subsample) goes through run_dimred(), which
   # has no hook to save the model early; it comes back attached to the
   # coordinates and is saved now. Any model already saved is not written twice.
@@ -3220,7 +3290,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
         workspaces = workspaces, group = group,
         normalize_umap = ext$normalize_umap,
         # The scale of the value_<marker> columns in cells.csv.gz.
-        values_scale = saved_values$scale),
+        values_scale = saved_values$scale,
+        gate_separation = gate_separation),
       seed = seed, embed_threads = embed_cores, sigma = sigma,
       gate_markers = gate_markers, extra_markers = extra_markers,
       tiers = gl$tiers, decisions = gl$decisions, filled = gl$filled,
@@ -3290,7 +3361,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
         workspaces = workspaces, group = group,
         normalize_umap = ext$normalize_umap,
         # The scale of the value_<marker> columns in cells.csv.gz.
-        values_scale = saved_values$scale),
+        values_scale = saved_values$scale,
+        gate_separation = gate_separation),
       seed = seed, embed_threads = embed_cores,
       gate_markers = use_markers,
       n_cells = nrow(umap_df),
