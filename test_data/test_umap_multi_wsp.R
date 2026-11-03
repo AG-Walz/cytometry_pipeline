@@ -1271,6 +1271,24 @@ v <- c(3, NA, -1, 10, 0)
 eq("marker values: NA first, then low to high (high on top)",
    v[draw_order_by_value(v)], c(NA, -1, 0, 3, 10))
 
+# --- gate separation ----------------------------------------------------------
+cat("\n-- gate separation --------------------------------------------------\n")
+m <- cbind(A = c(0, 2, 4, 6), B = c(10, 30, 50, 70))   # MADs 2.97 and 29.7
+g <- gate_separation_columns(c("CD4", "CD8", "CD4", NA), m, 1)
+ok("0 adds nothing", is.null(gate_separation_columns(c("x", "y"), m, 0)))
+ok("one label adds nothing", is.null(gate_separation_columns(rep("x", 4), m, 1)))
+eq("one column per label, NA as '(none)'", colnames(g),
+   c("gate:(none)", "gate:CD4", "gate:CD8"))
+step <- stats::median(apply(m, 2, stats::mad))
+ok("each cell gets the weight x the typical marker spread in its own column",
+   isTRUE(all.equal(unname(rowSums(g)), rep(step, 4))) &&
+     isTRUE(all.equal(unname(g[2, "gate:CD8"]), step)))
+ok("cells in the same gate stay as close as before; others move apart",
+   isTRUE(all.equal(sqrt(sum((g[1, ] - g[3, ])^2)), 0)) &&
+     isTRUE(all.equal(sqrt(sum((g[1, ] - g[2, ])^2)), sqrt(2) * step)))
+ok("the weight scales the separation linearly",
+   isTRUE(all.equal(gate_separation_columns(c("CD4", "CD8", "CD4", NA), m, 2), 2 * g)))
+
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
 
 # --- summary -----------------------------------------------------------------

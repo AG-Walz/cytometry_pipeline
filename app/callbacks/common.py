@@ -56,6 +56,7 @@ FORM_FIELDS: list[tuple[str, object, str]] = [
     ("supercell_max", "in-sc-max", "value"),
     ("normalize", "in-normalize", "value"),
     ("normalize_umap", "in-colour-scale", "value"),
+    ("gate_separation", "in-gate-separation", "value"),
     ("downsample", "in-downsample", "value"),
     ("n_cores", "in-cores", "value"),
     ("n_neighbors", "in-neighbors", "value"),
@@ -363,6 +364,7 @@ def run_params(form: dict, populations: list[str],
         **{key: form.get(key) for key, _ in FIT_PARAMS},
         "normalize": form.get("normalize"),
         "normalize_umap": form.get("normalize_umap"),
+        "gate_separation": form.get("gate_separation"),
         "downsample": form.get("downsample"),
         "n_cores": form.get("n_cores"),
         "n_neighbors": form.get("n_neighbors"),
@@ -540,6 +542,9 @@ def _gate_layout_problems(form: dict) -> list[str]:
 
 def _fit_problems(form: dict) -> list[str]:
     """Fit-set settings of the markers layout R would reject."""
+    sep = _number(form.get("gate_separation"))
+    if form.get("gate_separation") not in (None, "") and (sep is None or sep < 0):
+        return ["Gate separation must be 0 or more (step 3)."]
     fit_subset = form.get("fit_subset") or config.DEFAULTS["fit_subset"]
     if fit_subset not in ("random", "supercell"):
         return ["Choose what UMAP is fitted on (step 3)."]

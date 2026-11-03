@@ -133,6 +133,8 @@ DEFAULTS: dict = {
     # Scale of the marker colours: "same" follows the embedding's
     # normalisation (R's default), or one of NORMALIZE_METHODS to override.
     "normalize_umap": "same",
+    # Markers layout: gate columns' weight (--gate_separation). 0 = off.
+    "gate_separation": 0,
     "downsample": 0,
     # Worker processes for the per-file plots, which are ~90% of a run.
     # 0 = decide automatically (all cores but one, capped by the cgroup quota).
