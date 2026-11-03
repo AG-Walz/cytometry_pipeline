@@ -864,6 +864,34 @@ clip_columns <- function(m, q) {
   m
 }
 
+# Supercells average about `gamma` similar cells of a sample. A gated
+# population that is rare (J445: CD4/IL2, 326 of 2.86M cells) is then merged
+# into supercells of its common neighbours and gets no region of its own in
+# the fit; its cells are projected onto the continuum. Gate separation above 0
+# keeps supercells within a gate (they are grouped on the gate columns too),
+# so the warning is only for gate_separation 0.
+#
+# @return The warning text, or NULL when there is nothing to warn about.
+supercell_rare_warning <- function(labels, gamma, gate_separation = 0,
+                                   rare_share = 0.01) {
+  if (isTRUE(gate_separation > 0) || !length(labels)) return(NULL)
+  labels <- as.character(labels)
+  labels <- labels[!is.na(labels) & !labels %in% c("(none)", "(multiple)")]
+  if (!length(labels)) return(NULL)
+  n <- sort(table(labels))
+  rare <- n[n / sum(n) < rare_share]
+  if (!length(rare)) return(NULL)
+  show <- utils::head(rare, 3)
+  paste0(
+    length(rare), " gated population(s) are rare (under ", 100 * rare_share,
+    "% of gated cells, e.g. ",
+    paste(sprintf("%s: %d", names(show), as.integer(show)), collapse = ", "),
+    "). Supercells of about ", round(gamma), " cells average them into their ",
+    "common neighbours, so they get no region of their own. To keep them: fit ",
+    "on random cells, or set --gate_separation above 0 (the supercells then ",
+    "stay within a gate).")
+}
+
 # The marker colour scale a run uses. "same" (the default) follows the scale
 # the embedding was computed on, so the colours show exactly the values the
 # map was built from: FlowJo values for a plain run, z-scores for a z-scored
@@ -3060,6 +3088,9 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                 format(round(difftime(Sys.time(), sc_started), 1))))
     sc_fit$seconds <- as.numeric(difftime(Sys.time(), sc_started, units = "secs"))
     sc_fit$gamma_used <- gamma_used
+    rare_note <- supercell_rare_warning(combined_subpop, gamma_used,
+                                        gate_separation)
+    if (!is.null(rare_note)) cat("WARNING: ", rare_note, "\n", sep = "")
     # Saved at once: an hour of a cohort run goes into these, and nothing after
     # this point (the embedding, the plots) may cost them.
     make_outdir(output_dir)
