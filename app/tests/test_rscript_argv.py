@@ -26,5 +26,15 @@ class Normalisation(unittest.TestCase):
         self.assertNotIn("--normalize", a)
 
 
+class ColourScale(unittest.TestCase):
+    def test_default_follows_the_embedding_and_is_not_written(self):
+        self.assertNotIn("--normalize_umap", argv(normalize="zscore"))
+
+    def test_an_explicit_scale_is_passed_in_both_layouts(self):
+        for layout in ("markers", "gates"):
+            a = argv(layout=layout, normalize_umap="none")
+            self.assertEqual(a[a.index("--normalize_umap") + 1], "none")
+
+
 if __name__ == "__main__":
     unittest.main()

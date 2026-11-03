@@ -849,6 +849,39 @@ normalize_columns <- function(m, method) {
   m
 }
 
+# The marker colour scale a run uses. "same" (the default) follows the scale
+# the embedding was computed on, so the colours show exactly the values the
+# map was built from: FlowJo values for a plain run, z-scores for a z-scored
+# one. Any explicit method overrides it and only recolours.
+resolve_colour_scale <- function(normalize_umap, normalize_data) {
+  if (is.null(normalize_umap) || identical(normalize_umap, "same")) {
+    normalize_data
+  } else {
+    normalize_umap
+  }
+}
+
+# Colour values for a re-plot from what a run saved.
+#
+# `values` are the value_<marker> columns of cells.csv.gz on scale
+# `values_scale`: "none" (FlowJo values; runs since 2026-11-03 always save
+# these) or, for older runs, the scale they were embedded or coloured on.
+# z-score and min-max are both affine per marker, so either can be computed
+# from the other exactly; only the FlowJo values cannot be recovered from a
+# normalised copy, which is said and the saved scale kept.
+#
+# @return list(matrix, scale): the colour matrix and the scale it is on.
+colour_values_for <- function(values, values_scale, target) {
+  if (identical(target, values_scale)) return(list(matrix = values, scale = target))
+  if (identical(target, "none")) {
+    warning("this run saved its marker values already normalised (",
+            values_scale, "), so they cannot be shown as FlowJo values; ",
+            "colouring by ", values_scale, " instead.", call. = FALSE)
+    return(list(matrix = values, scale = values_scale))
+  }
+  list(matrix = normalize_columns(values, target), scale = target)
+}
+
 # The run-wide display label for one sample of one GATINGSET.
 #
 # The whole point is the key translation. `w` names a GatingSet, and a workspace
@@ -1054,7 +1087,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
                              annotate = NULL, sample_id_column = NULL,
                              markers = NULL, subpop_mode = "furthest",
                              subpop_select = NULL, normalize = NULL,
-                             normalize_data = "none", normalize_umap = "none",
+                             normalize_data = "none", normalize_umap = "same",
                              subpop_levels = TRUE,
                              subpop_levels_select = NULL,
                              downsample = 0L, seed = 42L,
@@ -1098,8 +1131,9 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   }
   for (nm in c("normalize_data", "normalize_umap")) {
     v <- get(nm)
-    if (!v %in% VALID_NORMALIZE) {
-      stop(nm, " must be one of: ", paste(VALID_NORMALIZE, collapse = ", "),
+    valid <- if (nm == "normalize_umap") c("same", VALID_NORMALIZE) else VALID_NORMALIZE
+    if (!v %in% valid) {
+      stop(nm, " must be one of: ", paste(valid, collapse = ", "),
            " (got '", v, "').")
     }
   }
@@ -1190,6 +1224,9 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       normalize_data <- "none"
     }
   }
+  # "same": colour by the scale the embedding was computed on. Resolved after
+  # the gates layout has set its embedding scale, so it follows that too.
+  normalize_umap <- resolve_colour_scale(normalize_umap, normalize_data)
 
   group <- as.character(group)
   if (!dir.exists(fcs_dir)) stop("fcs_dir not found: ", fcs_dir)
@@ -2171,6 +2208,10 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # moving a single point. When the two methods agree (including the usual case
   # where both are "none") they stay the same object, so nothing is copied.
   colour_matrix <- combined_matrix
+  # The FlowJo values themselves, kept for cells.csv.gz: a re-plot can then
+  # colour by any scale exactly. The same object as combined_matrix unless the
+  # embedding is normalised.
+  raw_matrix <- combined_matrix
   if (normalize_data != "none") {
     cat(sprintf(
       "Normalising %d markers for the EMBEDDING (method=%s) from the concatenated gated cells...\n",
@@ -2195,6 +2236,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
     # Same shape and row order as combined_matrix; the marker plots read this
     # one. Identical object unless normalize_umap differs from normalize_data.
     colour_matrix   = colour_matrix,
+    raw_matrix      = raw_matrix,
     normalize_data  = normalize_data,
     normalize_umap  = normalize_umap,
     sample_labels   = file_labels,          # per CELL, as the pipeline expects
@@ -2387,7 +2429,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              annotate = NULL, sample_id_column = NULL,
                              markers = NULL, subpop_mode = "furthest",
                              subpop_select = NULL, normalize = NULL,
-                             normalize_data = "none", normalize_umap = "none",
+                             normalize_data = "none", normalize_umap = "same",
                              subpop_levels = TRUE,
                              subpop_levels_select = NULL,
                              downsample = 0L, n_neighbors = 15L, min_dist = NULL,
@@ -2663,6 +2705,16 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   }
 
   combined_matrix     <- ext$combined_matrix
+  # The value_<marker> columns of cells.csv.gz: the FlowJo values, so that a
+  # re-plot can colour by any scale exactly. An extract checkpoint from before
+  # 2026-11-03 has no raw copy; then the values on the scale they were kept on.
+  saved_values <- if (!is.null(ext$raw_matrix)) {
+    list(matrix = ext$raw_matrix, scale = "none")
+  } else if (identical(layout, "gates")) {
+    list(matrix = ext$colour_matrix, scale = ext$normalize_umap)
+  } else {
+    list(matrix = combined_matrix, scale = ext$normalize_data)
+  }
   # Each sample's background sample, from every metadata column (not only the
   # --annotate subset), as the filter reads them.
   bg_map <- NULL
@@ -3064,8 +3116,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     calls_df <- as.data.frame(gl$calls)
     names(calls_df) <- paste0("call_", colnames(gl$calls))
     first <- c("UMAP1", "UMAP2", "sample", "workspace", "combination")
-    vals <- as.data.frame(ext$colour_matrix)
-    names(vals) <- paste0("value_", colnames(ext$colour_matrix))
+    vals <- as.data.frame(saved_values$matrix)
+    names(vals) <- paste0("value_", colnames(saved_values$matrix))
     cells_out <- cbind(cells[, first], calls_df,
                        cells[, setdiff(names(cells), first), drop = FALSE], vals)
     write_table_gz(cells_out, run_path(output_dir, "data", "cells.csv.gz"))
@@ -3135,7 +3187,9 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
         sample_pattern = sample_pattern,
         annotate = if (length(annotate)) I(annotate) else NULL,
         workspaces = workspaces, group = group,
-        normalize_umap = ext$normalize_umap),
+        normalize_umap = ext$normalize_umap,
+        # The scale of the value_<marker> columns in cells.csv.gz.
+        values_scale = saved_values$scale),
       seed = seed, embed_threads = embed_cores, sigma = sigma,
       gate_markers = gate_markers, extra_markers = extra_markers,
       tiers = gl$tiers, decisions = gl$decisions, filled = gl$filled,
@@ -3166,8 +3220,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     for (cl in annot_cols) {
       cells_out[[paste0("annot_", cl)]] <- umap_df[[paste0("annot_", cl)]]
     }
-    vals <- as.data.frame(combined_matrix)
-    names(vals) <- paste0("value_", colnames(combined_matrix))
+    vals <- as.data.frame(saved_values$matrix)
+    names(vals) <- paste0("value_", colnames(saved_values$matrix))
     write_table_gz(cbind(cells_out, vals), run_path(output_dir, "data", "cells.csv.gz"))
     rm(cells_out, vals)
     if (!is.null(gl)) {
@@ -3203,7 +3257,9 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
         sample_pattern = sample_pattern,
         annotate = if (length(annotate)) I(annotate) else NULL,
         workspaces = workspaces, group = group,
-        normalize_umap = ext$normalize_umap),
+        normalize_umap = ext$normalize_umap,
+        # The scale of the value_<marker> columns in cells.csv.gz.
+        values_scale = saved_values$scale),
       seed = seed, embed_threads = embed_cores,
       gate_markers = use_markers,
       n_cells = nrow(umap_df),
@@ -3775,6 +3831,7 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
 # =============================================================================
 replot_from_saved <- function(run_dir, output_dir = run_dir, n_cores = 1L,
                               point_size = NULL, point_alpha = NULL,
+                              normalize_umap = NULL,
                               plot_width = 10, plot_height = 8,
                               output_formats = list(pdf = FALSE, png = TRUE,
                                                     svg = FALSE)) {
@@ -3810,9 +3867,22 @@ replot_from_saved <- function(run_dir, output_dir = run_dir, n_cores = 1L,
   use_markers <- sub("^value_", "", value_cols)
   values <- as.matrix(cells[, value_cols, drop = FALSE])
   colnames(values) <- use_markers
-  normalize_umap <- par$normalize_umap %||% "none"
-  colour_matrix <- if (identical(normalize_umap, "none")) values
-                   else normalize_columns(values, normalize_umap)
+  # The colour scale: the one asked for, "same" = the embedding's, and by
+  # default the one the run used. The saved values are FlowJo values for runs
+  # since 2026-11-03 (values_scale "none"); older runs saved them on the scale
+  # they were embedded (markers) or coloured (gates) on.
+  embed_scale <- par$normalize_data %||% "none"
+  values_scale <- par$values_scale %||%
+    (if (identical(par$layout, "gates")) par$normalize_umap %||% "none"
+     else embed_scale)
+  target <- if (is.null(normalize_umap)) par$normalize_umap %||% embed_scale
+            else resolve_colour_scale(normalize_umap, embed_scale)
+  coloured <- colour_values_for(values, values_scale, target)
+  colour_matrix <- coloured$matrix
+  normalize_umap <- coloured$scale
+  cat("Marker colours: ", switch(normalize_umap, none = "FlowJo values",
+                                 zscore = "z-scores", minmax = "min-max"),
+      " (embedding: ", embed_scale, ")\n", sep = "")
   annot_cols <- sub("^annot_", "", grep("^annot_", names(cells), value = TRUE))
 
   umap_df <- data.frame(UMAP1 = cells$UMAP1, UMAP2 = cells$UMAP2,
