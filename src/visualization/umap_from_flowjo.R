@@ -3311,7 +3311,10 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
   pt_size  <- point_size
   pt_alpha <- point_alpha
 
-  pop_tag <- create_safe_filename(sub("^/", "", population))
+  # Capped so a deep gate path cannot crowd out the sample tag that follows it
+  # in the per-file plot names. A full boolean gate name runs past 60 characters
+  # easily ("Viable cells/CD8+/CD107a-IFNg-IL2-TNF-" and friends).
+  pop_tag <- create_safe_filename(sub("^/", "", population), max_length = 60)
 
   # Suffix appended to marker colour-scale titles so a reader can tell whether
   # the colour encodes raw or normalized expression.
@@ -3655,6 +3658,12 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
 
   files_unique <- unique(file_labels)
 
+  # One tag per sample, computed ONCE and reused for every marker. Building the
+  # tag inside the marker loop made its length depend on the marker's, so the
+  # same sample appeared under several names and samples sharing a prefix
+  # overwrote each other's plots. See safe_label_tags() for the full story.
+  file_tags <- safe_label_tags(files_unique, max_length = 40)
+
   # 7c. For each marker, one plot per file on the conjoint plot's colour scale.
   n_marker_done <- 0L
   for (marker in use_markers) {
@@ -3692,8 +3701,13 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
         labs(title = paste0("UMAP - ", population, " - ", marker, " - ", f))
       save_one(
         p_f,
+        # The budget is per component (pop_tag <= 60, marker capped below, tag
+        # <= 40), so the composed name lands well inside any filesystem limit
+        # and this outer cap never has to eat the sample tag.
         create_safe_filename(
-          paste0("umap_", pop_tag, "_marker_", marker, "_file_", f)),
+          paste0("umap_", pop_tag, "_marker_", substr(marker, 1, 20),
+                 "_file_", file_tags[[f]]),
+          max_length = 180),
         subdir = run_subdir("marker_file", marker = marker)
       )
       invisible(NULL)

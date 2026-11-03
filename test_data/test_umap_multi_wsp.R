@@ -1195,6 +1195,37 @@ ok("a sample with no resolved file is unknown, not an error",
 ok("a resolved file that does not exist is also unknown",
    is.na(sigs[["s1.fcs"]]))
 
+# --- filename tags for per-sample plots --------------------------------------
+cat("\n-- per-sample filename tags ----------------------------------------\n")
+source(file.path(base_dir, "src", "R_shared", "plot_utils.R"))
+
+# The failure this guards against: the per-file plot name used to be truncated
+# as a whole, so the sample name lost a different number of characters for a
+# 3-letter marker than for a 6-letter one. The gallery recovers sample names
+# from filenames, so one sample showed up as several — and two samples sharing
+# a long prefix truncated to the SAME filename, silently overwriting each other.
+long <- c("AML-VAC 01-07 2WpostV2_AML Pool_001",
+          "AML-VAC 01-07 2WpostV2_ClassII neg Kontrolle_002")
+tags <- safe_label_tags(long, max_length = 40)
+eq("one tag per label", length(tags), 2L)
+ok("tags are unique", !anyDuplicated(tags))
+ok("tags respect the budget", all(nchar(tags) <= 40))
+ok("tags are keyed by the original label", identical(names(tags), long))
+
+# The point of the fix: the tag depends on the label alone, never on what it is
+# composed with, so it is identical in every marker's filename.
+eq("the tag does not depend on the marker",
+   safe_label_tags(long, 40)[[2]], tags[[2]])
+
+# Samples that share more than the budget must still come out apart.
+same <- c("MTB012_2_V4W70_215008_replicate_one_extra_padding",
+          "MTB012_2_V4W70_215008_replicate_one_extra_padding_two")
+st <- safe_label_tags(same, max_length = 30)
+ok("prefix-sharing samples are numbered apart", !anyDuplicated(st))
+ok("...still inside the budget", all(nchar(st) <= 30))
+
+eq("a short label is left alone", unname(safe_label_tags("sample_1", 40)), "sample_1")
+
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
 
 # --- summary -----------------------------------------------------------------
