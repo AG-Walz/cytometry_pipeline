@@ -9,6 +9,7 @@ import dash_mantine_components as dmc
 from dash import ALL, Input, Output, State, callback, ctx, dcc, html, no_update
 
 from app import config
+from app.components.hint import hint as hint_text
 from app.callbacks import common
 from app.components import health
 from app.services import fs_tree, gating, results_scan, rscript, session_state
@@ -204,9 +205,9 @@ def register_callbacks() -> None:
         """
         gates = layout == "gates"
         hint = dmc.Text(
-            "Normalisation and downsampling do not apply here: the gate "
-            "layout builds its features from the gates and samples cells per "
-            "combination instead.",
+            hint_text("Normalisation and downsampling do not apply here.",
+                      "The gate layout builds its features from the gates "
+                      "and samples cells per combination instead."),
             size="xs", c="dimmed", mb=8,
         ) if gates else None
         hidden = {"display": "none"}

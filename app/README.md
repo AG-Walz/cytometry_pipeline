@@ -206,6 +206,9 @@ whatever `--annotate` selects, and adds a split column to the annotated ones. Th
 a column the metadata lacks, a filter value is not one of its levels, or the
 level order is malformed or names a column that is not split.
 
+Every setting explains itself on hover: point at the small ⓘ next to its label
+(or tab to it) for what it does. The form itself only shows the settings.
+
 **3 — Parameters.** The layout comes first:
 
 * **Marker values** *(default)*, `--layout markers`: the embedding of the
