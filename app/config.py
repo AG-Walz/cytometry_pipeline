@@ -66,6 +66,14 @@ GATE_SEPARATION_MARKS = (
     (2.5, "Gate islands"),
 )
 
+#: Clip extreme values (--clip_quantile): value -> label.
+CLIP_CHOICES = (
+    ("0", "Off"),
+    ("0.001", "0.1% on each side"),
+    ("0.005", "0.5% on each side"),
+    ("0.01", "1% on each side"),
+)
+
 #: Marker colour scales, value -> label. "same" is R's default (--normalize_umap).
 COLOUR_SCALES = (
     ("same", "Same as the embedding"),
@@ -146,6 +154,8 @@ DEFAULTS: dict = {
     # Scale of the marker colours: "same" follows the embedding's
     # normalisation (R's default), or one of NORMALIZE_METHODS to override.
     "normalize_umap": "same",
+    # --clip_quantile, as text for the Select: "0" = off.
+    "clip_quantile": "0",
     # Markers layout: gate columns' weight (--gate_separation). 0 = off.
     "gate_separation": 0.0,
     "downsample": 0,

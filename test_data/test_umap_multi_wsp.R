@@ -1271,6 +1271,16 @@ v <- c(3, NA, -1, 10, 0)
 eq("marker values: NA first, then low to high (high on top)",
    v[draw_order_by_value(v)], c(NA, -1, 0, 3, 10))
 
+# --- clipping -----------------------------------------------------------------
+cat("\n-- clipping ---------------------------------------------------------\n")
+cm <- cbind(A = c(-400, 1:998, 9000), B = rep(5, 1000))
+cl <- clip_columns(cm, 0.001)
+ok("q = 0 leaves the values alone", identical(clip_columns(cm, 0), cm))
+ok("the extremes are pulled to the cut-offs, the rest is untouched",
+   min(cl[, "A"]) > -400 && max(cl[, "A"]) < 9000 &&
+     identical(cl[2:999, "A"], cm[2:999, "A"]))
+ok("a constant marker stays constant", all(cl[, "B"] == 5))
+
 # --- gate separation ----------------------------------------------------------
 cat("\n-- gate separation --------------------------------------------------\n")
 m <- cbind(A = c(0, 2, 4, 6), B = c(10, 30, 50, 70))   # MADs 2.97 and 29.7

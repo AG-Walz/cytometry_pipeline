@@ -707,6 +707,17 @@ def _step_params(state: dict) -> list:
             allowDeselect=False,
         ),
         dmc.Space(h=12),
+        dmc.Select(
+            id="in-clip",
+            label="Clip extreme values",
+            description=("Sets each marker's most extreme cells to the cut-off "
+                         "value, so a few far-off cells cannot stretch the map. "
+                         "The saved values stay unclipped."),
+            data=[{"value": v, "label": lab} for v, lab in config.CLIP_CHOICES],
+            value=str(state["clip_quantile"]),
+            allowDeselect=False,
+        ),
+        dmc.Space(h=12),
         _number(
             "in-downsample",
             "Downsample (cells per sample)",

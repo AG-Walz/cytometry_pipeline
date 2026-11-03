@@ -182,6 +182,13 @@ option_list <- list(
                             "whole, and 0 means 100000. Ignored with ",
                             "--fit_subset supercell. ",
                             "[default %default]")),
+  make_option("--clip_quantile", type = "double", default = 0,
+              help = paste0("Clip each marker to its [q, 1-q] quantiles over ",
+                            "the gated cells before the embedding and the ",
+                            "colours, e.g. 0.001 = the 0.1% most extreme cells ",
+                            "on each side. Brings in the few far-off cells that ",
+                            "stretch a map. cells.csv.gz keeps the unclipped ",
+                            "values. 0 = off. [default %default]")),
   make_option("--gate_separation", type = "double", default = 0,
               help = paste0("Markers layout: push cells of different gates ",
                             "apart, a middle ground between one continuum ",
@@ -672,6 +679,7 @@ withCallingHandlers(umap_from_flowjo(
   background       = opt$background,
   pair_by          = split_csv(opt$pair_by),
   umap_model       = opt$umap_model,
-  gate_separation  = opt$gate_separation
+  gate_separation  = opt$gate_separation,
+  clip_quantile    = opt$clip_quantile
 ), error = function(e) finish_run_record(run_record, "failed", e))
 finish_run_record(run_record, "completed")

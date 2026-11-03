@@ -849,6 +849,21 @@ normalize_columns <- function(m, method) {
   m
 }
 
+# Clip each marker to its [q, 1 - q] quantiles over the pooled gated cells.
+# A handful of extreme values (J445: CD4 down to -400 on a 0-256 scale) pull
+# cells far from the map, stretch its axes and squeeze the colour scale; at
+# q = 0.001 the 0.1% most extreme cells on each side are set to the 0.1% /
+# 99.9% value. 0 leaves the values alone.
+clip_columns <- function(m, q) {
+  q <- as.numeric(q)
+  if (!length(q) || !is.finite(q) || q <= 0) return(m)
+  for (j in seq_len(ncol(m))) {
+    lim <- stats::quantile(m[, j], c(q, 1 - q), na.rm = TRUE, names = FALSE)
+    m[, j] <- pmin(pmax(m[, j], lim[1]), lim[2])
+  }
+  m
+}
+
 # The marker colour scale a run uses. "same" (the default) follows the scale
 # the embedding was computed on, so the colours show exactly the values the
 # map was built from: FlowJo values for a plain run, z-scores for a z-scored
@@ -1156,6 +1171,7 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
                              subpop_levels = TRUE,
                              subpop_levels_select = NULL,
                              downsample = 0L, seed = 42L,
+                             clip_quantile = 0,
                              list_populations = FALSE,
                              allow_missing_samples = FALSE,
                              population_map = NULL,
@@ -2277,6 +2293,14 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
   # colour by any scale exactly. The same object as combined_matrix unless the
   # embedding is normalised.
   raw_matrix <- combined_matrix
+  if (isTRUE(clip_quantile > 0)) {
+    cat(sprintf(paste0("Clipping each marker to its %.2f%%-%.2f%% range ",
+                       "(--clip_quantile %g) for the embedding and the colours; ",
+                       "cells.csv.gz keeps the unclipped values.\n"),
+                100 * clip_quantile, 100 * (1 - clip_quantile), clip_quantile))
+    combined_matrix <- clip_columns(combined_matrix, clip_quantile)
+    colour_matrix <- combined_matrix
+  }
   if (normalize_data != "none") {
     cat(sprintf(
       "Normalising %d markers for the EMBEDDING (method=%s) from the concatenated gated cells...\n",
@@ -2539,7 +2563,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              pair_by = NULL,
                              umap_model = NULL,
                              nn_method = NULL,
-                             gate_separation = 0) {
+                             gate_separation = 0,
+                             clip_quantile = 0) {
   require(ggplot2)
   if (!requireNamespace("viridis", quietly = TRUE)) {
     stop("Package 'viridis' is required for marker colour scales.")
@@ -2609,6 +2634,12 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     warning("--fit_subset supercell is ignored in the gates layout, which fits ",
             "on a set balanced across gate combinations.", call. = FALSE)
     fit_subset <- "random"
+  }
+  clip_quantile <- suppressWarnings(as.numeric(clip_quantile))
+  if (!length(clip_quantile) || is.na(clip_quantile) || clip_quantile < 0 ||
+      clip_quantile >= 0.5) {
+    stop("--clip_quantile must be at least 0 and below 0.5 (e.g. 0.001).",
+         call. = FALSE)
   }
   gate_separation <- suppressWarnings(as.numeric(gate_separation))
   if (!length(gate_separation) || is.na(gate_separation) || gate_separation < 0) {
@@ -2763,6 +2794,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     subpop_levels = subpop_levels,
     subpop_levels_select = subpop_levels_select,
     downsample = downsample, seed = seed,
+    clip_quantile = clip_quantile,
     list_populations = list_populations,
     allow_missing_samples = allow_missing_samples,
     population_map = population_map, match_mode = match_mode,
@@ -3298,7 +3330,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
         normalize_umap = ext$normalize_umap,
         # The scale of the value_<marker> columns in cells.csv.gz.
         values_scale = saved_values$scale,
-        gate_separation = gate_separation),
+        gate_separation = gate_separation,
+        clip_quantile = clip_quantile),
       seed = seed, embed_threads = embed_cores, sigma = sigma,
       gate_markers = gate_markers, extra_markers = extra_markers,
       tiers = gl$tiers, decisions = gl$decisions, filled = gl$filled,
@@ -3370,7 +3403,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
         normalize_umap = ext$normalize_umap,
         # The scale of the value_<marker> columns in cells.csv.gz.
         values_scale = saved_values$scale,
-        gate_separation = gate_separation),
+        gate_separation = gate_separation,
+        clip_quantile = clip_quantile),
       seed = seed, embed_threads = embed_cores,
       gate_markers = use_markers,
       n_cells = nrow(umap_df),
@@ -4013,6 +4047,10 @@ replot_from_saved <- function(run_dir, output_dir = run_dir, n_cores = 1L,
      else embed_scale)
   target <- if (is.null(normalize_umap)) par$normalize_umap %||% embed_scale
             else resolve_colour_scale(normalize_umap, embed_scale)
+  # The run's clipping (--clip_quantile) applied to the unclipped saved values.
+  if (identical(values_scale, "none") && isTRUE(par$clip_quantile > 0)) {
+    values <- clip_columns(values, par$clip_quantile)
+  }
   coloured <- colour_values_for(values, values_scale, target)
   colour_matrix <- coloured$matrix
   normalize_umap <- coloured$scale

@@ -599,7 +599,9 @@ embedding_check <- function(coords, max_span = 100, max_stretch = 4) {
   } else if (is.finite(stretch) && stretch > max_stretch && far > 0) {
     reasons <- c(reasons, sprintf(paste0(
       "%d cell(s) lie far outside the map and stretch the axes %.1f-fold, so ",
-      "the map itself is drawn small."), far, stretch))
+      "the map itself is drawn small. Clipping extreme values ",
+      "(--clip_quantile 0.001; in the app 'Clip extreme values') usually ",
+      "brings them in."), far, stretch))
   }
   list(suspect = length(reasons) > 0, span = round(span, 1),
        core_span = round(core, 1), stretch = round(stretch, 2),
