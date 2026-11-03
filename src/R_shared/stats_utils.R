@@ -413,6 +413,13 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
   if (sgd_threads > 1L) {
     base_args$n_sgd_threads <- sgd_threads
     base_args$batch <- TRUE
+    # The batch optimiser applies each epoch's updates at once, so it needs more
+    # epochs than Hogwild to converge; uwot's documentation says so, and its
+    # default for a large input (200) is set for the serial optimiser. 500 is
+    # uwot's own count for small inputs. A 2.86M-cell batch run at 200 epochs
+    # (J445, 2026-11-02) ended with clusters that had not finished pulling
+    # together.
+    base_args$n_epochs <- 500L
   }
 
   # THE ONE PART OF THE NEIGHBOUR SEARCH THREADS CANNOT REACH.
