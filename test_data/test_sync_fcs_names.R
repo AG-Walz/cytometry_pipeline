@@ -324,6 +324,35 @@ throws("a third revert has nothing left to undo",
        quiet(revert_from_ledger(led2, verbose = FALSE)), "already been reverted")
 eq("and the file is still valid", fcs_inspect(p)$refusals, character(0))
 
+# A re-run over an already-synced folder writes nothing, but still appends an
+# "after" row per file. Such a run has nothing to undo, and if it is not MARKED
+# as reverted it stays the newest un-reverted candidate for ever: every --revert
+# picks it, restores nothing, records nothing, and the run that actually wrote
+# becomes permanently unreachable. Undo would be silently dead after one
+# accidental double-click.
+d <- make_cohort(file.path(root, "noop"), c("PatientA.fcs"))
+p <- scan_fcs_dir(d)[1]
+led3 <- file.path(d, "fcs_name_sync_ledger.csv")
+quiet(sync_fcs_names(d, apply = TRUE))
+eq("the real run wrote", fcs_keyword(p, "$FIL"), "PatientA.fcs")
+quiet(sync_fcs_names(d, apply = TRUE))          # no-op re-run
+quiet(sync_fcs_names(d, apply = TRUE))          # and another
+led_rows <- utils::read.table(led3, sep = ";", header = TRUE, quote = "\"",
+                              colClasses = "character")
+eq("three runs are on record",
+   length(unique(led_rows$run_id[led_rows$stage == "after"])), 3L)
+eq("only one of them wrote",
+   length(unique(led_rows$run_id[led_rows$stage == "after" &
+                                 led_rows$status == "ok"])), 1L)
+quiet(revert_from_ledger(led3, verbose = FALSE))
+eq("ONE revert steps past the no-op runs and undoes the real one",
+   fcs_keyword(p, "$FIL"), "Specimen_001.fcs")
+ok("...and the ORIGINALFIL it created is gone",
+   is.na(fcs_keyword(p, FCS_ORIGINAL_NAME_KEYWORD)))
+throws("...and a further revert has nothing left",
+       quiet(revert_from_ledger(led3, verbose = FALSE)), "already been reverted")
+eq("...leaving a valid file", fcs_inspect(p)$refusals, character(0))
+
 # A keyword that did not exist before must be REMOVED by revert, not blanked.
 #
 # This case also pins down what revert does and does not promise. Adding the
