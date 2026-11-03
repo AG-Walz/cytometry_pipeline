@@ -148,7 +148,7 @@ The sampling is deliberately not proportional: a sample with 5,000 cytokine-nega
 
 ### Balanced Fit and Projection
 
-The UMAP is fitted on a set in which no combination label has more than `--umap_subsample` / (number of labels) cells (100,000 / number of labels when `--umap_subsample` is 0 in this layout). Smaller labels are fitted whole, and the share they leave unused is not handed to the larger ones, so the fit set can be much smaller than `--umap_subsample`, and a run with fewer cells than the budget is balanced too. `--umap_init auto` chooses spectral or PCA initialisation by the number of fitted cells.
+The UMAP is fitted on a set in which no combination label has more than `--umap_subsample` / (number of labels) cells (100,000 / number of labels when `--umap_subsample` is 0 in this layout). Smaller labels are fitted whole, and the share they leave unused is not handed to the larger ones, so the fit set can be much smaller than `--umap_subsample`, and a run with fewer cells than the budget is balanced too. `--umap_init auto` is the spectral start; above 300,000 fitted cells the run warns rather than switching to PCA.
 
 The remaining sampled cells are then placed onto that embedding with `uwot::umap_transform`. Its neighbour search runs on every plotting core; it finds the same neighbours at any thread count and its optimiser runs serially, so the coordinates do not depend on the thread count.
 

@@ -443,8 +443,9 @@ plotted.
 `--supercell_max` supercells: 8.1 million MTB cells at gamma 20 give 405,521,
 so gamma becomes 82 and the fit about 99,000 supercells. The run says so. Two
 reasons. The fit stays at the size the gate layout fits on (about a minute),
-and it stays under the 300,000 points above which `--umap_init auto` swaps the
-spectral start for PCA. The PCA start is scaled to the spectral start's 0-10
+and it stays under the 300,000 points above which a spectral start becomes slow
+and the run warns. A PCA start (`--umap_init pca`, never chosen automatically)
+is scaled to the spectral start's 0-10
 box: unscaled, on FlowJo values, it put the points about 100 units apart, the
 optimisation never brought them together, and the 2026-10-14 MTB run came out
 as specks over a range of 200. A fit whose layout still spans more than 100
@@ -1001,7 +1002,7 @@ group: "1"                                          # quoted: keep it a string
 | `--n_neighbors` | `15` | UMAP `n_neighbors` |
 | `--min_dist` | `0.1`; `0.25` with `--layout gates` | UMAP `min_dist` |
 | `--metric` | `euclidean` | UMAP distance metric |
-| `--umap_init` | `auto` | Initial layout: `auto` (spectral below 300k fitted points, PCA above), `spectral`, `pca`, `random`. Spectral is the best start but single-threaded, and on millions of cells it is the whole run. The PCA start is scaled to a 0-10 range; unscaled, it does not converge on FlowJo values |
+| `--umap_init` | `auto` | Initial layout: `auto` (= `spectral`), `spectral`, `pca`, `random`. Spectral is the best start but single-threaded; it is never swapped automatically. Past 300k fitted cells the run warns at once and suggests fitting on fewer cells (`--umap_subsample`) or passing `pca`. A PCA start is scaled to a 0-10 range; unscaled, it does not converge on FlowJo values |
 | `--umap_subsample` | `-1` | Fit the embedding on this many randomly chosen cells and project the rest onto it; `0` = fit on every cell; `-1` = 300,000 when the run has more cells, else every cell (the fit then keeps the spectral start, see `--umap_init`). With `--layout gates`: the fit budget, each combination contributing at most this / (number of combinations) cells, and `0` or `-1` means 100000 (see [Sampling and the balanced fit](#sampling-and-the-balanced-fit)). Ignored with `--fit_subset supercell` |
 | `--background` | — | `column=level` of the background samples, e.g. `stimulation=unstimulated`; frequencies become sample minus background for cytokine responses (see [Background subtraction](#background-subtraction-and-an-existing-map)). Needs `--pair_by` |
 | `--pair_by` | — | Comma-separated metadata columns a sample shares with its background sample, e.g. `patient,visit` |

@@ -340,38 +340,34 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
   # and `subsample` below.
   # ---------------------------------------------------------------------------
 
-  # "auto": spectral is the best initialisation and is affordable up to a few
-  # hundred thousand points. Past that it stops paying for itself — and then
-  # stops working at all.
+  # The start is NEVER switched behind the user's back. "auto" is the spectral
+  # start, uwot's own default and the best one. It used to become PCA above
+  # 300,000 fitted cells, silently in all but a log line, and that changed the
+  # embedding without anyone choosing it (J445, 2026-11-02: 2.86M cells, an
+  # automatic PCA start, a map of specks).
   #
+  # What the threshold measured is still true, so it is said instead:
   # MEASURED, 500,000 cells x 7 markers, 12 threads:
   #     init = "spectral"   2023 s   30 min of it inside irlba, which then
   #                                  printed "Spectral initialization failed to
   #                                  converge, using random initialization
   #                                  instead" and fell back to random anyway
   #     init = "pca"         166 s
-  #     init = "random"      156 s
-  #
-  # So above the limit spectral is not a better layout bought with time; it is
-  # half an hour spent arriving at the random layout. The optimisation itself
-  # was 47 s of that 166 s — the neighbour search and the initialisation are
-  # the run, which is why more cores did not help.
-  #
-  # 300,000 is set below the size at which convergence was observed to fail,
-  # not at it. The switch is announced, because it changes the embedding.
+  # and 300,000 cells with a spectral start took 98-188 s in total
+  # (n_neighbors 15-80, 8 threads, 2026-11-03). Past SPECTRAL_LIMIT the run
+  # warns, at once, and names the two ways out; which one is the user's call.
   SPECTRAL_LIMIT <- 300000L
-  # Projection onto a given model fits nothing, so there is no start to pick.
-  if (!is.null(model) && is.null(fit_matrix) && is.null(fit_idx)) {
-    n_fit <- min(n_fit, SPECTRAL_LIMIT)
-  }
-  if (identical(init, "auto")) {
-    init <- if (n_fit > SPECTRAL_LIMIT) "pca" else "spectral"
-    if (init == "pca") {
-      message("uwot: ", n_fit, " cells is past the ", SPECTRAL_LIMIT,
-              " point where spectral initialisation stops paying for itself ",
-              "(it is single-threaded); using init = \"pca\". Pass ",
-              "init = \"spectral\" to force it.")
-    }
+  if (identical(init, "auto")) init <- "spectral"
+  # Projection onto a given model fits nothing, so there is no start to warn
+  # about.
+  project_only_start <- !is.null(model) && is.null(fit_matrix) && is.null(fit_idx)
+  # A random subsample is a fit set too (it is applied further down).
+  sub_n <- suppressWarnings(as.integer(subsample))
+  n_start <- if (is.null(fit_matrix) && is.null(fit_idx) && !is.na(sub_n) &&
+                 sub_n > 0L) min(sub_n, n_fit) else n_fit
+  if (identical(init, "spectral") && !project_only_start &&
+      n_start > SPECTRAL_LIMIT) {
+    umap_init_warning(n_start, SPECTRAL_LIMIT)
   }
 
   cb <- NULL
@@ -577,6 +573,23 @@ run_umap <- function(expr_matrix, n_neighbors = 15, min_dist = 0.1,
             "smaller fit set.", call. = FALSE)
   }
   invisible(width)
+}
+
+# A spectral start on a large fit set: said as soon as it is known, as a
+# message (Rscript holds warning() back to the end of the run, an hour too
+# late) and as a warning (so a caller can catch it).
+umap_init_warning <- function(n_fit, limit = 300000L) {
+  text <- paste0(
+    "fitting UMAP on ", format(n_fit, big.mark = ","), " cells with a ",
+    "spectral start. Above ", format(limit, big.mark = ","), " cells that start ",
+    "is single-threaded and slow (500,000 cells: 34 min), and it may fail to ",
+    "converge, in which case uwot falls back to a random start. Either fit on ",
+    "fewer cells and project the rest (--umap_subsample, e.g. ",
+    format(limit, big.mark = ""), "; in the app 'Random cells to fit on'), or ",
+    "choose a PCA start yourself (--umap_init pca).")
+  message("WARNING: ", text)
+  warning(text, call. = FALSE)
+  invisible(text)
 }
 
 #' Calculate summary statistics for expression data grouped by cluster

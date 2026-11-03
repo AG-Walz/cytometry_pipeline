@@ -1323,6 +1323,30 @@ if (requireNamespace("uwot", quietly = TRUE)) {
   up <- suppressMessages(run_umap(wide, n_neighbors = 15, init = "pca", seed = 1))
   ok("run_umap(init = \"pca\"): a scaled start, so a normal-width layout",
      max(apply(up, 2, function(v) diff(range(v)))) < 60)
+  # The start is never switched automatically. "auto" is spectral at any size;
+  # past 300,000 fitted cells the run warns before anything slow happens.
+  # tryCatch stops at the warning, so the 300,001-row fit never runs.
+  msgs <- character(0)
+  invisible(withCallingHandlers(
+    run_umap(matrix(rnorm(1500), ncol = 3, dimnames = list(NULL, c("A", "B", "C"))),
+             n_neighbors = 15, seed = 1, verbose = TRUE),
+    message = function(m) {
+      msgs <<- c(msgs, conditionMessage(m)); invokeRestart("muffleMessage")
+    }))
+  ok("run_umap(init = \"auto\"): a spectral start, not PCA",
+     any(grepl("Laplacian", msgs)) && !any(grepl("PCA", msgs, fixed = TRUE)))
+  huge <- matrix(0, nrow = 300001L, ncol = 2, dimnames = list(NULL, c("A", "B")))
+  w <- tryCatch(suppressMessages(run_umap(huge, seed = 1)),
+                warning = function(w) conditionMessage(w))
+  ok("past 300,000 fitted cells: a warning naming both ways out",
+     is.character(w) && grepl("spectral start", w) &&
+       grepl("--umap_subsample", w, fixed = TRUE) &&
+       grepl("--umap_init pca", w, fixed = TRUE))
+  w2 <- tryCatch(suppressMessages(run_umap(huge, seed = 1, subsample = 1000L,
+                                           n_neighbors = 5)),
+                 warning = function(w) conditionMessage(w))
+  ok("...and none when the fit set is small (subsample)",
+     !is.character(w2) || !grepl("spectral start", w2))
   # The batch optimiser (threaded SGD) runs 500 epochs, not uwot's 200 for a
   # large input, which is set for the serial optimiser.
   epochs_seen <- NULL
