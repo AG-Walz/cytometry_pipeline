@@ -348,6 +348,15 @@ class Runner:
             keep.append(line)
 
         with self._lock:
+            # The reads above ran without the lock, and start() may have begun
+            # a NEW run in the meantime — a poll that started while a finished
+            # run was still attached, then an inspect clicked a moment later.
+            # What was read describes the old run; applying it here overwrote
+            # the inspect's empty log with the old one and, since the old
+            # process was not alive, declared the inspect finished (or failed
+            # with no exit code and no log) a second after it started.
+            if self._detached_dir != directory:
+                return
             if len(keep) > MAX_LINES:
                 self._truncated = True
                 keep = keep[-MAX_LINES:]

@@ -41,6 +41,13 @@ def _alert(children, color="red", title=None):
     return dmc.Alert(children, color=color, title=title, variant="light")
 
 
+def _loading(text: str):
+    """A spinner and a few words. The log tab has the detail; this only has
+    to say that something is happening."""
+    return dmc.Group([dmc.Loader(size="xs"), dmc.Text(text, size="sm", c="dimmed")],
+                     gap="xs")
+
+
 def _failure_message(what: str, snap: dict) -> str:
     """Why a run is being reported as failed, in terms a person can act on.
 
@@ -217,9 +224,8 @@ def _cached_feedback(report: dict, parsed: dict, cache_key: str):
     base = _inspect_feedback(report, parsed)
     age = report_cache.age_text(cache_key)
     note = dmc.Text(
-        (f"Remembered from a load {age} — use Re-read to look again."
-         if age else "Remembered from an earlier load — use Re-read to look "
-                     "again."),
+        f"From a load {age}. Re-read to look again." if age
+        else "From an earlier load. Re-read to look again.",
         size="xs", c="dimmed")
     return dmc.Stack([base, note], gap=4)
 
@@ -268,7 +274,7 @@ def _inspect_feedback(report: dict, parsed: dict):
             "spellings differ and can suggest aliases.", size="xs"))
     if gates and markers and loaded == found:
         lines.append(dmc.Text(f"{gates} shared gate(s), {markers} shared "
-                              f"marker(s). Continue to step 2.", size="xs"))
+                              f"marker(s).", size="xs"))
     return _alert(dmc.Stack(lines, gap=4), color=colour)
 
 
@@ -369,11 +375,7 @@ def register_callbacks() -> None:
         )
         if not ok:
             return _alert(f"Could not start R: {message}"), no_update
-        return _alert(
-            "Reading the workspaces. The result is remembered, so this is a "
-            "one-off for these folders.",
-            color="blue",
-        ), no_update
+        return _loading("Loading the workspaces…"), no_update
 
     # -- start: run --------------------------------------------------------
 
