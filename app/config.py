@@ -41,6 +41,9 @@ MAX_INLINE_SVG_BYTES = 8 * 1024 * 1024
 #: combination_frequencies_<col>.csv, separation_metrics.csv, run_info.json and
 #: friends. ".gz" is the suffix of "cells.csv.gz".
 DATA_EXTENSIONS = (".csv", ".tsv", ".json", ".gz")
+#: A run's settings record (_run/settings.json, _run/command.sh): downloadable,
+#: shown in the results, never mistaken for a data table.
+SETTINGS_EXTENSIONS = (".json", ".sh")
 
 SUBPOP_MODES = ("furthest", "cd4cd8", "direct", "deepest", "combinations",
                 "none")

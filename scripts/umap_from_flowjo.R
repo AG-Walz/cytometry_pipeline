@@ -511,6 +511,7 @@ source(file.path(shared_dir, "io_utils.R"))        # make_outdir
 source(file.path(shared_dir, "plot_utils.R"))      # save_plot_formats, create_safe_filename
 source(file.path(shared_dir, "memory_utils.R"))    # resolve_cores, parallel_lapply
 source(file.path(shared_dir, "stats_utils.R"))     # run_umap
+source(file.path(shared_dir, "run_record.R"))     # write_run_record
 source(file.path(shared_dir, "dimred_dispatch.R")) # run_dimred (umap/tsne/dm)
 source(file.path(shared_dir, "flowframe_utils.R")) # explore_data
 # THE FlowJo workspace layer: wsp_open, wsp_to_gatingset, discovery, pairing
@@ -574,7 +575,27 @@ if (!is.null(opt$replot)) {
   quit(status = 0)
 }
 
-umap_from_flowjo(
+# The settings record, written before any work so a run that crashes or is
+# killed still says what it was asked to do: _run/settings.json and
+# _run/command.sh (every option spelt out, defaults included), plus a dated
+# copy per run under _run/settings/. See src/R_shared/run_record.R.
+run_record <- write_run_record(
+  output_dir  = opt$output_dir,
+  script      = if (length(script_file) == 1) sub("^--file=", "", script_file)
+                else file.path(cli_dir, "umap_from_flowjo.R"),
+  opt         = opt,
+  option_list = option_list,
+  inputs      = list(wsp = opt$wsp, fcs_dir = opt$fcs_dir,
+                     sample_metadata = opt$sample_metadata,
+                     population_map = if (!is.null(opt$population_map) &&
+                                          file.exists(opt$population_map))
+                                        opt$population_map,
+                     umap_model = opt$umap_model),
+  repo        = dirname(normalizePath(src_dir)),
+  packages    = c("uwot", "CytoML", "flowWorkspace", "flowCore", "ggplot2",
+                  "SuperCellCyto", "RcppHNSW", "data.table", "jsonlite"))
+
+withCallingHandlers(umap_from_flowjo(
   wsp_path         = opt$wsp,
   fcs_dir          = opt$fcs_dir,
   population       = opt$population,
@@ -637,4 +658,5 @@ umap_from_flowjo(
   background       = opt$background,
   pair_by          = split_csv(opt$pair_by),
   umap_model       = opt$umap_model
-)
+), error = function(e) finish_run_record(run_record, "failed", e))
+finish_run_record(run_record, "completed")

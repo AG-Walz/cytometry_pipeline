@@ -1099,6 +1099,27 @@ embedding without reading a workspace or recomputing anything:
 | `run_info.json` | *markers*. As in the gates layout, with the fit set (`fit_subset`, gamma and k_knn or `umap_subsample`), the embedded markers, the supercell count and how long SuperCellCyto took, and the cell count per label |
 | `gate_decisions.csv`, `combination_counts.csv`, `sample_metadata.csv` | *markers*, as in the gates layout: the decisions and full counts with `--subpop_mode combinations`, the metadata copy with `--sample_metadata` |
 
+### Settings record: what a run used, and how to repeat it
+
+Before it reads anything, every run writes what it was asked to do:
+
+| File | What it holds |
+|---|---|
+| `_run/command.sh` | The exact command, with **every** option written out, defaults included, as `--option='value'`. `bash _run/command.sh` repeats the run. |
+| `_run/settings.json` | Every option's effective value, which ones were typed (`options_given`), the git commit, branch and whether the checkout had local changes, R and package versions (uwot, CytoML, flowWorkspace, ...), host, user, working directory, `TMPDIR`, the inputs (the workspace's size, date and md5; the FCS folder's file count, with its full listing in `fcs_dir_files.tsv`), and when the run ends: `status` (`completed` / `failed`), `minutes` and the `error`. |
+| `_run/settings/<YYYYmmdd-HHMMSS>/` | The same files for every run into this folder, kept: a re-run does not overwrite the record of the one before. Holds `uncommitted.diff` when the code had local changes. |
+
+Defaults are written out because defaults change: on 2026-11-03 the fit set,
+the output format and the UMAP start all did. A command that only lists what
+was typed would repeat a different run today. A run whose `status` is still
+`running` long after it stopped was killed before R could record the outcome
+(the app's `_run/exit_code` has the exit code). `run_info.json` points to the
+record (`"settings"`); the app shows it under **Settings used** in the results.
+
+To repeat a run into another folder, edit `--output_dir` in a copy of
+`command.sh`; to repeat it on the same code, check out the commit its header
+names first.
+
 ### Restarting a run
 
 Every step saves a checkpoint in `checkpoints/` inside the run folder as soon
@@ -1295,6 +1316,14 @@ Rscript test_data/test_umap_gate_layout.R
 covers the pure functions of `--layout gates` the same way: decisions, calls,
 anchors, features, labels, sampling, filters, level order, the change table and
 the palette, on hand-built gates that mirror the MTB tree.
+
+```bash
+Rscript test_data/test_run_record.R
+```
+
+covers the settings record: every option in the command, the command parsing
+back to the same options (negative numbers, empty strings, spaces and quotes),
+the input fingerprints, the outcome, and one record kept per run.
 
 ---
 

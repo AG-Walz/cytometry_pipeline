@@ -2324,6 +2324,10 @@ write_gate_run_info <- function(path, parameters, seed, embed_threads,
     samples_left_out = I(samples_left_out),
     combinations = as.list(combinations),
     supercells = supercells)
+  # The full settings (every option, inputs, host) live in the run's settings
+  # record, written when the run started; see R_shared/run_record.R.
+  settings <- file.path(dirname(path), "_run", "settings.json")
+  if (file.exists(settings)) info$settings <- "_run/settings.json"
   info <- info[!vapply(info, is.null, logical(1))]
   jsonlite::write_json(info, path, auto_unbox = TRUE, pretty = TRUE,
                        null = "null", na = "null", digits = NA)

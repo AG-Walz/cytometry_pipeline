@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 from flask import Response, abort, request, send_file
 
-from app.config import DATA_EXTENSIONS, PLOT_EXTENSIONS
+from app.config import DATA_EXTENSIONS, PLOT_EXTENSIONS, SETTINGS_EXTENSIONS
 
 #: Directories whose plot files may be served (populated as galleries render).
 _ALLOWED: set[Path] = set()
@@ -70,7 +70,8 @@ def register_route(server) -> None:
         path = Path(raw)
         # The run's tables (cells.csv.gz, run_info.json, ...) download from
         # the same folders as its plots; they are never served inline.
-        if not raw or not _is_allowed(path, PLOT_EXTENSIONS + DATA_EXTENSIONS) \
+        if not raw or not _is_allowed(path, PLOT_EXTENSIONS + DATA_EXTENSIONS
+                                           + SETTINGS_EXTENSIONS) \
                 or not path.is_file():
             abort(404)
         return send_file(path, as_attachment=True, download_name=path.name)
