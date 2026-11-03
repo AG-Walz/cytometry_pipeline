@@ -81,3 +81,29 @@ lodo_sentence <- function(lodo, sens) {
   sprintf("The day whose removal moves a slope most is %s (%d tubes) for %s: from %.2f to %.2f logit per year (%.1f SE); %d of %d refits move a slope by more than one SE.",
           m$dropped_day[i], m$n_tubes_dropped[i], m$response[i], m$week_slope_full[i], m$week_slope[i], abs(m$shift_se[i]), sum(m$flag), nrow(m))
 }
+
+#' Drift-free week slope (docs/plans/drift_methods_review.md 2.4). On acquisition days that carry several
+#' visits of one subject, week contrasts within that subject-day are immune to day, instrument and
+#' operator effects by construction. Returns the tubes of those subject-days (`patient_day` with more than
+#' one value of the time column), or NULL when there are none.
+within_day_frame <- function(d, cfg) {
+  tm <- cfg$design$time
+  if (is.null(tm) || !"patient_day" %in% names(d)) return(NULL)
+  multi <- names(which(tapply(d[[tm]], d$patient_day, function(w) length(unique(w))) > 1L))
+  if (!length(multi)) return(NULL)
+  droplevels(d[d$patient_day %in% multi, ])
+}
+
+#' The two estimators of the linear week slope on the same within-day tubes: `within_day` with the
+#' subject-day as a fixed effect (only within-day contrasts inform the slope) and `between_day` with
+#' subject and day as random intercepts (the usual model, restricted to the same tubes). Pool and tube
+#' (and visit, when declared) intercepts in both. These subject-days usually cover the early visits, so
+#' the slope is a local one and is compared between the two estimators, not with the whole-study slope.
+within_day_formulas <- function(cfg) {
+  re <- c(if (!is.null(cfg$design$stimulation)) sprintf("(1 | %s)", cfg$design$stimulation), "(1 | filename)",
+          if (has_visit(cfg)) "(1 | visit)")
+  lhs <- "cbind(count, parent_count - count) ~ week_c"
+  list(within_day = as.formula(paste(lhs, "+ patient_day +", paste(re, collapse = " + ")), env = globalenv()),
+       between_day = as.formula(paste(lhs, "+", sprintf("(1 | %s)", cfg$design$unit), "+", sprintf("(1 | %s)", design_day_term(cfg)),
+                                      "+", paste(re, collapse = " + ")), env = globalenv()))
+}

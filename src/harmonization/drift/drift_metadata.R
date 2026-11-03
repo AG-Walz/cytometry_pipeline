@@ -88,7 +88,8 @@ fcs_technical_keywords <- function(path, instrument_labels = list()) {
 
 #' The tube table: one row per .fcs under fcs_dir (recursive). Biological fields come
 #' from `sample_sheet` (data frame with a `filename` column) when given, otherwise
-#' from the file name via `cfg$tubes`; technical fields from the FCS TEXT segment.
+#' from the file name via `cfg$tubes`; technical fields from the FCS TEXT segment, except
+#' those the sheet supplies itself (a `tech_operator` column replaces the $OP keyword).
 build_tube_table <- function(fcs_dir, cfg, sample_sheet = NULL) {
   files <- list.files(fcs_dir, pattern = "\\.fcs$", recursive = TRUE,
                       full.names = TRUE, ignore.case = TRUE)
@@ -108,6 +109,7 @@ build_tube_table <- function(fcs_dir, cfg, sample_sheet = NULL) {
   if (length(miss <- setdiff(need, names(bio))))
     stop("tube metadata lacks required field(s): ", paste(miss, collapse = ", "), call. = FALSE)
   tech <- do.call(rbind, lapply(files, fcs_technical_keywords, instrument_labels = cfg$instrument_labels))
+  tech <- tech[, setdiff(names(tech), names(bio)), drop = FALSE]   # a sheet tech_* column (e.g. operator) overrides the header
   tt <- cbind(bio, path = files, tech, stringsAsFactors = FALSE)
   tt$acq_day <- tt$acq_date                       # the technical "day" factor
   tt$patient_day <- paste(tt$patient, tt$acq_day, sep = "_")

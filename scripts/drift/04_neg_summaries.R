@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # Step 4, layer A: per-neg-tube marker summaries on the compensated arcsinh scale, EMD to the
-# reference distribution, and CD4/CD8 gate bounds read from the workspaces.
+# reference distribution, and the CD4/CD8 and cytokine gate bounds read from the workspaces.
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
 usage <- "04_neg_summaries.R --wsp_dir DIR --fcs_dir DIR --out DIR --config FILE [--list_populations] [--all_tubes]"
 a <- parse_args(list(wsp_dir = "", fcs_dir = "", out = "",
@@ -41,15 +41,24 @@ for (w in wsps) {
     dir.create(file.path(a$out, "neg_cells"), showWarnings = FALSE)
     con <- gzfile(file.path(a$out, "neg_cells", paste0(fn, ".csv.gz")), "w")
     write.csv(round(m, 4), con, row.names = FALSE); close(con)
-    # gate bounds of the parent populations
+    # gate bounds of the parent populations and of the cytokine gates below them (one row per gate
+    # dimension; `gate_marker` names the dimension that is the gate's own position: the parent's
+    # marker for a parent gate, the cytokine for a cytokine gate). The cytokine gates were added on
+    # 2026-10-13: the analyst moves them per acquisition as well (docs/plans/drift_methods_review.md 2.2).
+    all_paths <- flowWorkspace::gh_get_pop_paths(gh, path = "full")
     for (pp in names(cfg$parent_populations)) {
       gnode <- find_population(gh, cfg$parent_populations[[pp]])
       if (is.na(gnode)) next
-      gb <- tryCatch(gate_bounds(gh, gnode), error = function(e) NULL)
-      if (!is.null(gb)) {
+      kids <- all_paths[startsWith(all_paths, paste0(gnode, "/")) & !grepl("/", substring(all_paths, nchar(gnode) + 2L))]
+      kids <- kids[grepl(cfg$cytokine_gate_regex, basename(kids), ignore.case = TRUE)]
+      for (node in c(gnode, kids)) {
+        gb <- tryCatch(gate_bounds(gh, node), error = function(e) NULL)
+        if (is.null(gb)) next
         gb$parent <- pp; gb$filename <- fn
+        gb$gate <- if (node == gnode) pp else basename(node)
         # map dimension channel -> canonical and arcsinh the bounds of fluorescence dims
         gb$marker <- names(channel_map)[match(gb$dimension, channel_map)]
+        gb$gate_marker <- if (node == gnode) pp else { cm2 <- intersect(gb$marker, unlist(cfg$cytokine_markers)); if (length(cm2)) cm2[1] else NA_character_ }
         isf <- gb$marker %in% fluor
         gb$lower[isf] <- asinh_cof(gb$lower[isf], cfg$arcsinh_cofactor)
         gb$upper[isf] <- asinh_cof(gb$upper[isf], cfg$arcsinh_cofactor)

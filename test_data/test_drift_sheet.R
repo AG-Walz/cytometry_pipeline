@@ -109,6 +109,23 @@ check("design from the normalised sheet", identical(d$protected_fixed, "prior_pe
         d$unit == "patient" && identical(d$technical, c("acq_day", "instrument")) && d$stimulation == "cocktail")
 check("design from the init sheet", identical(sheet_design(s)$protected_fixed, "prior_peptide_vaccination") &&
         identical(sheet_design(s0)$protected_fixed, character(0)))
+s5 <- s2; s5$tech_operator <- c("Anna", "Patrick", "", "Anna", "Patrick")
+w5 <- NULL; n5 <- withCallingHandlers(read_sample_sheet(write_sheet(s5)), warning = function(w) { w5 <<- conditionMessage(w); invokeRestart("muffleWarning") })
+check("tech prefix stripped, blank becomes 'unknown' with a warning",
+      identical(n5$operator, c("Anna", "Patrick", "unknown", "Anna", "Patrick")) && grepl("tech_operator.*unknown", w5) &&
+        identical(attr(n5, "technical"), "operator"))
+check("tech columns extend design technical; groups unchanged",
+      identical(sheet_design(n5)$technical, c("acq_day", "instrument", "operator")) &&
+        identical(sheet_design(s5)$technical, c("acq_day", "instrument", "operator")) &&
+        identical(sheet_design(n5)$protected_fixed, "prior_peptide_vaccination"))
+tt5 <- build_tube_table(fcs, cfg, n5)
+check("a tech_operator column replaces the $OP header field, no duplicate column",
+      sum(names(tt5) == "operator") == 1L && identical(tt5$operator[match(n5$filename, tt5$filename)], n5$operator))
+bad <- s2; bad$tech_instrument <- "x"
+check("tech column clashing with a built-in column", fails(read_sample_sheet(write_sheet(bad)), "clash.*instrument"))
+write_cohort_config(tpl <- file.path(base_dir, "config", "drift_template.yaml"), out5 <- file.path(tmp, "drift_t5.yaml"), "c",
+                    sheet_design(n5), "patient")
+check("template gets the tech terms", any(grepl("^  technical: \\[acq_day, instrument, operator\\]", readLines(out5))))
 check("control_match_keys", identical(control_match_keys(s$control_for), c("patient", "week")) &&
         identical(control_match_keys("subject+acq_date"), c("patient", "acq_day")) &&
         identical(control_match_keys("subject"), "patient") &&
@@ -127,7 +144,7 @@ if (requireNamespace("yaml", quietly = TRUE)) {
   write_cohort_config(tpl, out_cfg, "test cohort", d, control_match_keys(n$control_for))
   y <- yaml::read_yaml(out_cfg)
   check("generated config parses as YAML", y$cohort == "test cohort" && identical(y$design$protected_fixed, "prior_peptide_vaccination") &&
-          identical(y$controls$match_keys, c("patient", "week")))
+          identical(y$controls$match_keys, c("patient", "week")) && identical(y$design$technical, c("acq_day", "instrument")))
 }
 
 # --- round trip: init -> edit -> read -> build_tube_table == file-name path -----------------

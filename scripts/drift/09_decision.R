@@ -1,9 +1,13 @@
 #!/usr/bin/env Rscript
-# Step 9: combine posteriors with the decision rule (plan section 3). For every layer A statistic,
-# layer BG (neg background) response and layer B response, for every instrument contrast and each
-# acquisition day:
-#   rule 1: P(|effect| > replicate SD) >= replicate_noise_prob  -> "detected"
-#   rule 2: removing the effect flips positivity calls (layers B and BG counts)  -> "correct"
+# Step 9: combine posteriors with the decision rule (plan section 3, revised 2026-10-13 after
+# docs/plans/drift_methods_review.md). For every layer A statistic, layer BG (neg background) response
+# and layer B response, for every technical contrast (instrument, operator, ...: the fixed technical
+# factors of the design) and each acquisition day:
+#   rule 1, three states against a relevance margin (relevance_margin(): count CV for counts, the
+#     replicate SD otherwise): "detected" when P(|effect| > margin) >= replicate_noise_prob,
+#     "negligible" when P(|effect| < margin) >= replicate_noise_prob, else "inconclusive"
+#   rule 2 (layers B and BG counts): calls flipped when the effect is removed, over posterior draws,
+#     against the flips that counting noise alone produces on the same tubes -> "correct" only above it
 # Also compares every fitter (brms, stan, bayesflow_v1, bayesflow_v2) against brms.
 source(file.path(dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))), "common.R"))
 usage <- "09_decision.R --out DIR --config FILE [--primary brms]"
@@ -18,14 +22,27 @@ cat("posteriors found from:", paste(models, collapse = ", "), "\n")
 if (!a$primary %in% models) stop("primary model ", a$primary, " has no effects file")
 prim <- eff[eff$model == a$primary, ]
 
-# replicate noise
+# replicate noise. Technical markers (layer A): SD across the tubes of the same sample (patient, day,
+# visit), the peptide being irrelevant to them. Counts (layers B and BG): the tube-level residual SD of
+# the lme4 fit (observation-level term, after patient, week, pool and the technical terms), because
+# tubes of one sample carry different patient-specific pools and so are not replicates; the
+# same-sample empirical-logit SD is the fallback when step 6c has not run.
 # empirical logit with a half-count continuity correction: neg gates often hold 0 events, and a
 # clipped logit of 0 percent (about -14) would swamp the replicate SD with the clipping constant
 elogit <- function(k, n) qlogis((k + 0.5) / (n + 1))
 rep_by <- function(d, value) do.call(rbind, lapply(split(d, d$response), function(x) data.frame(
-  response = x$response[1], replicate_sd = replicate_sd(value(x), x$patient_day), stringsAsFactors = FALSE)))
+  response = x$response[1], replicate_sd = replicate_sd(value(x), same_sample(x)), stringsAsFactors = FALSE)))
+lme_path <- file.path(a$out, "lme4_variance_components.csv")
+lme_vc <- if (file.exists(lme_path)) read.csv(lme_path, stringsAsFactors = FALSE) else NULL
+resid_sd <- function(layer, resp) {
+  if (is.null(lme_vc)) return(NA)
+  v <- lme_vc$var_resid[lme_vc$layer == layer & lme_vc$response == resp]
+  if (length(v) && is.finite(v[1])) sqrt(v[1]) else NA
+}
 rep_a <- layer_a_replicate_sd(read_layer_a(a$out, cfg, tt))   # NA when step 4 ran on negs only
-fb <- read_layer_b(a$out)
+fb <- read_layer_b(a$out, cfg = cfg)
+day_col <- design_day_term(cfg)
+tube_level <- function(df, term) as.character(df[[if (term == "day") day_col else term]])
 rep_b <- rep_by(fb, function(x) elogit(x$count, x$parent_count))
 # layer BG: negs of the same patient-day (several exist where two visits were acquired together)
 fq <- read.csv(file.path(a$out, "gated_frequencies.csv"), stringsAsFactors = FALSE)
@@ -45,6 +62,7 @@ sigma_fallback <- function(layer, resp) {
 lookup <- function(tab, resp) { rs <- if (is.null(tab)) numeric(0) else tab$replicate_sd[tab$response == resp]; if (length(rs)) rs[1] else NA }
 
 # decisions
+pos <- cfg$positivity
 rows <- list()
 prim_idx <- split(seq_len(nrow(prim)), paste(prim$layer, prim$response, prim$term, prim$level, sep = "|"))
 for (key in names(prim_idx)) {
@@ -53,42 +71,52 @@ for (key in names(prim_idx)) {
   db <- fb[fb$response == resp, ]
   if (layer == "A") {
     mk <- sub(":.*$", "", resp); st <- sub("^.*:", "", resp)
-    rs <- rep_a$replicate_sd[rep_a$marker == mk & rep_a$statistic == st]
-    if (!length(rs) || is.na(rs)) rs <- sigma_fallback("A", resp)
-    flips <- NA
+    rs <- rep_a$replicate_sd[rep_a$marker == mk & rep_a$statistic == st]; src <- "same-sample tubes"
+    if (!length(rs) || is.na(rs)) { rs <- sigma_fallback("A", resp); src <- "brms residual" }
+    flips <- NA; counts <- FALSE
   } else if (layer == "BG" && sub(":.*$", "", resp) %in% names(cfg$parent_populations)) {   # neg counts
-    rs <- lookup(rep_bg_count, resp)
+    rs <- resid_sd("BG", resp); src <- "lme4 tube residual"
+    if (is.na(rs)) { rs <- lookup(rep_bg_count, resp); src <- "same-sample negs" }
     # stimulated rows whose matched neg sits on the affected day / instrument
-    which_neg <- if (term == "instrument") db$neg_instrument %in% lev else db$neg_acq_day %in% lev
-    flips <- count_background_flips(db, mean(d$value), which_neg, cfg$positivity$min_subtracted_pct, cfg$positivity$min_fold_over_neg)
+    which_neg <- matched_neg_level(db, term, tt) %in% lev
+    flips <- flip_summary(d$value, function(e) count_background_flips(db, e, which_neg, pos$min_subtracted_pct, pos$min_fold_over_neg),
+                          function() counting_noise_flips(db, which_neg, pos$min_subtracted_pct, pos$min_fold_over_neg))
+    counts <- TRUE
   } else if (layer == "BG") {   # neg cytokine median intensity
-    rs <- lookup(rep_bg_int, resp)
-    if (is.na(rs)) rs <- sigma_fallback("BG", resp)
-    flips <- NA
+    rs <- lookup(rep_bg_int, resp); src <- "same-sample negs"
+    if (is.na(rs)) { rs <- sigma_fallback("BG", resp); src <- "brms residual" }
+    flips <- NA; counts <- FALSE
   } else {
-    rs <- lookup(rep_b, resp)
-    which <- if (term == "instrument") db$instrument == lev else db$acq_day == lev
-    flips <- count_positivity_flips(db, mean(d$value), which, cfg$positivity$min_subtracted_pct, cfg$positivity$min_fold_over_neg)
+    rs <- resid_sd("B", resp); src <- "lme4 tube residual"
+    if (is.na(rs)) { rs <- lookup(rep_b, resp); src <- "same-sample tubes" }
+    which <- tube_level(db, term) %in% lev
+    flips <- flip_summary(d$value, function(e) count_positivity_flips(db, e, which, pos$min_subtracted_pct, pos$min_fold_over_neg),
+                          function() counting_noise_flips(db, which, pos$min_subtracted_pct, pos$min_fold_over_neg))
+    counts <- TRUE
   }
-  dec <- drift_decision(d$value, rs, flips, cfg$replicate_noise_prob)
+  mg <- relevance_margin(cfg, counts, rs)
+  dec <- drift_decision(d$value, rs, flips, cfg$replicate_noise_prob, margin = mg$margin)
   sel <- if (layer == "BG") tt$is_neg else rep(TRUE, nrow(tt))
-  n_tubes <- if (term == "instrument") sum(sel & tt$instrument == lev) else sum(sel & tt$acq_day == lev)
-  rows[[length(rows) + 1L]] <- cbind(layer = layer, response = resp, term = term, level = lev, n_tubes = n_tubes, dec)
+  n_tubes <- sum(sel & tube_level(tt, term) %in% lev)
+  rows[[length(rows) + 1L]] <- cbind(layer = layer, response = resp, term = term, level = lev, n_tubes = n_tubes, dec,
+                                     noise_source = src, margin_source = mg$source)
 }
 decisions <- do.call(rbind, rows)
 decisions <- decisions[order(decisions$layer, decisions$term, -abs(decisions$effect_mean)), ]
 write_table(decisions, file.path(a$out, "decisions.csv"))
 
 # headline
-cat("\n=== Instrument contrast ===\n")
-print(decisions[decisions$term == "instrument", c("layer", "response", "effect_mean", "ci_low", "ci_high", "p_exceeds_noise", "positivity_flips", "verdict")], row.names = FALSE)
-cat("\n=== Days detected above replicate noise ===\n")
+cat("\n=== Verdicts per layer and term (rule 1: three states against the relevance margin) ===\n")
+print(table(paste(decisions$layer, decisions$term), sub(",.*$", "", decisions$verdict)))
+cat("\n=== Technical contrasts (instrument and other technical factors) ===\n")
+print(decisions[decisions$term != "day", c("layer", "response", "term", "level", "effect_mean", "ci_low", "ci_high", "p_exceeds_noise", "positivity_flips", "verdict")], row.names = FALSE)
+cat("\n=== Days detected above the relevance margin ===\n")
 dd <- decisions[decisions$term == "day" & grepl("^detected", decisions$verdict), ]
 if (nrow(dd)) print(dd[, c("layer", "response", "level", "n_tubes", "effect_mean", "positivity_flips", "verdict")], row.names = FALSE) else cat("none\n")
 cat("\n=== Background (neg) shifts ===\n")
-bg <- decisions[decisions$layer == "BG" & (decisions$term == "instrument" | grepl("^detected", decisions$verdict)), ]
+bg <- decisions[decisions$layer == "BG" & (decisions$term != "day" | grepl("^detected", decisions$verdict)), ]
 if (nrow(bg)) { print(bg[, c("response", "term", "level", "n_tubes", "effect_mean", "p_exceeds_noise", "positivity_flips", "verdict")], row.names = FALSE)
-} else cat(if (any(decisions$layer == "BG")) "no background effect above replicate noise\n" else "no layer BG effects (step 6 background fits not run)\n")
+} else cat(if (any(decisions$layer == "BG")) "no background effect above the relevance margin\n" else "no layer BG effects (step 6 background fits not run)\n")
 
 # control matching: how the negs were matched, and the stimulated rows that needed a fallback
 if ("neg_match" %in% names(fq)) {
@@ -100,26 +128,32 @@ if ("neg_match" %in% names(fq)) {
   write_table(rbind(cnt, fbk[, names(cnt)]), file.path(a$out, "controls_summary.csv"))
 }
 
-# gate drift diagnostic (rank 3): do CD4/CD8 gate bounds move with day or instrument?
+# gate drift diagnostic (rank 3): do the CD4/CD8 gates and the cytokine gates move with day or instrument?
+# One row per parent and gate, on the gate's own dimension (`gate_marker`; files written before
+# 2026-10-13 carry parent gates only, whose own dimension is the parent's marker: the CD4+ gate on CD4).
 gb_path <- file.path(a$out, "gate_bounds.csv")
 if (file.exists(gb_path) && file.size(gb_path) > 5) {
-  gb <- merge(read.csv(gb_path), tt[, c("filename", "patient", "acq_day", "instrument")], by = "filename")
-  # a rectangle gate has one finite side per dimension (CD4+ is "above x", CD8+ "above y"),
-  # so use whichever bound is finite as the gate position
+  gb <- merge(read.csv(gb_path, stringsAsFactors = FALSE), tt[, c("filename", "patient", "acq_day", "instrument")], by = "filename")
+  if (!"gate" %in% names(gb)) { gb$gate <- gb$parent; gb$gate_marker <- gb$parent }
+  gb <- gb[!is.na(gb$marker) & !is.na(gb$gate_marker) & gb$marker == gb$gate_marker, ]
+  # a rectangle gate has one finite side per dimension (CD4+ is "above x"), so use whichever bound is finite
   gb$position <- ifelse(is.na(gb$lower), gb$upper, gb$lower)
-  gb <- gb[!is.na(gb$position) & !is.na(gb$marker), ]
-  gd <- do.call(rbind, lapply(split(gb, list(gb$parent, gb$marker), drop = TRUE), function(g) {
+  gb <- gb[!is.na(gb$position), ]
+  gd <- do.call(rbind, lapply(split(gb, list(gb$parent, gb$gate_marker), drop = TRUE), function(g) {
     if (nrow(g) < 6) return(NULL)
     g$patient <- factor(g$patient); two <- length(unique(g$instrument)) > 1
+    if (two) g$instrument <- relevel(factor(g$instrument), ref = cfg$reference_instrument)
     m <- if (two) lm(position ~ instrument + patient, data = g) else lm(position ~ patient, data = g)
     co <- summary(m)$coefficients; ic <- grep("^instrument", rownames(co))
-    data.frame(parent = g$parent[1], marker = g$marker[1], n = nrow(g),
-               instrument_shift_of_gate = if (length(ic)) co[ic, 1] else NA,
-               p = if (length(ic)) co[ic, 4] else NA,
+    data.frame(parent = g$parent[1], gate = g$gate_marker[1], kind = if (g$gate_marker[1] == g$parent[1]) "parent" else "cytokine",
+               n = nrow(g), instrument_shift_of_gate = if (length(ic)) co[ic[1], 1] else NA,
+               p = if (length(ic)) co[ic[1], 4] else NA,
                sd_gate_across_days = sd(tapply(g$position, g$acq_day, mean)),
                sd_gate_within_day = sqrt(mean(tapply(g$position, g$acq_day, var), na.rm = TRUE)))
   }))
   write_table(gd, file.path(a$out, "gate_drift.csv"))
+  cat("\n=== Gate positions (arcsinh): shift on the non-reference instrument and day-to-day movement ===\n")
+  print(gd, digits = 3, row.names = FALSE)
 }
 
 # fitter agreement

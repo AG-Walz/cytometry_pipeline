@@ -16,7 +16,7 @@ tt <- read.csv(file.path(a$out, "tubes.csv"), stringsAsFactors = FALSE)
 check_design(cfg, tt)
 ref <- cfg$reference_instrument
 layers <- if (a$layer == "AB") c("A", "B") else trimws(strsplit(a$layer, ",")[[1]])   # "AB" kept for old calls
-unit <- cfg$design$unit; day_term <- setdiff(unlist(cfg$design$technical), "instrument")[1]
+unit <- cfg$design$unit; day_term <- design_day_term(cfg)
 eff <- list(); covs <- list(); fits_summary <- list()
 save_fit <- function(fit, layer, response)
   saveRDS(fit, file.path(ensure_dir(file.path(a$out, "fits_brms")), paste0(layer, "_", gsub("[^A-Za-z0-9]", "_", response), ".rds")))
@@ -26,16 +26,17 @@ gauss_priors <- c(brms::prior(normal(0, 1), class = "b"), brms::prior(normal(0, 
 count_priors <- c(brms::prior(normal(-5, 2.5), class = "Intercept"), brms::prior(normal(0, 1), class = "b"),
                   brms::prior(normal(0, 1), class = "sd"))
 
-# Instrument contrasts (every non-reference level) and day effects, plus the protected covariates,
+# Technical contrasts (every non-reference instrument, operator, ... level) and day effects, plus the protected covariates,
 # all multiplied by `scale` to undo a standardised response.
 extract <- function(fit, layer, response, frame, class, scale = 1) {
   dr <- as.data.frame(fit)
   ft <- fixed_terms_table(frame, design_fixed_vars(cfg, class)); ft$coef <- paste0("b_", ft$coef)
-  fx <- split_fixed_draws(dr[, intersect(ft$coef, names(dr)), drop = FALSE], ft)
+  fx <- split_fixed_draws(dr[, intersect(ft$coef, names(dr)), drop = FALSE], ft, design_technical_factors(cfg))
   day_cols <- grep(sprintf("^r_%s\\[", day_term), names(dr), value = TRUE)
   days <- as.matrix(dr[, day_cols, drop = FALSE])
   colnames(days) <- sub(sprintf("^r_%s\\[(.*),Intercept\\]$", day_term), "\\1", day_cols)
-  e <- effects_long("brms", layer, response, fx$instrument * scale, days * scale)
+  e <- effects_long("brms", layer, response, fx$instrument * scale, days * scale,
+                    technical_draws = lapply(fx$technical, function(m) m * scale))
   cv <- covariates_long("brms", layer, response, lapply(fx$covariates, function(m) m * scale))
   list(effects = e, covariates = cv)
 }
@@ -59,7 +60,7 @@ fit_counts <- function(d, class, iter) {
 }
 
 if ("A" %in% layers) {
-  fa <- read_layer_a(a$out, cfg, tt, ref); fa <- fa[fa$is_neg, ]
+  fa <- layer_a_rows(read_layer_a(a$out, cfg, tt, ref), cfg)
   for (key in unique(paste(fa$marker, fa$statistic, sep = ":"))) {
     d <- fa[paste(fa$marker, fa$statistic, sep = ":") == key, ]
     cat("\n[A]", key, "n =", nrow(d), "\n")
@@ -97,7 +98,12 @@ for (ly in unique(vapply(eff, function(e) e$layer[1], character(1))))
               file.path(a$out, sprintf("effects_brms_%s.csv", ly)))
 # summary tables hold all layers: rows of the layers fitted now replace the old ones
 merge_layers <- function(new, path) {
-  if (file.exists(path)) { old <- read.csv(path, stringsAsFactors = FALSE); old <- old[!old$layer %in% new$layer, ]; new <- rbind(old, new) }
+  if (file.exists(path)) {
+    old <- read.csv(path, stringsAsFactors = FALSE); old <- old[!old$layer %in% new$layer, ]
+    for (cn in setdiff(names(new), names(old))) old[[cn]] <- rep(NA, nrow(old))   # columns added later (tau_visit)
+    for (cn in setdiff(names(old), names(new))) new[[cn]] <- rep(NA, nrow(new))
+    new <- rbind(old, new[, names(old)])
+  }
   write_table(new, path)
 }
 merge_layers(do.call(rbind, fits_summary), file.path(a$out, "fits_brms_summary.csv"))

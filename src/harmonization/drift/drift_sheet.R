@@ -5,7 +5,8 @@
 # one column per protected covariate), so nothing downstream knows about the sheet.
 
 #' Fixed sheet columns, in file order. Any number of `group_*` columns (protected
-#' biological covariates) may follow `control_for`.
+#' biological covariates, kept apart from drift) and `tech_*` columns (technical
+#' factors such as the operator, tested as drift) may follow `control_for`.
 SHEET_COLUMNS <- c("filename", "acq_date", "instrument", "n_events", "software",
                    "subject", "visit", "weeks_since_first_vaccination", "stimulation",
                    "control_for", "exclude", "note")
@@ -19,6 +20,8 @@ CONTROL_FOR_KEYS <- list("subject+visit" = c("patient", "week"),
                          "subject" = "patient")
 
 sheet_group_names <- function(sheet) sub("^group_", "", grep("^group_", names(sheet), value = TRUE))
+sheet_tech_names <- function(sheet) sub("^tech_", "", grep("^tech_", names(sheet), value = TRUE))
+SHEET_TECH_UNKNOWN <- "unknown"
 
 #' Pre-filled sheet for every .fcs under `fcs_dir`: technical columns from the FCS
 #' header, biological columns guessed from the file names when `cfg$tubes$filename_regex`
@@ -55,7 +58,8 @@ init_sample_sheet <- function(fcs_dir, cfg = list()) {
 
 #' Read and validate a sample sheet; return the internal table used by
 #' build_tube_table(): filename, patient, visit, week, cocktail, is_neg, control_for,
-#' one column per group_* (prefix stripped), exclude, note. The header-derived columns
+#' one column per group_* and tech_* (prefix stripped; a blank tech_* cell becomes the
+#' level "unknown"), exclude, note. The header-derived columns
 #' are kept in attr(, "header") for check_sheet_against_files() only.
 read_sample_sheet <- function(path) {
   if (!file.exists(path)) stop("sample sheet not found: ", path, call. = FALSE)
@@ -103,10 +107,21 @@ read_sample_sheet <- function(path) {
   out$cocktail[!nzchar(raw$stimulation)] <- NA_character_
   groups <- grep("^group_", names(raw), value = TRUE)
   for (g in groups) out[[sub("^group_", "", g)]] <- as_value(raw[[g]])
+  techs <- grep("^tech_", names(raw), value = TRUE)
+  if (length(clash <- intersect(sub("^tech_", "", techs), c(names(out), SHEET_HEADER_COLUMNS, "acq_day"))))
+    stop("tech_* column(s) clash with a built-in column: ", paste(clash, collapse = ", "), call. = FALSE)
+  for (g in techs) {
+    v <- raw[[g]]
+    if (any(blank <- active & !nzchar(v)))
+      warning("`", g, "` is blank for ", sum(blank), " row(s); they form the level '", SHEET_TECH_UNKNOWN, "'", call. = FALSE)
+    v[!nzchar(v)] <- SHEET_TECH_UNKNOWN
+    out[[sub("^tech_", "", g)]] <- v
+  }
   out$exclude <- exclude
   out$note <- as_value(raw$note)
   attr(out, "header") <- raw[, intersect(c("filename", SHEET_HEADER_COLUMNS), names(raw)), drop = FALSE]
   attr(out, "groups") <- sub("^group_", "", groups)
+  attr(out, "technical") <- sub("^tech_", "", techs)
   out
 }
 
@@ -129,11 +144,14 @@ check_sheet_against_files <- function(sheet, tt) {
 }
 
 #' The `design` block implied by a sheet (either form): the group_* columns are the
-#' protected fixed covariates, everything else is the standard layout.
+#' protected fixed covariates, the tech_* columns extra technical factors after
+#' acq_day and instrument, everything else is the standard layout.
 sheet_design <- function(sheet) {
   groups <- attr(sheet, "groups")
   if (is.null(groups)) groups <- sheet_group_names(sheet)
-  list(unit = "patient", technical = c("acq_day", "instrument"), protected_fixed = groups,
+  techs <- attr(sheet, "technical")
+  if (is.null(techs)) techs <- sheet_tech_names(sheet)
+  list(unit = "patient", technical = c("acq_day", "instrument", techs), protected_fixed = groups,
        time = "week", stimulation = "cocktail")
 }
 
@@ -150,12 +168,13 @@ control_match_keys <- function(control_for) {
   CONTROL_FOR_KEYS[[control_for]]
 }
 
-#' Fill the `{{cohort}}`, `{{protected_fixed}}` and `{{match_keys}}` placeholders of
+#' Fill the `{{cohort}}`, `{{technical}}`, `{{protected_fixed}}` and `{{match_keys}}` placeholders of
 #' `template_path` and write the cohort config to `out_path`.
 write_cohort_config <- function(template_path, out_path, cohort, design, controls_match_keys) {
   txt <- readLines(template_path, warn = FALSE)
   flow <- function(x) paste0("[", paste(x, collapse = ", "), "]")
   txt <- gsub("{{cohort}}", cohort, txt, fixed = TRUE)
+  txt <- gsub("{{technical}}", flow(unlist(design$technical)), txt, fixed = TRUE)
   txt <- gsub("{{protected_fixed}}", flow(unlist(design$protected_fixed)), txt, fixed = TRUE)
   txt <- gsub("{{match_keys}}", flow(controls_match_keys), txt, fixed = TRUE)
   left <- grep("\\{\\{[a-z_]+\\}\\}", txt, value = TRUE)

@@ -20,3 +20,4 @@ dependencies:
   - bioconductor-flowcore
   - bioconductor-peacoqc
   - bioconductor-flowai
+  - bioconductor-compass

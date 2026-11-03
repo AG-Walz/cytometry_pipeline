@@ -44,8 +44,8 @@ canon_gate <- function(g) {
 if (!is.null(fq)) { fq$gate_flowjo <- fq$gate; fq$gate <- canon_gate(fq$gate) }
 if (is.null(fq) || !nrow(fq)) stop("no cytokine gates found under ", paste(cfg$parent_populations, collapse = "/"),
                                    "; inspect all_gate_counts.csv and adjust config parent_populations / cytokine_gate_regex")
-fq <- merge(fq, tt[, c("filename", "patient", "prior_vacc", "week", "cocktail", "is_neg", "acq_day",
-                       "instrument", "patient_day")], by = "filename")
+fq <- merge(fq, tt[, unique(c("filename", "patient", "week", "cocktail", "is_neg", "acq_day",
+                              "instrument", "patient_day", design_columns(cfg)))], by = "filename")
 fq$pct <- 100 * fq$count / fq$parent_count
 
 # matched neg per parent and gate: exact on the config match_keys, then the fallbacks (neg_match)

@@ -28,6 +28,18 @@ cat(sprintf("  %d subject(s) span more than one day: %s\n", sum(br$day_bridge),
 cat(sprintf("  %d subject(s) span more than one instrument: %s\n", sum(br$instr_bridge),
             if (any(br$instr_bridge)) paste(br$patient[br$instr_bridge], collapse = ", ") else "none"))
 
+tf <- technical_factor_overlap(tt, cfg)
+if (!is.null(tf)) {
+  cat("\nTechnical factors against acquisition days (shared day = the day also carries another level)\n")
+  for (i in seq_len(nrow(tf)))
+    cat(sprintf("  %-12s %-16s %4d tubes on %2d day(s), %d shared, %2d subject(s)\n", tf$factor[i], tf$level[i],
+                tf$n_tubes[i], tf$n_days[i], tf$n_shared_days[i], tf$n_subjects[i]))
+  for (f in unique(tf$factor))
+    cat(sprintf("  %s: %d subject(s) measured at more than one level%s\n", f, tf$n_subjects_multi_level[tf$factor == f][1],
+                if (all(tf$n_shared_days[tf$factor == f] == 0)) "; no day carries two levels, so its contrast rests on day-to-day differences" else ""))
+  write_table(tf, file.path(a$out, "technical_factors.csv"))
+}
+
 # --- 2. confounding index --------------------------------------------------------------------
 ci <- confounding_index(tt)
 cat("\nConfounding index (within-subject share of week variance explained by acq_day)\n")

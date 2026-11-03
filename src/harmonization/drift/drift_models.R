@@ -7,20 +7,63 @@
 # in step 9.
 
 #' Design block used when a config predates the `design` field: the MTB layout
-#' without protected covariates or a time slope.
+#' without protected covariates or a time slope. `time_df` adds that many non-linear time
+#' columns (natural spline on log(1 + week)) next to the linear slope; 1 or less keeps the line
+#' only. Default 5: on a synthetic cohort with the MTB design, a response peak around week 12
+#' and no day drift, the straight line reported day variance of 0.13 to 0.94 logit^2 and an
+#' inflated operator effect, the log-time spline 0.002 to 0.018 (2026-10-12, 9 fits each).
 default_design <- function() {
   list(unit = "patient", technical = c("acq_day", "instrument"),
-       protected_fixed = character(0), time = NULL, stimulation = "cocktail")
+       protected_fixed = character(0), time = NULL, stimulation = "cocktail", time_df = 5, visit = NULL)
 }
+
+#' TRUE when the design names the columns of one sample (`design$visit`, e.g. [patient, week]).
+#' The frame then carries a `visit` factor, and every model whose tubes repeat within a visit
+#' (layer B; layer A on all tubes; the variance partition) gets a `(1 | visit)` intercept. Without it,
+#' 2026-10-13 on the MTB cohort: whatever is specific to one sample (thaw, handling, deviation from the
+#' smooth time curve) was booked as acquisition day, because 13 of 23 days hold a single patient, and
+#' the tube-level residual used as rule 1 noise was 2 to 5 times too large
+#' (docs/plans/drift_methods_review.md, section 2.1).
+has_visit <- function(cfg) length(unlist(cfg$design$visit)) > 0L
+
+#' Which tubes enter the technical class (layer A): "neg" (default, one tube per visit) or "all"
+#' (stimulated tubes too, with a `stimulated` fixed term and the visit intercept; about six times
+#' more tubes for the day effects; review section 3.2).
+technical_tubes <- function(cfg) if (identical(cfg$technical_tubes, "all")) "all" else "neg"
+
+#' The layer A rows a fitter uses, per technical_tubes().
+layer_a_rows <- function(fa, cfg) {
+  if (technical_tubes(cfg) == "neg") return(fa[fa$is_neg, ])
+  if (all(fa$is_neg %in% TRUE))
+    stop("technical_tubes: all needs neg_summaries.csv for every tube (step 4 with --all_tubes)", call. = FALSE)
+  fa
+}
+
+#' Names of the non-linear time columns design_frame() adds (character(0) when
+#' the design has no time column or time_df <= 1).
+time_nl_terms <- function(cfg) {
+  ds <- cfg$design; k <- if (is.null(ds$time_df)) 1L else as.integer(ds$time_df)
+  if (is.null(ds$time) || k <= 1L) character(0) else paste0("week_nl", seq_len(k))
+}
+
+#' The acquisition-day term: the first technical term that is not `instrument`.
+#' It is the random intercept whose levels are the day effects. NA when there is none.
+design_day_term <- function(cfg) setdiff(unlist(cfg$design$technical), "instrument")[1]
+
+#' The other technical terms (instrument and any tech_* column of the sample sheet,
+#' e.g. operator): fixed factors, each contrasted against its reference level and
+#' judged by the decision rule like the instrument.
+design_technical_factors <- function(cfg) setdiff(unlist(cfg$design$technical), design_day_term(cfg))
 
 #' Design columns of `cfg` (unlisted, in a fixed order) that a frame must carry.
 design_columns <- function(cfg) {
   ds <- cfg$design
-  unique(c(ds$unit, unlist(ds$technical), unlist(ds$protected_fixed), ds$time, ds$stimulation))
+  unique(c(ds$unit, unlist(ds$technical), unlist(ds$protected_fixed), ds$time, ds$stimulation, unlist(ds$visit)))
 }
 
 #' Turn the design columns of `df` into model-ready factors: unit, the technical
-#' terms (instrument relevelled to `ref` when given), every protected covariate,
+#' terms (instrument relevelled to `ref` when given, any other technical factor to
+#' `design$reference_levels[[name]]` when given), every protected covariate,
 #' and the stimulation term when present. Adds `week_c`, the time column centred
 #' on the frame mean and in years, when the design names a time column.
 design_frame <- function(df, cfg, ref = NULL) {
@@ -33,7 +76,25 @@ design_frame <- function(df, cfg, ref = NULL) {
   }
   if (!is.null(ref) && "instrument" %in% names(df) && ref %in% levels(df$instrument))
     df$instrument <- relevel(df$instrument, ref = ref)
+  for (v in intersect(names(ds$reference_levels), setdiff(names(df), "instrument")))
+    if (ds$reference_levels[[v]] %in% levels(df[[v]])) df[[v]] <- relevel(df[[v]], ref = ds$reference_levels[[v]])
+  if (has_visit(cfg) && all(unlist(ds$visit) %in% names(df)))
+    df$visit <- factor(do.call(paste, c(lapply(unlist(ds$visit), function(v) as.character(df[[v]])), sep = "|")))
+  if ("is_neg" %in% names(df)) df$stimulated <- factor(ifelse(df$is_neg %in% TRUE, "no", "yes"), c("no", "yes"))
   if (!is.null(ds$time)) df$week_c <- (df[[ds$time]] - mean(df[[ds$time]])) / 52   # keeps slopes O(1)
+  nl <- time_nl_terms(cfg)
+  if (length(nl)) {
+    # natural spline of log(1 + week), made orthogonal to the intercept and the line, standardised:
+    # the curvature (rise after a boost, waning) that a straight line would push into the day term.
+    # Log time because visits crowd the first weeks and thin out over years.
+    w <- df[[ds$time]]; ok <- is.finite(w)
+    for (j in seq_along(nl)) df[[nl[j]]] <- 0
+    if (length(unique(w[ok])) > length(nl) + 1L) {
+      r <- qr.resid(qr(cbind(1, df$week_c[ok])), splines::ns(log1p(pmax(w[ok], 0)), df = length(nl)))
+      for (j in seq_along(nl)) if (stats::var(r[, j]) > 1e-10) { df[[nl[j]]][ok] <- as.numeric(scale(r[, j])) }
+      df[[nl[1]]][!ok] <- NA_real_
+    }
+  }
   df
 }
 
@@ -42,9 +103,9 @@ design_frame <- function(df, cfg, ref = NULL) {
 #'   background_counts    (layer BG): + protected_fixed, (1 + week_c | unit); beta-binomial counts
 #'   background_intensity (layer BG): + protected_fixed + week_c fixed; gaussian
 #'   endpoint             (layer B):  as background_counts + (1 | stimulation)
-#' `instrument` in the technical list is the fixed factor (K-1 contrasts against
-#' the reference level of the frame), every other technical term a random
-#' intercept. lme4 count models get the cbind() response and an
+#' The day term (design_day_term()) is a random intercept; every other technical
+#' term (instrument, operator, ...) a fixed factor with K-1 contrasts against the
+#' reference level of the frame. lme4 count models get the cbind() response and an
 #' observation-level (1 | filename) term for overdispersion.
 design_formula <- function(cfg, class = c("technical", "background_counts", "background_intensity", "endpoint"),
                            engine = c("brms", "lme4"), response_lhs = NULL) {
@@ -53,21 +114,31 @@ design_formula <- function(cfg, class = c("technical", "background_counts", "bac
   counts <- class %in% c("background_counts", "endpoint")
   if (is.null(response_lhs))
     response_lhs <- if (!counts) "y" else if (engine == "brms") "count | trials(parent_count)" else "cbind(count, parent_count - count)"
-  tech <- unlist(ds$technical)
-  fixed <- c("1", intersect("instrument", tech))
+  fixed <- c("1", design_technical_factors(cfg))
   unit_re <- sprintf("(1 | %s)", ds$unit)
   if (class != "technical") {
     fixed <- c(fixed, unlist(ds$protected_fixed))
     if (!is.null(ds$time)) {
-      # population week slope as a fixed term; the count classes also get a per-unit slope around it
-      fixed <- c(fixed, "week_c")
+      # population week slope as a fixed term (plus its spline curvature); the count classes also
+      # get a per-unit slope around it
+      fixed <- c(fixed, "week_c", time_nl_terms(cfg))
       if (counts) unit_re <- sprintf("(1 + week_c | %s)", ds$unit)
     }
   }
-  terms <- c(fixed, unit_re, sprintf("(1 | %s)", setdiff(tech, "instrument")))
+  if (class == "technical" && technical_tubes(cfg) == "all") fixed <- c(fixed, "stimulated")
+  day <- design_day_term(cfg)
+  terms <- c(fixed, unit_re, if (!is.na(day)) sprintf("(1 | %s)", day))
   if (class == "endpoint" && !is.null(ds$stimulation)) terms <- c(terms, sprintf("(1 | %s)", ds$stimulation))
+  if (visit_term(cfg, class)) terms <- c(terms, "(1 | visit)")
   if (counts && engine == "lme4") terms <- c(terms, "(1 | filename)")
   as.formula(paste(response_lhs, "~", paste(terms, collapse = " + ")), env = globalenv())
+}
+
+#' TRUE when the models of `class` carry the `(1 | visit)` intercept: a visit is declared and the
+#' class has several tubes per visit (endpoint; technical on all tubes). Background classes use the
+#' one neg per visit, where a visit term would be the tube residual under another name.
+visit_term <- function(cfg, class) {
+  has_visit(cfg) && (class == "endpoint" || (class == "technical" && technical_tubes(cfg) == "all"))
 }
 
 #' Population-level coefficient names of the fixed design terms `vars` in
@@ -86,14 +157,15 @@ fixed_terms_table <- function(frame, vars) {
 }
 
 #' Fixed design terms of one class, as they appear in the model formula:
-#' the instrument factor, the protected covariates and week_c. Order matches
+#' the technical factors, the protected covariates and week_c. Order matches
 #' design_formula().
 design_fixed_vars <- function(cfg, class) {
   ds <- cfg$design
-  vars <- intersect("instrument", unlist(ds$technical))
+  vars <- design_technical_factors(cfg)
+  if (class == "technical" && technical_tubes(cfg) == "all") vars <- c(vars, "stimulated")
   if (class != "technical") {
     vars <- c(vars, unlist(ds$protected_fixed))
-    if (!is.null(ds$time)) vars <- c(vars, "week_c")
+    if (!is.null(ds$time)) vars <- c(vars, "week_c", time_nl_terms(cfg))
   }
   vars
 }
@@ -132,9 +204,23 @@ frame_cfg <- function(cfg, tubes) {
 
 #' Join the tube metadata (identity, biology and design columns) onto `long`.
 merge_tubes <- function(long, tubes, cfg = NULL) {
-  cols <- unique(c("filename", "patient", "prior_vacc", "week", "is_neg", "acq_day", "instrument",
+  cols <- unique(c("filename", "patient", "week", "is_neg", "acq_day", "instrument",
                    "patient_day", "cocktail", if (!is.null(cfg$design)) design_columns(cfg)))
   merge(long, tubes[, intersect(cols, names(tubes))], by = "filename")
+}
+
+#' Add the design columns of `cfg` that `df` lacks from tubes.csv in `out` (or from the
+#' tube table `tt` when given), by filename (a step 5 table written before a technical
+#' factor was added lacks it).
+with_tube_columns <- function(df, out, cfg, tt = NULL) {
+  miss <- setdiff(design_columns(cfg), names(df))
+  if (!length(miss)) return(df)
+  if (is.null(tt)) {
+    tp <- file.path(out, "tubes.csv")
+    if (!file.exists(tp)) return(df)
+    tt <- read.csv(tp, stringsAsFactors = FALSE)
+  }
+  merge(df, tt[, c("filename", intersect(miss, names(tt))), drop = FALSE], by = "filename")
 }
 
 #' Layer B frame: cocktail tubes only, one row per tube x parent x gate.
@@ -152,15 +238,15 @@ read_layer_a <- function(out, cfg, tubes, ref = NULL) {
                 read.csv(file.path(out, "neg_emd.csv")), tubes, cfg$technical_markers, cfg, ref)
 }
 read_layer_b <- function(out, ref = NULL, cfg = NULL) {
-  layer_b_frame(read.csv(file.path(out, "gated_frequencies.csv")), cfg, ref)
+  layer_b_frame(with_tube_columns(read.csv(file.path(out, "gated_frequencies.csv")), out, cfg), cfg, ref)
 }
 
 #' Layer BG counts: cytokine-positive counts in the neg tubes, one row per
 #' neg tube x parent x gate (parent gate non-empty). Response key parent:gate.
 read_layer_bg_counts <- function(out, cfg, ref = NULL) {
-  fq <- read.csv(file.path(out, "gated_frequencies.csv"), stringsAsFactors = FALSE)
+  fq <- with_tube_columns(read.csv(file.path(out, "gated_frequencies.csv"), stringsAsFactors = FALSE), out, cfg)
   bg <- fq[fq$is_neg & !is.na(fq$parent_count) & fq$parent_count > 0, ]
-  cols <- unique(c("filename", "patient", "prior_vacc", "week", "acq_day", "instrument", "patient_day",
+  cols <- unique(c("filename", "patient", "week", "acq_day", "instrument", "patient_day",
                    "parent", "gate", "count", "parent_count", "pct", design_columns(cfg)))
   bg <- bg[, intersect(cols, names(bg))]
   bg$response <- paste(bg$parent, bg$gate, sep = ":")
@@ -180,16 +266,20 @@ read_layer_bg_intensity <- function(out, cfg, tubes, ref = NULL) {
   design_frame(fr, cfg, ref)
 }
 
-#' Replicate SD per marker x statistic from ALL tubes of the same patient-day
-#' (technical markers should not depend on the peptide). Needs step 4 run with
+#' Replicate SD per marker x statistic from ALL tubes of the same sample (patient,
+#' day and visit; technical markers should not depend on the peptide). Needs step 4 run with
 #' --all_tubes; with negs only, returns NA and step 9 falls back to the
 #' posterior residual SD.
 layer_a_replicate_sd <- function(frame_all_tubes) {
   sp <- split(frame_all_tubes, list(frame_all_tubes$marker, frame_all_tubes$statistic), drop = TRUE)
   do.call(rbind, lapply(sp, function(d) data.frame(
     marker = d$marker[1], statistic = d$statistic[1],
-    replicate_sd = replicate_sd(d$value, d$patient_day), stringsAsFactors = FALSE)))
+    replicate_sd = replicate_sd(d$value, same_sample(d)), stringsAsFactors = FALSE)))
 }
+
+#' Same-sample key: tubes of one patient, acquisition day and visit (week). On a day that
+#' carries several visits of a patient, patient_day alone would mix samples.
+same_sample <- function(d) if ("week" %in% names(d)) paste(d$patient_day, d$week) else d$patient_day
 
 #' Count positivity calls that change when an effect on the logit scale is
 #' removed from the tubes it applies to. `fb` is a layer B frame for ONE
@@ -208,11 +298,14 @@ count_positivity_flips <- function(fb, effect, which, min_subtracted_pct, min_fo
 
 #' Standard shape for posterior draws of the effects, shared by every fitter:
 #' data.frame(model, layer, response, term, level, draw, value)
-#' term is "instrument" (level = non-reference instrument) or "day" (level = acq_day).
+#' term is "instrument" (level = non-reference instrument), "day" (level = acq_day) or
+#' the name of another technical factor (level = its non-reference level).
 #' `instrument_draws` is a matrix or named list with one column per non-reference
 #' instrument (column names are the levels), or a single vector whose level is
-#' `instrument_level`.
-effects_long <- function(model, layer, response, instrument_draws, day_draws, instrument_level = NA) {
+#' `instrument_level`. `technical_draws` is a named list (term -> matrix with one
+#' column per non-reference level) for the other technical factors.
+effects_long <- function(model, layer, response, instrument_draws, day_draws, instrument_level = NA,
+                         technical_draws = list()) {
   if (is.list(instrument_draws) && !is.data.frame(instrument_draws)) instrument_draws <- do.call(cbind, instrument_draws)
   if (is.null(dim(instrument_draws))) {
     instrument_draws <- matrix(instrument_draws, ncol = 1L, dimnames = list(NULL, instrument_level))
@@ -222,6 +315,8 @@ effects_long <- function(model, layer, response, instrument_draws, day_draws, in
                                             stringsAsFactors = FALSE)
   out <- lapply(seq_len(ncol(instrument_draws)), function(j)
     one("instrument", if (is.null(colnames(instrument_draws))) NA else colnames(instrument_draws)[j], instrument_draws[, j]))
+  for (tm in names(technical_draws)) { m <- technical_draws[[tm]]
+    out <- c(out, lapply(seq_len(ncol(m)), function(j) one(tm, colnames(m)[j], m[, j]))) }
   out <- c(out, lapply(colnames(day_draws), function(d) one("day", d, day_draws[, d])))
   do.call(rbind, out)
 }
@@ -249,20 +344,22 @@ covariates_long <- function(model, layer, response, draws_by_covariate) {
 }
 
 #' Split a draws matrix whose columns are named by `ft$coef` (a fixed_terms_table)
-#' into the instrument matrix (columns = levels) and the covariate list that
+#' into the instrument matrix (columns = levels), the other `technical` factors
+#' (named list of such matrices, for effects_long()) and the covariate list that
 #' covariates_long() takes. Columns absent from `draws` are skipped.
-split_fixed_draws <- function(draws, ft) {
+split_fixed_draws <- function(draws, ft, technical = "instrument") {
   draws <- as.matrix(draws)
   ft <- ft[ft$coef %in% colnames(draws), ]
-  instr <- ft[ft$term == "instrument", ]
-  inst <- draws[, instr$coef, drop = FALSE]; colnames(inst) <- instr$level
+  by_term <- function(tm) { r <- ft[ft$term == tm, ]; m <- draws[, r$coef, drop = FALSE]; colnames(m) <- r$level; m }
+  inst <- by_term("instrument")
+  tech <- lapply(setNames(nm = setdiff(intersect(technical, ft$term), "instrument")), by_term)
   covs <- list()
-  for (tm in unique(ft$term[ft$term != "instrument"])) {
+  for (tm in unique(ft$term[!ft$term %in% c("instrument", technical)])) {
     r <- ft[ft$term == tm, ]
     m <- draws[, r$coef, drop = FALSE]; colnames(m) <- r$level
     covs[[tm]] <- if (all(is.na(r$level))) as.numeric(m) else m
   }
-  list(instrument = inst, covariates = covs)
+  list(instrument = inst, technical = tech, covariates = covs)
 }
 
 #' All effects_*.csv written by the step 6 fitters, or NULL when there are none.
@@ -282,7 +379,8 @@ lme_variance_row <- function(m, layer, response, n, resid_grp, unit = "patient",
   fe <- lme4::fixef(m); se <- sqrt(diag(as.matrix(vcov(m))))
   ic <- grep("^instrument", names(fe))
   data.frame(layer = layer, response = response, n = n,
-    var_patient = v[unit], var_day = v[day], var_resid = v[resid_grp],
+    var_patient = v[unit], var_day = v[day], var_visit = if ("visit" %in% names(v)) v[["visit"]] else NA_real_,
+    var_resid = v[resid_grp],
     icc_day = v[day] / sum(v), drift_to_biology = sqrt(v[day] / v[unit]),
     instrument_effect = if (length(ic)) fe[ic] else NA, instrument_se = if (length(ic)) se[ic] else NA,
     instrument_level = if (length(ic)) sub("^instrument", "", names(fe)[ic]) else NA,
@@ -301,9 +399,10 @@ n_divergent <- function(fit) {
 brms_fit_row <- function(fit, layer, response, n, scale = 1, unit = "patient", day = "acq_day") {
   vc <- brms::VarCorr(fit)
   s <- as.data.frame(vc[[day]]$sd); sp <- as.data.frame(vc[[unit]]$sd)
+  sv <- if (!is.null(vc[["visit"]])) as.data.frame(vc[["visit"]]$sd)$Estimate[1] * scale else NA_real_
   spec <- summary(fit)$spec_pars
   data.frame(layer = layer, response = response, n = n,
-    tau_day = s$Estimate * scale, tau_patient = sp$Estimate[1] * scale,
+    tau_day = s$Estimate * scale, tau_patient = sp$Estimate[1] * scale, tau_visit = sv,
     sigma = if ("sigma" %in% rownames(spec)) spec["sigma", "Estimate"] * scale else NA,
     max_rhat = max(brms::rhat(fit), na.rm = TRUE), n_divergent = n_divergent(fit),
     stringsAsFactors = FALSE)
