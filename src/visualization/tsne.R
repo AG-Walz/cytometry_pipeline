@@ -164,7 +164,10 @@ plot_tsne <- function(flow_frames, sample_names,
 #' @param expr_matrix Numeric matrix (rows = cells, cols = markers)
 #' @param sample_labels Character vector of sample labels (one per row)
 #' @param cluster_labels Optional integer/character vector of cluster assignments
-#' @param output_dir Output directory for plots
+#' @param condition_labels Optional character vector of condition labels (one
+#'   per row); adds a "by condition" plot, as the UMAP and diffusion map do
+#' @param output_dir Output directory for plots; NULL computes the coordinates
+#'   only (what run_dimred() passes when no plots are wanted)
 #' @param perplexity t-SNE perplexity parameter
 #' @param max_iter Maximum number of t-SNE iterations
 #' @param tsne_coords Optional pre-computed t-SNE coordinates (2-column matrix).
@@ -176,7 +179,8 @@ plot_tsne <- function(flow_frames, sample_names,
 #' @return List with tsne_coords, sample_labels, plots
 plot_tsne_from_matrix <- function(expr_matrix, sample_labels = NULL,
                                    cluster_labels = NULL,
-                                   output_dir,
+                                   condition_labels = NULL,
+                                   output_dir = NULL,
                                    perplexity = 30,
                                    max_iter = 1000,
                                    tsne_coords = NULL,
@@ -185,7 +189,8 @@ plot_tsne_from_matrix <- function(expr_matrix, sample_labels = NULL,
                                    seed = 42) {
   require(ggplot2)
   require(Rtsne)
-  make_outdir(output_dir)
+  draw <- !is.null(output_dir)
+  if (draw) make_outdir(output_dir)
 
   # Filter markers
   exclude_patterns <- c("^$", "Time", "FSC", "SSC", "index")
@@ -213,6 +218,11 @@ plot_tsne_from_matrix <- function(expr_matrix, sample_labels = NULL,
     sample_labels <- rep("all", nrow(expr_matrix))
   }
 
+  if (!draw) {
+    return(list(tsne_coords = tsne_coords, sample_labels = sample_labels,
+                plots = NULL))
+  }
+
   tsne_df <- data.frame(tSNE1 = tsne_coords[, 1], tSNE2 = tsne_coords[, 2],
                          sample = sample_labels)
 
@@ -236,6 +246,18 @@ plot_tsne_from_matrix <- function(expr_matrix, sample_labels = NULL,
                       width = plot_width, height = plot_height,
                       formats = output_formats)
     plots[["cluster"]] <- p_cluster
+  }
+
+  # Plot by condition if provided
+  if (!is.null(condition_labels)) {
+    tsne_df$condition <- as.factor(condition_labels)
+    p_condition <- ggplot(tsne_df, aes(x = tSNE1, y = tSNE2, color = condition)) +
+      geom_point(size = 0.3, alpha = 0.5) +
+      theme_minimal() + labs(title = "t-SNE by Condition")
+    save_plot_formats(p_condition, file.path(output_dir, "tsne_condition"),
+                      width = plot_width, height = plot_height,
+                      formats = output_formats)
+    plots[["condition"]] <- p_condition
   }
 
   # Plot per marker

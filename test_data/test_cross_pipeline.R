@@ -31,7 +31,8 @@ if (file.exists(conda_python)) {
 }
 
 old_wd <- getwd()
-setwd(file.path(base_dir, "pipelines"))
+# (src modules locate R_shared themselves via src/R_shared/paths.R; the
+# old setwd() into the removed pipelines/ folder is no longer needed)
 
 # Source shared utilities
 source(file.path(shared_dir, "io_utils.R"))
@@ -52,7 +53,17 @@ pass <- 0
 fail <- 0
 test_results <- list()
 
+# Leiden needs the R package `leiden` (and Python leidenalg); without it those
+# checks are skipped, not failed -- a missing optional package is not a bug.
+has_leiden <- requireNamespace("leiden", quietly = TRUE)
+if (!has_leiden) cat("Note: 'leiden' package not available — leiden tests will be skipped\n")
+
 run_test <- function(name, expr) {
+  if (!has_leiden && grepl("leiden", name, ignore.case = TRUE)) {
+    cat(sprintf("  [TEST] %s ... SKIP: package 'leiden' not installed\n", name))
+    if (exists("skip", inherits = TRUE)) skip <<- skip + 1
+    return(invisible(NA))
+  }
   cat(sprintf("  [TEST] %s ... ", name))
   result <- tryCatch({
     force(expr)
