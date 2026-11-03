@@ -436,7 +436,7 @@ plotted.
 
 | `--fit_subset` | Fitted on | Settings |
 |----------------|-----------|----------|
-| `random` *(default)* | `--umap_subsample` randomly chosen cells (`0` = every cell, the old behaviour) | `--umap_subsample` |
+| `random` *(default)* | `--umap_subsample` randomly chosen cells (default: 300,000 when the run has more, else every cell; `0` = every cell) | `--umap_subsample` |
 | `supercell` | the mean marker values of [SuperCellCyto](https://github.com/phipsonlab/SuperCellCyto) supercells: each sample's cells grouped into supercells of about `--supercell_gamma` similar cells (never across samples), so the fit set is about the cell count / gamma and every phenotype keeps a share in proportion to its cells | `--supercell_gamma` (default 20, above 1), `--supercell_k_knn` (default 5), `--supercell_max` (default 100000) |
 
 **Large cohorts.** Gamma is raised when the cohort would give more than
@@ -1002,7 +1002,7 @@ group: "1"                                          # quoted: keep it a string
 | `--min_dist` | `0.1`; `0.25` with `--layout gates` | UMAP `min_dist` |
 | `--metric` | `euclidean` | UMAP distance metric |
 | `--umap_init` | `auto` | Initial layout: `auto` (spectral below 300k fitted points, PCA above), `spectral`, `pca`, `random`. Spectral is the best start but single-threaded, and on millions of cells it is the whole run. The PCA start is scaled to a 0-10 range; unscaled, it does not converge on FlowJo values |
-| `--umap_subsample` | `0` | Fit the embedding on this many randomly chosen cells and project the rest onto it; `0` = fit on every cell. With `--layout gates`: the fit budget, each combination contributing at most this / (number of combinations) cells, and `0` means 100000 (see [Sampling and the balanced fit](#sampling-and-the-balanced-fit)). Ignored with `--fit_subset supercell` |
+| `--umap_subsample` | `-1` | Fit the embedding on this many randomly chosen cells and project the rest onto it; `0` = fit on every cell; `-1` = 300,000 when the run has more cells, else every cell (the fit then keeps the spectral start, see `--umap_init`). With `--layout gates`: the fit budget, each combination contributing at most this / (number of combinations) cells, and `0` or `-1` means 100000 (see [Sampling and the balanced fit](#sampling-and-the-balanced-fit)). Ignored with `--fit_subset supercell` |
 | `--background` | — | `column=level` of the background samples, e.g. `stimulation=unstimulated`; frequencies become sample minus background for cytokine responses (see [Background subtraction](#background-subtraction-and-an-existing-map)). Needs `--pair_by` |
 | `--pair_by` | — | Comma-separated metadata columns a sample shares with its background sample, e.g. `patient,visit` |
 | `--umap_model` | — | A saved `umap_model.uwot` (markers layout): nothing is fitted, every cell is projected onto that map |

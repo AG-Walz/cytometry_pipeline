@@ -567,7 +567,9 @@ def _fit_settings(state: dict) -> list:
                 "in-random-fit-cells", "Random cells to fit on",
                 state["random_fit_cells"], min=0, step=10000,
                 allowDecimal=False,
-                description="0 = fit on every cell (slow on millions)."),
+                description=("Runs with more cells than this are fitted on this "
+                             "many and the rest projected. 0 = fit on every "
+                             "cell (slow on millions).")),
         ),
         html.Div(
             id="fit-supercell-wrap",

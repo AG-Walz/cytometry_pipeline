@@ -1000,7 +1000,8 @@ distinct_palette <- function(n) {
 #   plot per level of, their level order ("col=a,b;col2=..."), and the
 #   reference level of each for the fold-change maps ("col=level;...").
 # @param fit_subset Markers layout: what UMAP is fitted on before every cell
-#   is projected. "random" (umap_subsample random cells; 0 = fit on all) or
+#   is projected. "random" (umap_subsample random cells; 0 = fit on all; a
+#   negative value = AUTO_FIT_CELLS when there are more cells, else all) or
 #   "supercell" (SuperCellCyto supercell means, see umap_supercells.R).
 # @param supercell_gamma,supercell_k_knn SuperCellCyto's cells per supercell
 #   and kNN size (fit_subset = "supercell").
@@ -2403,7 +2404,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                              embed_cores = 0L,
                              embed_sgd_cores = 1L,
                              umap_init = "auto",
-                             umap_subsample = 0L,
+                             umap_subsample = -1L,
                              layout = "markers",
                              gate_gap = 2,
                              gate_tier_ratio = 2,
@@ -2777,6 +2778,25 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # below are this path's own — the standard by-sample plot is not one of them.
   # The gates layout calls run_umap() directly: it needs the fit set and the
   # supervision, which only run_umap() takes.
+  # The default fit set. A full fit is superlinear in the cell count, and past
+  # SPECTRAL_LIMIT (run_umap) it also loses the spectral start; fitting on
+  # AUTO_FIT_CELLS random cells and projecting the rest gets the spectral start
+  # and finishes in minutes. Only the markers layout's random fit set is
+  # affected: the gates layout reads a negative value as its own default
+  # budget (above), and supercells are their own fit set. 0 still means every
+  # cell, whatever the count.
+  AUTO_FIT_CELLS <- 300000L
+  if (is.na(umap_subsample) || umap_subsample < 0) {
+    umap_subsample <- if (!gates_layout && !supercell_fit &&
+                          nrow(combined_matrix) > AUTO_FIT_CELLS) AUTO_FIT_CELLS
+                      else 0L
+    if (umap_subsample > 0) {
+      cat("Fit set: ", format(AUTO_FIT_CELLS, big.mark = ","), " random cells of ",
+          format(nrow(combined_matrix), big.mark = ","), "; the rest are ",
+          "projected onto them. Pass --umap_subsample 0 to fit on every cell.\n",
+          sep = "")
+    }
+  }
   # Vector formats store every point. Said before the hour of embedding, so the
   # choice can be undone while it is still cheap: the 2026-11-02 J445 run wrote
   # 8.5 GB, a 417 MB SVG and a 100 MB PDF per plot for 2.86M cells.
