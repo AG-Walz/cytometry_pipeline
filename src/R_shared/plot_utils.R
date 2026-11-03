@@ -48,6 +48,27 @@
   }
 })
 
+# The theme's family does not reach text drawn by layers (geom_text,
+# geom_label, annotate("text"), ggrepel): they take the device default, which
+# is the stray font above, so the UMAP axis labels came out as decorative
+# initials. Give every such layer without a family of its own `fam`, in this
+# plot and in the plots of a patchwork. Layers are ggproto objects, so this
+# changes them in place.
+.stamp_text_layers <- function(plot, fam) {
+  for (l in plot$layers) {
+    has_family <- "family" %in% names(l$geom$default_aes) ||
+      "family" %in% l$geom$aesthetics()
+    if (has_family && is.null(l$aes_params$family) &&
+        !"family" %in% names(l$mapping)) {
+      l$aes_params$family <- fam
+    }
+  }
+  for (sub in plot$patches$plots) {
+    if (inherits(sub, "ggplot")) .stamp_text_layers(sub, fam)
+  }
+  invisible(plot)
+}
+
 #' Save a ggplot in multiple formats
 #' @param plot ggplot object
 #' @param filename_base Base filename (without extension)
@@ -77,6 +98,7 @@ save_plot_formats <- function(plot, filename_base,
   if (isTRUE(formats$pdf) && !use_cairo_pdf) fam <- ""
   if (nzchar(fam) && inherits(plot, "ggplot")) {
     plot <- plot + ggplot2::theme(text = ggplot2::element_text(family = fam))
+    .stamp_text_layers(plot, fam)
   }
   # Prefer the ragg PNG device: it honours the registered font and gives a
   # solid (non-transparent) raster. Fall back to grDevices "png" if absent.

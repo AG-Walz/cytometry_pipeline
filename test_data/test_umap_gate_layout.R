@@ -506,6 +506,16 @@ eq("no columns: an empty key per cell",
    calls_key(matrix(NA_integer_, 2, 0)), c("", ""))
 
 # --- stratified_sample -------------------------------------------------------
+cat("\ndownsample_keep_keys()\n")
+dk_key <- c(rep("common", 990), rep("rare", 9), "single")
+set.seed(3); dk <- downsample_keep_keys(dk_key, 20)
+ok("every key keeps at least one row, the single cell too",
+   setequal(unique(dk_key[dk]), unique(dk_key)))
+ok("...the n drawn rows plus at most one per key they missed",
+   length(dk) >= 20 && length(dk) <= 22 && !anyDuplicated(dk) && !is.unsorted(dk))
+eq("n <= 0 or n >= the rows keeps every row",
+   list(downsample_keep_keys(dk_key, 0), downsample_keep_keys(dk_key[1:5], 10)),
+   list(seq_len(1000), 1:5))
 cat("\nstratified_sample()\n")
 
 set.seed(11)

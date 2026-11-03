@@ -359,6 +359,26 @@ calls_key <- function(calls) {
 }
 
 # -----------------------------------------------------------------------------
+# Uniform downsample to `n` rows that loses no key: `n` random rows, plus one
+# random row of every key none of them has. pool_gate_layout() labels a
+# sample's full count of a call pattern through its kept cells, so a pattern
+# with no kept cell could not be counted (the markers layout coloured by
+# combinations with --downsample). Each row weighs 1. Returns sorted indices;
+# n <= 0, or n >= the rows, keeps every row.
+# -----------------------------------------------------------------------------
+downsample_keep_keys <- function(key, n) {
+  m <- length(key)
+  if (n <= 0 || m <= n) return(seq_len(m))
+  keep <- sample(m, n)
+  lost <- setdiff(unique(key), key[keep])
+  extra <- vapply(lost, function(k) {
+    rows <- which(key == k)
+    rows[sample.int(length(rows), 1L)]
+  }, integer(1))
+  sort(c(keep, extra))
+}
+
+# -----------------------------------------------------------------------------
 # Keep up to `cap` cells per key; rare keys are kept whole. Returns
 # list(idx = sorted row indices, weight = cells of that key / cells kept).
 # cap <= 0 keeps everything with weight 1.

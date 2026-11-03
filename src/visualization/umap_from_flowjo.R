@@ -2047,18 +2047,14 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       # sample's true count, and count every pattern over ALL cells first so
       # the frequencies reported later never depend on the sampling.
       # Markers layout coloured by combinations: every cell (or the uniform
-      # --downsample of them), each weighing 1, so the embedding sees the
-      # cohort as it is.
+      # --downsample of them, plus one cell of any call pattern the draw left
+      # without one, so that its full count still has a label), each weighing
+      # 1, so the embedding sees the cohort as it is.
       if (gate_labels) {
         ss <- if (gates_layout) {
           stratified_sample(res$key, cells_per_combination)
         } else {
-          n_res <- length(res$key)
-          keep_rows <- if (downsample > 0 && n_res > downsample) {
-            sort(sample(n_res, downsample))
-          } else {
-            seq_len(n_res)
-          }
+          keep_rows <- downsample_keep_keys(res$key, downsample)
           list(idx = keep_rows, weight = rep(1, length(keep_rows)))
         }
         kc <- table(res$key)
@@ -2090,8 +2086,9 @@ extract_flowjo_population <- function(wsp_path, fcs_dir,
       # subsets the subpopulation labels — overall and per level — so they stay
       # aligned to mtx. Every aligned vector is subset HERE; carrying the index
       # out of this block would let a stale one from a previous sample apply.
+      # Gate labels were sampled above, with their calls; not again here.
       lv <- res$levels
-      if (downsample > 0 && nrow(mtx) > downsample) {
+      if (!gate_labels && downsample > 0 && nrow(mtx) > downsample) {
         idx <- sort(sample(nrow(mtx), downsample))
         mtx <- mtx[idx, , drop = FALSE]
         sp  <- sp[idx]

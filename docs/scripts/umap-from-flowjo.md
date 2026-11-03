@@ -1024,7 +1024,7 @@ group: "1"                                          # quoted: keep it a string
 | `--normalize` | none | Deprecated alias of `--normalize_data`; passing both is an error |
 | `--output_dir` | `umap_flowjo` | Output directory for plots |
 | `--output_formats` | `png` | Comma-separated formats: `png,pdf,svg`. SVG/PDF hold one vector point per cell (hundreds of MB per plot on millions of cells) |
-| `--downsample` | `0` | Max cells per sample after gating (`0` = no downsampling). Ignored with `--layout gates`, which samples per combination instead |
+| `--downsample` | `0` | Max cells per sample after gating (`0` = no downsampling). Ignored with `--layout gates`, which samples per combination instead. With `--subpop_mode combinations` a sample also keeps one cell of every gate-call pattern the random draw missed, so a few more than this may be kept and every pattern's full count stays labelled |
 | `--layout` | `markers` | `markers`: embed the FlowJo values of the markers, as described above. `gates`: gate-anchored features, combination labels, stratified sampling, balanced fit and the muted plot style (see [Gate-separated layout](#gate-separated-layout)) |
 | `--gate_gap` | `2` | `gates` layout: jump added at each gate cut of the deepest tier, in feature units (shallower tiers get it times `--gate_tier_ratio` per tier). The within-side term is bounded by 1, so the two sides of a gate are more than `2 * (gate_gap - 1)` apart |
 | `--gate_tier_ratio` | `2` | `gates` layout: how much larger the jump is one tier up the gating tree; with 2, CD4 and CD8 get twice the cytokines' jump and the islands of one lineage gather in one region. Must be 1 or more |
