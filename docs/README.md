@@ -27,6 +27,8 @@ If you are **looking for a specific utility function** (CSV I/O, memory manageme
 | Document | What You'll Learn |
 |----------|-------------------|
 | [Getting Started](getting-started.md) | How to install the environment, understand the project layout, write your first config, and run a pipeline end-to-end |
+| [Windows Setup](WINDOWS_SETUP.md) | Native Windows install of R, the environment and the pipelines |
+| [Windows via WSL2](WSL_SETUP.md) | Shortest route to the FlowJo → UMAP app on a Windows PC |
 | [Configuration Guide](configuration.md) | How to create config files, key parameters for each pipeline, standalone script configs |
 | [File Formats](file-formats.md) | Input and output format specifications for all pipelines (FCS, CSV, WSP, plots) |
 | [Standalone Scripts](standalone-scripts.md) | Using individual module functions outside of pipelines, with signatures and examples |
