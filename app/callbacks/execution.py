@@ -252,45 +252,57 @@ def _progress_bar(progress: dict, running: bool):
     if not running or not progress:
         return None
 
-    # Heading: which step, and how long it has run against the last run.
+    # Two times are shown, and each line says which one it is. A bare "about
+    # 1 min left" under the bar was read as the whole run when it was only
+    # the step, so every time has its scope ("This step" / "Whole run") in
+    # front of it.
     step = progress.get("step")
     title = progress["phase_label"]
     if step and progress.get("steps"):
         title = f"Step {step} of {progress['steps']} · {title}"
-    detail = []
-    if not progress.get("few_steps"):
-        detail.append(f"{progress['done']} / {progress['total']}")
-    if progress.get("phase_elapsed") is not None and progress.get("run_elapsed"):
-        detail.append(f"running for {_format_duration(progress['phase_elapsed'])}")
-    if progress.get("phase_expected"):
-        detail.append(f"last run {_format_duration(progress['phase_expected'])}")
 
-    # Summary: elapsed, time left, clock time.
-    summary = []
+    this_step = []
+    if not progress.get("few_steps"):
+        this_step.append(f"{progress['done']} / {progress['total']}")
+    if progress.get("phase_elapsed") is not None and progress.get("run_elapsed"):
+        this_step.append(
+            f"running for {_format_duration(progress['phase_elapsed'])}")
+    step_left = progress.get("phase_remaining")
+    if progress.get("overrun"):
+        this_step.append("longer than in the last run")
+    elif step_left is not None:
+        this_step.append("less than 1 min left" if step_left < 60 else
+                         f"about {_format_duration(step_left)} left")
+    if progress.get("phase_expected"):
+        this_step.append(
+            f"last run {_format_duration(progress['phase_expected'])}")
+
+    whole_run = [f"{progress.get('overall_percent', 0)}% done"]
     if progress.get("run_elapsed"):
-        summary.append(f"Elapsed {_format_duration(progress['run_elapsed'])}")
+        whole_run.append(
+            f"running for {_format_duration(progress['run_elapsed'])}")
     remaining = _format_remaining(progress)
     if remaining:
-        summary.append(remaining)
+        whole_run.append(remaining)
         clock = _format_clock(progress.get("finish_at"))
         if clock and not progress.get("overrun"):
-            summary.append(clock)
+            whole_run.append(clock)
     elif not progress.get("has_reference"):
-        summary.append("No time estimate yet: this is the first complete run "
-                       "with these settings. The next run will have one.")
-    summary.append(f"{progress.get('overall_percent', 0)}% of the run")
+        whole_run.append("no time estimate yet: this is the first complete "
+                         "run with these settings. The next run will have one")
+
+    def _scoped(name, parts):
+        return dmc.Text([dmc.Text(f"{name}: ", span=True, fw=600, inherit=True),
+                         " · ".join(parts)], size="xs")
 
     silence = _silence_note(progress)
     return dmc.Stack(
         [
             dmc.Space(h=8),
-            dmc.Group(
-                [dmc.Text(title, size="xs", fw=600),
-                 dmc.Text(" · ".join(detail), size="xs", c="dimmed")],
-                justify="space-between", gap="xs",
-            ),
+            dmc.Text(title, size="xs", fw=600),
             _phase_bar(progress),
-            dmc.Text(" · ".join(summary), size="xs"),
+            _scoped("This step", this_step),
+            _scoped("Whole run", whole_run),
             dmc.Text(silence, size="xs", c="orange") if silence else None,
             # The item in flight, so a run that has stopped moving is obvious
             # from WHICH item it stopped on.

@@ -196,5 +196,40 @@ class RecordsHistory(unittest.TestCase):
                          {"load": 4.0, "extract": 4.0})
 
 
+def _texts(component):
+    """Every string in a Dash component tree, in order."""
+    out = []
+    children = getattr(component, "children", component)
+    if isinstance(children, str):
+        out.append(children)
+    elif isinstance(children, (list, tuple)):
+        for child in children:
+            if child is not None:
+                out.extend(_texts(child))
+    elif children is not None and children is not component:
+        out.extend(_texts(children))
+    return out
+
+
+class ScopeOfEachTime(unittest.TestCase):
+    """Each time left says if it is for the current step or the whole run."""
+
+    def test_step_and_run_lines_are_labelled(self):
+        from app.callbacks import execution
+        times, t0 = Estimate._times(self)
+        view = progress_estimate.estimate(
+            {"phase": "embed_init", "done": 0, "total": 1, "label": "x"},
+            times, set(), J445, t0 + 600, None)
+        lines = [" ".join(_texts(c)) for c in
+                 execution._progress_bar(view, True).children
+                 if c is not None and "Text" in type(c).__name__]
+        step = next(ln for ln in lines if ln.startswith("This step:"))
+        run = next(ln for ln in lines if ln.startswith("Whole run:"))
+        self.assertIn("about 42 min left", step)
+        self.assertIn("left", run)
+        self.assertIn("ready at about", run)
+        self.assertNotIn("ready at", step)
+
+
 if __name__ == "__main__":
     unittest.main()

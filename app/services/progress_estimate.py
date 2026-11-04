@@ -231,6 +231,8 @@ def estimate(progress: dict, phase_times: dict[str, list[float]],
         "run_elapsed": run_now,
         "phase_elapsed": t_in,
         "phase_expected": expected_cur,
+        # Time left in the CURRENT step only. "remaining" is the whole run.
+        "phase_remaining": cur_left,
         "overrun": overrun,
         "has_reference": bool(ref),
         "remaining": remaining,
