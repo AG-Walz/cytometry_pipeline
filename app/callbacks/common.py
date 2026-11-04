@@ -384,8 +384,10 @@ def form_from_settings(options: dict) -> dict:
     if "output_formats" in options:
         fm = options["output_formats"] or ""
         out["output_formats"] = [f.strip() for f in str(fm).split(",") if f.strip()]
-    if "no_resume" in options:
-        out["resume"] = not bool(options["no_resume"])
+    # "no_resume" is deliberately not copied. Reuse saved steps controls how
+    # a run starts, not what it computes. Copied from a run with it off, it
+    # made the next run recompute 93 minutes of steps it could have reused
+    # (J445, 2026-11-04).
     if "no_polyfunctionality" in options:
         out["polyfunctionality"] = not bool(options["no_polyfunctionality"])
     if "umap_subsample" in options:
