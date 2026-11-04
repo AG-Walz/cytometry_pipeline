@@ -61,7 +61,7 @@ class LoadSettings(unittest.TestCase):
         self.assertEqual(f["n_neighbors"], 30)
         self.assertIsNone(f["point_size"])
         self.assertEqual(f["output_formats"], ["png", "svg"])
-        self.assertFalse(f["resume"])
+        self.assertNotIn("resume", f)     # how a run starts, not a setting
         self.assertEqual(f["random_fit_cells"], config.DEFAULTS["random_fit_cells"])
         self.assertEqual(f["clip_quantile"], "0.001")
         self.assertNotIn("wsp", f)        # inputs are not settings
