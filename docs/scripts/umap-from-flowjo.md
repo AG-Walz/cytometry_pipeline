@@ -121,7 +121,7 @@ what diverges between them) as JSON. `src/visualization/umap_load_report.R`
 writes that file, stamped with a `schema` version, and
 `app/services/rscript.py` reads it and refuses a major version it does not
 know, so change them together. Of what a run prints, the app uses
-the `::progress::` lines for its progress bar, the closing
+the `::progress::` and `Resuming:` lines for its progress bar, the closing
 `Done. Plots written to:` line to tell that a detached run from before exit
 codes were recorded finished, and the last line of the log as the reason
 when a run fails.

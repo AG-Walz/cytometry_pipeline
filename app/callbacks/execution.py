@@ -106,76 +106,139 @@ def _left_out_alert(text: str):
                   color="orange", title="Samples left out of this run")
 
 
-def _format_remaining(seconds: float | None) -> str:
-    """A duration a person would say out loud, not a stopwatch reading.
-
-    Deliberately coarse. The estimate is a linear extrapolation over uneven
-    work, so "about 25 min" is the most it can honestly claim; printing 24:37
-    would dress a guess up as a measurement.
-    """
-    if seconds is None:
-        return ""
-    if seconds < 60:
-        return "under a minute left"
+def _format_duration(seconds: float) -> str:
+    """A duration a person would say out loud, not a stopwatch reading."""
     minutes = int(round(seconds / 60))
+    if minutes < 1:
+        return "under a minute"
     if minutes < 60:
-        return f"about {minutes} min left"
+        return f"{minutes} min"
     hours, minutes = divmod(minutes, 60)
-    return f"about {hours} h {minutes:02d} min left" if minutes else \
-        f"about {hours} h left"
+    return f"{hours} h {minutes:02d} min" if minutes else f"{hours} h"
+
+
+def _format_remaining(progress: dict) -> str:
+    """The time left as a range, for example "about 1 h 05 – 1 h 25 min left".
+
+    A range and not one number: the estimate comes from one earlier run, and
+    two runs with the same settings differ. Both ends are rounded to 5 min
+    above half an hour, because a finer step would claim more than is known.
+    """
+    low, high = progress.get("remaining_low"), progress.get("remaining_high")
+    if low is None or high is None:
+        return ""
+    if high < 90:
+        return "less than 2 min left"
+    step = 300 if high > 1800 else 60
+    low = max(step, step * int(low // step))
+    high = step * -int(-high // step)
+    lo_txt, hi_txt = _format_duration(low), _format_duration(high)
+    if lo_txt == hi_txt:
+        text = f"about {hi_txt}"
+    elif low < 3600 and high < 3600:
+        text = f"about {lo_txt.removesuffix(' min')}–{hi_txt}"
+    else:
+        text = f"about {lo_txt} – {hi_txt}"
+    prefix = "at least " if progress.get("overrun") else ""
+    return f"{prefix}{text} left"
+
+
+def _format_clock(epoch: float | None) -> str:
+    """The clock time the run will be ready, to the nearest 5 min."""
+    if epoch is None:
+        return ""
+    epoch = 300 * round(epoch / 300)
+    when = time.localtime(epoch)
+    text = f"ready at about {time.strftime('%H:%M', when)}"
+    if time.strftime("%Y%m%d", when) != time.strftime("%Y%m%d"):
+        text += f" on {time.strftime('%a %d %b', when)}"
+    return text
 
 
 def _phase_bar(progress: dict):
-    """One bar per phase, side by side, each as wide as that phase costs.
+    """One part per phase, side by side, each as wide as that phase costs.
 
-    A single bar over a six-phase run answers the wrong question. It says how
-    far through the CURRENT phase you are, so the 20-minute neighbour search and
-    the 20-second initialisation look the same size, and the bar resets to empty
-    five times before the run ends — which reads as five restarts. Laying the
-    phases out at their real relative cost makes one glance answer both
-    questions people actually have: what is happening, and how much is left.
+    A single bar over a six-phase run answers the wrong question: it resets to
+    empty five times before the run ends. Laying the phases out at their real
+    relative cost answers both questions people have: what is happening, and
+    how much is left. Each part has its name under it, so no pointer is needed.
 
-    Every number comes from Runner._phase_view(); this only arranges them.
+    Every number comes from app/services/progress_estimate.py; this only
+    arranges them.
     """
     segments = progress.get("phases") or []
     if not segments:
         return dmc.Progress(value=progress.get("percent", 0), size="sm",
                             animated=True, striped=True)
 
-    # A done phase is solid, the running one is striped and animated, a pending
-    # one is an empty track. The distinction has to survive a screenshot, so it
-    # is carried by fill and colour rather than by motion alone.
-    bars = []
+    # A done phase is solid, the running one is striped and animated, a
+    # pending one is an empty track, a reused one is solid grey. The
+    # difference has to survive a screenshot, so it is carried by fill and
+    # colour and not by motion alone.
+    parts = []
     for seg in segments:
         state = seg["state"]
         if state == "done":
-            inner = dmc.Progress(value=100, size="sm", color="blue")
+            inner = dmc.Progress(value=100, size="md", color="blue")
         elif state == "running":
-            inner = dmc.Progress(value=round(seg["fill"] * 100), size="sm",
+            inner = dmc.Progress(value=round(seg["fill"] * 100), size="md",
                                  color="blue", animated=True, striped=True)
-        elif state == "skipped":
-            inner = dmc.Progress(value=0, size="sm", color="gray")
+        elif state == "reused":
+            inner = dmc.Progress(value=100, size="md", color="gray")
         else:
-            inner = dmc.Progress(value=0, size="sm", color="gray")
-        bars.append(
+            inner = dmc.Progress(value=0, size="md", color="gray")
+        tip = {
+            "done": "done",
+            "running": f"{round(seg['fill'] * 100)}%",
+            "reused": "reused from a saved step",
+            "skipped": "not part of this run",
+            "pending": "not started",
+        }.get(state, state)
+        parts.append(
             dmc.Tooltip(
-                dmc.Box(inner, style={"flex": f"{seg['weight']} 0 0",
-                                      "minWidth": "6px"}),
-                label=f"{seg['label']} — {round(seg['fill'] * 100)}%",
+                dmc.Box(
+                    [inner,
+                     # A part narrower than about 8% has no space for a word;
+                     # its name is in the tooltip. The running part always
+                     # has its name.
+                     dmc.Text((seg.get("short") or seg["label"])
+                              if seg["weight"] >= 8 or state == "running"
+                              else "\u00a0", size="10px",
+                              c="dark" if state == "running" else "dimmed",
+                              fw=700 if state == "running" else 400,
+                              truncate="end", mt=2)],
+                    style={"overflow": "hidden"},
+                ),
+                # The tooltip wraps its target in a box of its own, and that
+                # box is the flex item. The width goes there, or every part
+                # shrinks to the width of its word.
+                boxWrapperProps={"style": {"flex": f"{seg['weight']} 0 0",
+                                           "minWidth": "6px"}},
+                label=f"{seg['label']} — {tip}",
                 position="top", withArrow=True, openDelay=200,
             )
         )
-    return dmc.Stack(
-        [
-            dmc.Group(bars, gap=3, wrap="nowrap", align="stretch"),
-            # The whole-run figure, said once. Without it the segments show the
-            # shape of the run but never its total, and "how far along am I"
-            # goes back to being a guess.
-            dmc.Text(f"{progress.get('overall_percent', 0)}% of the run",
-                     size="xs", c="dimmed"),
-        ],
-        gap=4,
-    )
+    # A plain flex row, not dmc.Group: Group sets flex-grow on its children
+    # itself, which overrides the widths and squeezes the bar to the left.
+    return html.Div(parts, style={"display": "flex", "gap": "3px",
+                                  "alignItems": "flex-start", "width": "100%"})
+
+
+def _silence_note(progress: dict) -> str:
+    """Why the log has not moved, when it has not moved for a while.
+
+    A layout initialisation on millions of cells prints nothing for most of
+    an hour. Without this line that looks the same as a run that hangs.
+    """
+    silent = progress.get("silent_for")
+    if silent is None or silent < 120:
+        return ""
+    text = f"No new output for {_format_duration(silent)}."
+    if progress.get("overrun"):
+        return text + " This step takes longer than in the last run."
+    if progress.get("few_steps"):
+        return text + " This is normal: this step prints nothing until it ends."
+    return text
 
 
 def _progress_bar(progress: dict, running: bool):
@@ -184,26 +247,51 @@ def _progress_bar(progress: dict, running: bool):
     Renders only while something is running: a bar left at 40% after a run
     finished reads as a stalled job, and after a FAILED one it reads as a lie.
     Everything shown here was counted by R (see emit_progress in
-    src/R_shared/io_utils.R); this arranges it and works nothing out except the
-    wording of the estimate.
+    src/R_shared/io_utils.R) or worked out in progress_estimate.py.
     """
     if not running or not progress:
         return None
-    remaining = _format_remaining(progress.get("remaining"))
+
+    # Heading: which step, and how long it has run against the last run.
+    step = progress.get("step")
+    title = progress["phase_label"]
+    if step and progress.get("steps"):
+        title = f"Step {step} of {progress['steps']} · {title}"
+    detail = []
+    if not progress.get("few_steps"):
+        detail.append(f"{progress['done']} / {progress['total']}")
+    if progress.get("phase_elapsed") is not None and progress.get("run_elapsed"):
+        detail.append(f"running for {_format_duration(progress['phase_elapsed'])}")
+    if progress.get("phase_expected"):
+        detail.append(f"last run {_format_duration(progress['phase_expected'])}")
+
+    # Summary: elapsed, time left, clock time.
+    summary = []
+    if progress.get("run_elapsed"):
+        summary.append(f"Elapsed {_format_duration(progress['run_elapsed'])}")
+    remaining = _format_remaining(progress)
+    if remaining:
+        summary.append(remaining)
+        clock = _format_clock(progress.get("finish_at"))
+        if clock and not progress.get("overrun"):
+            summary.append(clock)
+    elif not progress.get("has_reference"):
+        summary.append("No time estimate yet: this is the first complete run "
+                       "with these settings. The next run will have one.")
+    summary.append(f"{progress.get('overall_percent', 0)}% of the run")
+
+    silence = _silence_note(progress)
     return dmc.Stack(
         [
             dmc.Space(h=8),
             dmc.Group(
-                [
-                    dmc.Text(progress["phase_label"], size="xs", fw=600),
-                    dmc.Text(
-                        f"{progress['done']} / {progress['total']}"
-                        + (f" · {remaining}" if remaining else ""),
-                        size="xs", c="dimmed"),
-                ],
+                [dmc.Text(title, size="xs", fw=600),
+                 dmc.Text(" · ".join(detail), size="xs", c="dimmed")],
                 justify="space-between", gap="xs",
             ),
             _phase_bar(progress),
+            dmc.Text(" · ".join(summary), size="xs"),
+            dmc.Text(silence, size="xs", c="orange") if silence else None,
             # The item in flight, so a run that has stopped moving is obvious
             # from WHICH item it stopped on.
             dmc.Text(progress.get("label") or "", size="xs", c="dimmed",
