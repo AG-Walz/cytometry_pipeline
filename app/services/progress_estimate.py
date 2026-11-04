@@ -21,8 +21,6 @@ priors cannot predict a phase whose cost depends on the data this much.
 
 from __future__ import annotations
 
-import time
-
 #: Every phase a run can report, IN ORDER, with how it reads in the UI.
 #: Keep in step with emit_progress() calls in src/.
 PROGRESS_PHASES = {
@@ -66,10 +64,6 @@ RESUMED_PHASES = {
     "embedding": ("embed_nn", "embed_init", "embed"),
 }
 
-#: The spread shown around the estimate. Not a statistical interval: the same
-#: settings on the same host differ by about this much between runs.
-SPREAD = 0.15
-
 #: The speed of this run relative to the reference, from the phases already
 #: done, is clamped to this range. One slow file read must not triple the rest.
 SPEED_LIMITS = (0.67, 1.5)
@@ -108,15 +102,13 @@ def _speed(done: dict[str, float], reference: dict[str, float]) -> float:
 
 def estimate(progress: dict, phase_times: dict[str, list[float]],
              resumed: set[str], reference: dict[str, float] | None,
-             run_now: float | None, last_output_at: float | None,
-             now: float | None = None) -> dict:
+             run_now: float | None) -> dict:
     """The progress view: one entry per phase, and the time left.
 
     ``progress`` is the latest progress line of the current run, ``run_now``
     the current time in the R process's seconds, ``reference`` the phase
     durations of the reference run (or None).
     """
-    now = time.time() if now is None else now
     current = progress.get("phase")
     done_n, total_n = progress.get("done", 0), progress.get("total", 0)
     item_fill = max(0.0, min(1.0, done_n / total_n)) if total_n else 0.0
@@ -227,19 +219,10 @@ def estimate(progress: dict, phase_times: dict[str, list[float]],
         "phases": phases,
         "step": steps.index(current) + 1 if current in steps else None,
         "steps": len(steps),
-        "few_steps": total_n <= FEW_STEPS,
-        "run_elapsed": run_now,
-        "phase_elapsed": t_in,
-        "phase_expected": expected_cur,
-        # Time left in the CURRENT step only. "remaining" is the whole run.
-        "phase_remaining": cur_left,
         "overrun": overrun,
         "has_reference": bool(ref),
+        # Seconds until the WHOLE run is done, or None.
         "remaining": remaining,
-        "remaining_low": remaining * (1 - SPREAD) if remaining is not None else None,
-        "remaining_high": remaining * (1 + SPREAD) if remaining is not None else None,
-        "finish_at": now + remaining if remaining is not None else None,
-        "silent_for": (now - last_output_at) if last_output_at else None,
     }
 
 

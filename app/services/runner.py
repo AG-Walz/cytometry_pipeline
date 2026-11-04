@@ -115,8 +115,6 @@ class Runner:
         #: Phase durations of the reference run, or None; see
         #: app/services/progress_estimate.py.
         self._reference: dict[str, float] | None = None
-        #: Wall-clock time of the last line the run printed.
-        self._last_output_at: float | None = None
         #: The detached run whose durations are already in the history.
         self._recorded_dir: str | None = None
         #: Set when following a run that is not our child (see attach()).
@@ -142,7 +140,6 @@ class Runner:
             self._resumed = set()
             self._reference = phase_history.load(argv)
             self._started_at = time.time()
-            self._last_output_at = None
             self._finished_at = None
             self._cancelling = False
             # This run's output comes down a pipe. Any detached run we were
@@ -191,7 +188,6 @@ class Runner:
                 if hit:
                     phase, done, total, elapsed, label = hit.groups()
                     with self._lock:
-                        self._last_output_at = time.time()
                         self._progress = {
                             "phase": phase,
                             "done": int(done),
@@ -201,7 +197,6 @@ class Runner:
                         self._note_phase_time(phase, elapsed)
                     continue
                 with self._lock:
-                    self._last_output_at = time.time()
                     self._resumed |= progress_estimate.resumed_phases([line])
                     if len(self._lines) < MAX_LINES:
                         self._lines.append(line)
@@ -322,7 +317,6 @@ class Runner:
             self._phase_times = {}
             self._resumed = set()
             self._reference = phase_history.load(self._argv)
-            self._last_output_at = None
             self._recorded_dir = None
             self._lines = []
         self._refresh_detached()
@@ -349,8 +343,6 @@ class Runner:
         text = detached.read_log(directory)
         code = None if alive else detached.read_exit_code(directory)
         lines = text.splitlines()
-
-        mtime = detached.log_mtime(directory)
 
         # The log holds every run made into this output folder, one after the
         # other. Only the LAST run is the one in progress. Reading all of them
@@ -395,7 +387,6 @@ class Runner:
             # R wrote, not from anything held here.
             self._phase_times = current["times"]
             self._resumed = resumed
-            self._last_output_at = mtime
             self._progress = progress
             # A complete run with the same settings is the best reference. An
             # earlier complete run in this log is the next best: before this
@@ -491,12 +482,9 @@ class Runner:
         run_now = (time.time() - self._started_at
                    if self._started_at and self._status == RUNNING else None)
         view = progress_estimate.estimate(
-            p, self._phase_times, self._resumed, self._reference, run_now,
-            self._last_output_at)
+            p, self._phase_times, self._resumed, self._reference, run_now)
         if self._status != RUNNING:
-            for key in ("remaining", "remaining_low", "remaining_high",
-                        "finish_at"):
-                view[key] = None
+            view["remaining"] = None
         return view
 
     def _record_history(self) -> None:

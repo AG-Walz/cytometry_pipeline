@@ -212,15 +212,6 @@ def read_exit_code(output_dir: str | os.PathLike) -> int | None:
         return None
 
 
-def log_mtime(output_dir: str | os.PathLike) -> float | None:
-    """When the run last printed anything, or None if there is no log."""
-    log_path, _ = paths_for(output_dir)
-    try:
-        return log_path.stat().st_mtime
-    except OSError:
-        return None
-
-
 def read_log(output_dir: str | os.PathLike, max_bytes: int = 4_000_000) -> str:
     """The run's log, tail-truncated.
 

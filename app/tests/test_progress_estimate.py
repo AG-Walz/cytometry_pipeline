@@ -65,7 +65,7 @@ class Estimate(unittest.TestCase):
         times, t0 = self._times()
         progress = {"phase": "embed_init", "done": 0, "total": 1}
         left = [progress_estimate.estimate(progress, times, set(), J445,
-                                           t0 + dt, None)["remaining"]
+                                           t0 + dt)["remaining"]
                 for dt in (0, 600, 1800, 3000)]
         self.assertEqual(left, sorted(left, reverse=True))
         self.assertAlmostEqual(left[0], J445["embed_init"] + J445["embed"]
@@ -76,7 +76,7 @@ class Estimate(unittest.TestCase):
         times, t0 = self._times()
         progress = {"phase": "embed_init", "done": 0, "total": 1}
         view = progress_estimate.estimate(progress, times, set(), J445,
-                                          t0 + 4000, None)
+                                          t0 + 4000)
         self.assertTrue(view["overrun"])
         self.assertAlmostEqual(view["remaining"], J445["embed"] + J445["plot"],
                                delta=1)
@@ -85,7 +85,7 @@ class Estimate(unittest.TestCase):
         times, t0 = self._times()
         progress = {"phase": "embed_init", "done": 0, "total": 1}
         view = progress_estimate.estimate(progress, times, set(), None,
-                                          t0 + 60, None)
+                                          t0 + 60)
         self.assertIsNone(view["remaining"])
         self.assertFalse(view["has_reference"])
         self.assertEqual(len(view["phases"]), 6)
@@ -100,7 +100,7 @@ class Estimate(unittest.TestCase):
             ["Resuming: 'embedding' reused from checkpoints/embedding.rds"])
         view = progress_estimate.estimate(
             {"phase": "plot", "done": 1, "total": 3}, times, resumed, J445,
-            62, None)
+            62)
         states = {p["phase"]: p["state"] for p in view["phases"]}
         self.assertEqual(states["embed_init"], "reused")
         self.assertEqual(states["embed"], "reused")
@@ -196,39 +196,24 @@ class RecordsHistory(unittest.TestCase):
                          {"load": 4.0, "extract": 4.0})
 
 
-def _texts(component):
-    """Every string in a Dash component tree, in order."""
-    out = []
-    children = getattr(component, "children", component)
-    if isinstance(children, str):
-        out.append(children)
-    elif isinstance(children, (list, tuple)):
-        for child in children:
-            if child is not None:
-                out.extend(_texts(child))
-    elif children is not None and children is not component:
-        out.extend(_texts(children))
-    return out
+class Bar(unittest.TestCase):
+    """The bar is one Mantine progress bar; the time is for the whole run."""
 
-
-class ScopeOfEachTime(unittest.TestCase):
-    """Each time left says if it is for the current step or the whole run."""
-
-    def test_step_and_run_lines_are_labelled(self):
+    def test_sections_and_whole_run_time(self):
         from app.callbacks import execution
         times, t0 = Estimate._times(self)
         view = progress_estimate.estimate(
             {"phase": "embed_init", "done": 0, "total": 1, "label": "x"},
-            times, set(), J445, t0 + 600, None)
-        lines = [" ".join(_texts(c)) for c in
-                 execution._progress_bar(view, True).children
-                 if c is not None and "Text" in type(c).__name__]
-        step = next(ln for ln in lines if ln.startswith("This step:"))
-        run = next(ln for ln in lines if ln.startswith("Whole run:"))
-        self.assertIn("about 42 min left", step)
-        self.assertIn("left", run)
-        self.assertIn("ready at about", run)
-        self.assertNotIn("ready at", step)
+            times, set(), J445, t0 + 600)
+        bar = execution._phase_bar(view)
+        self.assertEqual(type(bar).__name__, "ProgressRoot")
+        self.assertAlmostEqual(sum(sec.value for sec in bar.children), 100,
+                               delta=1)
+        running = [sec for sec in bar.children if getattr(sec, "striped", False)]
+        self.assertEqual(len(running), 1)
+        # 42 min of this step + 26 min of optimising + 3 min of plots.
+        self.assertEqual(execution._format_remaining(view),
+                         "about 1 h 10 min left")
 
 
 if __name__ == "__main__":
