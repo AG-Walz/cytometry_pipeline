@@ -387,6 +387,14 @@ Two things are still read from the log: `::progress::` lines (from
 and are hidden from the log, and, for detached runs started before exit codes
 were recorded, the closing `Done. Plots written to:` line.
 
+The progress bar reads only the LAST run in `run.log` (each run into the same
+output folder adds to that log, after a `── started` line). The time left
+comes from a reference run: the phase times of the last complete run with the
+same settings, kept in `~/.cache/umap_flowjo_app/phase_history.json`, or else
+the last complete run in the same log. Without a reference the bar shows no
+time. `Resuming: '<step>'` lines tell it which phases a run reuses from
+`checkpoints/`. See `app/services/progress_estimate.py`.
+
 ---
 
 ## Notes

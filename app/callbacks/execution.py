@@ -106,108 +106,98 @@ def _left_out_alert(text: str):
                   color="orange", title="Samples left out of this run")
 
 
-def _format_remaining(seconds: float | None) -> str:
-    """A duration a person would say out loud, not a stopwatch reading.
+def _format_remaining(progress: dict) -> str:
+    """The time left until the WHOLE run is done, as a person would say it.
 
-    Deliberately coarse. The estimate is a linear extrapolation over uneven
-    work, so "about 25 min" is the most it can honestly claim; printing 24:37
-    would dress a guess up as a measurement.
+    Always the whole run, never the current step: one time, with one meaning.
+    Rounded to 5 min above half an hour, because the estimate comes from one
+    earlier run and a finer step would claim more than is known.
     """
+    seconds = progress.get("remaining")
     if seconds is None:
         return ""
-    if seconds < 60:
-        return "under a minute left"
-    minutes = int(round(seconds / 60))
+    if seconds < 90:
+        return "less than 2 min left"
+    step = 300 if seconds > 1800 else 60
+    minutes = int(round(seconds / step) * step / 60)
     if minutes < 60:
-        return f"about {minutes} min left"
-    hours, minutes = divmod(minutes, 60)
-    return f"about {hours} h {minutes:02d} min left" if minutes else \
-        f"about {hours} h left"
+        text = f"about {minutes} min left"
+    else:
+        hours, minutes = divmod(minutes, 60)
+        text = (f"about {hours} h {minutes:02d} min left" if minutes
+                else f"about {hours} h left")
+    return ("at least " + text.removeprefix("about ")) if progress.get("overrun") \
+        else text
+
+
+#: One colour per step, so the steps stay apart on the bar. The done part of
+#: a step is the full shade, the part still to do is a light shade of it.
+_PHASE_COLOURS = {"load": "grape", "extract": "violet", "embed_nn": "indigo",
+                  "embed_init": "blue", "embed": "cyan", "plot": "teal"}
 
 
 def _phase_bar(progress: dict):
-    """One bar per phase, side by side, each as wide as that phase costs.
+    """One Mantine progress bar, one section per step, as wide as the step.
 
-    A single bar over a six-phase run answers the wrong question. It says how
-    far through the CURRENT phase you are, so the 20-minute neighbour search and
-    the 20-second initialisation look the same size, and the bar resets to empty
-    five times before the run ends — which reads as five restarts. Laying the
-    phases out at their real relative cost makes one glance answer both
-    questions people actually have: what is happening, and how much is left.
-
-    Every number comes from Runner._phase_view(); this only arranges them.
+    Each step fills up in its own colour, so one look tells which step runs
+    and how much of the run is done. A step that is not part of this run (or
+    reuses a saved result) has no width and is left out.
     """
-    segments = progress.get("phases") or []
-    if not segments:
-        return dmc.Progress(value=progress.get("percent", 0), size="sm",
-                            animated=True, striped=True)
-
-    # A done phase is solid, the running one is striped and animated, a pending
-    # one is an empty track. The distinction has to survive a screenshot, so it
-    # is carried by fill and colour rather than by motion alone.
-    bars = []
-    for seg in segments:
-        state = seg["state"]
-        if state == "done":
-            inner = dmc.Progress(value=100, size="sm", color="blue")
-        elif state == "running":
-            inner = dmc.Progress(value=round(seg["fill"] * 100), size="sm",
-                                 color="blue", animated=True, striped=True)
-        elif state == "skipped":
-            inner = dmc.Progress(value=0, size="sm", color="gray")
-        else:
-            inner = dmc.Progress(value=0, size="sm", color="gray")
-        bars.append(
-            dmc.Tooltip(
-                dmc.Box(inner, style={"flex": f"{seg['weight']} 0 0",
-                                      "minWidth": "6px"}),
-                label=f"{seg['label']} — {round(seg['fill'] * 100)}%",
-                position="top", withArrow=True, openDelay=200,
-            )
-        )
-    return dmc.Stack(
-        [
-            dmc.Group(bars, gap=3, wrap="nowrap", align="stretch"),
-            # The whole-run figure, said once. Without it the segments show the
-            # shape of the run but never its total, and "how far along am I"
-            # goes back to being a guess.
-            dmc.Text(f"{progress.get('overall_percent', 0)}% of the run",
-                     size="xs", c="dimmed"),
-        ],
-        gap=4,
-    )
+    sections = []
+    for seg in progress.get("phases") or []:
+        width = seg["weight"]
+        if width < 0.5:
+            continue
+        colour = _PHASE_COLOURS.get(seg["phase"], "blue")
+        done = width * seg["fill"]
+        running = seg["state"] == "running"
+        label = (seg.get("short") or seg["label"]) if width >= 10 else ""
+        # The name goes in the larger of the two parts, so it has space.
+        in_done = done >= width - done
+        if done > 0:
+            sections.append(dmc.ProgressSection(
+                dmc.ProgressLabel(label if in_done else ""),
+                value=done, color=f"{colour}.6",
+                striped=running, animated=running))
+        if width - done > 0:
+            sections.append(dmc.ProgressSection(
+                dmc.ProgressLabel(label if not in_done else "",
+                                  style={"color": "var(--mantine-color-dark-4)"}),
+                value=width - done, color=f"{colour}.1"))
+    if not sections:
+        return dmc.Progress(value=progress.get("percent", 0), size="lg",
+                            striped=True, animated=True)
+    return dmc.ProgressRoot(sections, size=18)
 
 
 def _progress_bar(progress: dict, running: bool):
-    """The live progress bar, or nothing.
+    """The live progress bar with one line above it, or nothing.
 
     Renders only while something is running: a bar left at 40% after a run
     finished reads as a stalled job, and after a FAILED one it reads as a lie.
-    Everything shown here was counted by R (see emit_progress in
-    src/R_shared/io_utils.R); this arranges it and works nothing out except the
-    wording of the estimate.
+    The numbers come from app/services/progress_estimate.py.
     """
     if not running or not progress:
         return None
-    remaining = _format_remaining(progress.get("remaining"))
+    step = progress.get("step")
+    title = progress["phase_label"]
+    if step and progress.get("steps"):
+        title = f"Step {step} of {progress['steps']}: {title}"
+    status = [f"{progress.get('overall_percent', 0)}%"]
+    remaining = _format_remaining(progress)
+    if remaining:
+        status.append(remaining)
+    elif not progress.get("has_reference"):
+        status.append("time left known after the first complete run")
     return dmc.Stack(
         [
             dmc.Space(h=8),
             dmc.Group(
-                [
-                    dmc.Text(progress["phase_label"], size="xs", fw=600),
-                    dmc.Text(
-                        f"{progress['done']} / {progress['total']}"
-                        + (f" · {remaining}" if remaining else ""),
-                        size="xs", c="dimmed"),
-                ],
+                [dmc.Text(title, size="xs", fw=600),
+                 dmc.Text(" · ".join(status), size="xs", c="dimmed")],
                 justify="space-between", gap="xs",
             ),
             _phase_bar(progress),
-            # The item in flight, so a run that has stopped moving is obvious
-            # from WHICH item it stopped on.
-            dmc.Text(progress.get("label") or "", size="xs", c="dimmed",
-                     truncate="end"),
         ],
         gap=4,
     )

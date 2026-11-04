@@ -44,6 +44,11 @@ STATUS_NAME = "status.json"
 EXIT_NAME = "exit_code"
 TMP_NAME = "tmp"
 
+#: Start of the line launch() writes before each run. Each run into the same
+#: output folder adds to the same log, so this line is where one run ends and
+#: the next begins (the Runner reads progress from the last run only).
+RUN_MARKER = "── started "
+
 
 def paths_for(output_dir: str | os.PathLike) -> tuple[Path, Path]:
     d = Path(output_dir) / RUN_SUBDIR
@@ -130,7 +135,7 @@ def launch(argv: list[str], cwd: str, output_dir: str, kind: str,
     log_file = open(log_path, "a", buffering=1, encoding="utf-8",
                     errors="replace")
     try:
-        log_file.write(f"\n── started {time.strftime('%Y-%m-%d %H:%M:%S')} ──\n")
+        log_file.write(f"\n{RUN_MARKER}{time.strftime('%Y-%m-%d %H:%M:%S')} ──\n")
         # Nobody wait()s for a detached run, so its exit status would otherwise
         # be unknowable and completion could only be GUESSED at from what it
         # printed. A one-line shell wrapper writes the real code down instead.
