@@ -3012,7 +3012,11 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # 8.5 GB, a 417 MB SVG and a 100 MB PDF per plot for 2.86M cells.
   vector_formats <- intersect(c("svg", "pdf"),
                               names(Filter(isTRUE, output_formats)))
-  if (length(vector_formats) && nrow(combined_matrix) > 500000L) {
+  # With ggrastr the points are a 300-dpi image inside the SVG/PDF (a few MB at
+  # most; the v5 J445 SVGs were 30 KB to 1 MB), so the note only applies
+  # without it.
+  if (length(vector_formats) && nrow(combined_matrix) > 500000L &&
+      !requireNamespace("ggrastr", quietly = TRUE)) {
     cat("NOTE: ", paste(toupper(vector_formats), collapse = " and "),
         " store one vector point per cell; at ",
         format(nrow(combined_matrix), big.mark = ","), " cells each plot will ",
