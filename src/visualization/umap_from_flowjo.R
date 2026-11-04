@@ -3206,7 +3206,10 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                  else nrow(combined_matrix)
     emit_run_info(cells = nrow(combined_matrix), fit_cells = fit_cells,
                   neighbors = n_neighbors, threads = embed_cores,
-                  sgd_threads = embed_sgd_cores)
+                  sgd_threads = embed_sgd_cores,
+                  # Spectral takes up to an hour on millions of cells; PCA
+                  # and random take seconds.
+                  spectral = as.integer(umap_init %in% c("auto", "spectral")))
   }
   # From here on the sub-phases report themselves: emit_uwot_stage()
   # (R_shared/stats_utils.R) translates uwot's stage announcements into

@@ -247,7 +247,7 @@ progress_elapsed <- function() {
 #'
 #' One line, before the embedding starts:
 #'
-#'   ::runinfo:: cells=2857074 fit_cells=300000 neighbors=15 threads=27 sgd_threads=27
+#'   ::runinfo:: cells=2857074 fit_cells=300000 neighbors=15 threads=27 sgd_threads=1 spectral=1
 #'
 #' The time of the neighbour search, the layout initialisation and the
 #' optimisation depends on these numbers, so the GUI can estimate a run with
