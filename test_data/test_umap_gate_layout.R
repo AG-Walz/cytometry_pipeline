@@ -1246,6 +1246,18 @@ if (!has_style) {
 if (!has_split) {
   cat("  SKIP  src/visualization/umap_split_plots.R is not present\n")
 } else {
+  # The J445 levels, in natural order: the first is never the control.
+  eq("control_level(): DMSO, not the first level 'class I'",
+     control_level(c("class I", "DMSO")), "DMSO")
+  eq("control_level(): 'unstimulated', and 'stimulated' is not a control",
+     control_level(c("stimulated", "unstimulated")), "unstimulated")
+  eq("control_level(): the first control of a combined column",
+     control_level(c("Cryptic class I", "CTA class I", "CTA DMSO", "nmTAA DMSO")),
+     "CTA DMSO")
+  ok("control_level(): NULL without a control word (Ctrl_2 and unstim. count)",
+     is.null(control_level(c("V0", "V1", "Controlled"))) &&
+       identical(control_level(c("A", "Ctrl_2")), "Ctrl_2") &&
+       identical(control_level(c("stim.", "unstim.")), "unstim."))
   fq <- data.frame(column = "visit", level = rep(c("V2", "V0"), each = 4),
                    combination = rep(c("up", "gone", "never", "same"), 2),
                    mean_pct = c(10, 0, 0, 2, 2.5, 1, 0, 2), sd_pct = NA_real_,
