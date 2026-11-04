@@ -1043,6 +1043,13 @@ test_that("calculate_enrichment returns CI bounds", {
 })
 
 
+test_that("emit_run_info writes one ::runinfo:: line of integer pairs", {
+  out <- capture.output(emit_run_info(cells = 2857074L, fit_cells = 3e5,
+                                      neighbors = 15, threads = NA))
+  expect_equal(out, "::runinfo:: cells=2857074 fit_cells=300000 neighbors=15")
+  expect_length(capture.output(emit_run_info(threads = NA)), 0)
+})
+
 # =============================================================================
 # Summary
 # =============================================================================

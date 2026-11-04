@@ -67,8 +67,19 @@ def load(argv: list[str], path: Path | None = None) -> dict[str, float] | None:
         return None
 
 
+def entries(path: Path | None = None) -> list[dict]:
+    """Every saved run, for the size-based model to calibrate on."""
+    return [e for e in _read(path or HISTORY_FILE).values() if isinstance(e, dict)]
+
+
 def save(argv: list[str], phases: dict[str, float],
-         path: Path | None = None) -> None:
+         path: Path | None = None, info: dict | None = None,
+         totals: dict | None = None) -> None:
+    """Merge a complete run's phase durations into its settings' entry.
+
+    ``info`` (the ::runinfo:: line) and ``totals`` (the progress totals) are
+    the run's size; with them the entry also calibrates run_time_model.
+    """
     if not phases:
         return
     path = path or HISTORY_FILE
@@ -77,7 +88,9 @@ def save(argv: list[str], phases: dict[str, float],
     old = data.get(key) if isinstance(data.get(key), dict) else {}
     merged = dict(old.get("phases") or {})
     merged.update({p: round(float(v), 1) for p, v in phases.items()})
-    data[key] = {"phases": merged, "saved": time.time()}
+    data[key] = {"phases": merged, "saved": time.time(),
+                 "info": dict(info or old.get("info") or {}),
+                 "totals": dict(totals or old.get("totals") or {})}
     if len(data) > MAX_ENTRIES:
         newest = sorted(data.items(), key=lambda kv: kv[1].get("saved", 0),
                         reverse=True)[:MAX_ENTRIES]

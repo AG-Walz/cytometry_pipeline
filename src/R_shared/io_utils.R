@@ -243,6 +243,31 @@ progress_elapsed <- function() {
   as.numeric(proc.time()[["elapsed"]])
 }
 
+#' The size of the embedding, for the GUI's estimate of the time left.
+#'
+#' One line, before the embedding starts:
+#'
+#'   ::runinfo:: cells=2857074 fit_cells=300000 neighbors=15 threads=27 sgd_threads=27
+#'
+#' The time of the neighbour search, the layout initialisation and the
+#' optimisation depends on these numbers, so the GUI can estimate a run with
+#' settings it has never seen (app/services/progress_estimate.py). Only
+#' `key=integer` pairs; a GUI ignores keys it does not know.
+emit_run_info <- function(...) {
+  info <- list(...)
+  vals <- suppressWarnings(vapply(info, function(v) as.numeric(v)[1], numeric(1)))
+  vals <- vals[is.finite(vals)]
+  if (!length(vals)) return(invisible(NULL))
+  cat(RUNINFO_PREFIX, " ",
+      paste0(names(vals), "=", format(round(vals), scientific = FALSE,
+                                      trim = TRUE), collapse = " "),
+      "\n", sep = "")
+  flush(stdout())
+  invisible(NULL)
+}
+
+RUNINFO_PREFIX <- "::runinfo::"
+
 emit_progress <- function(phase, done, total, label = "") {
   total <- suppressWarnings(as.integer(total))
   done  <- suppressWarnings(as.integer(done))

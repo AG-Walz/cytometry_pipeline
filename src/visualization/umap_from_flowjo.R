@@ -3196,6 +3196,18 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     model_saved <- TRUE
   }
   embedding_resumed <- !is.null(umap_coords)
+  # The size of the job, so the GUI can estimate the time left of a run with
+  # settings it has not seen before (emit_run_info in R_shared/io_utils.R).
+  if (exists("emit_run_info", mode = "function")) {
+    fit_cells <- if (embedding_resumed || !is.null(model_file)) 0L
+                 else if (supercell_fit) nrow(sc_fit$matrix)
+                 else if (gates_layout) length(fit_idx)
+                 else if (umap_subsample > 0) min(umap_subsample, nrow(combined_matrix))
+                 else nrow(combined_matrix)
+    emit_run_info(cells = nrow(combined_matrix), fit_cells = fit_cells,
+                  neighbors = n_neighbors, threads = embed_cores,
+                  sgd_threads = embed_sgd_cores)
+  }
   # From here on the sub-phases report themselves: emit_uwot_stage()
   # (R_shared/stats_utils.R) translates uwot's stage announcements into
   # embed_nn / embed_init, and the epoch callback carries the optimisation.

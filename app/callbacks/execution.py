@@ -126,8 +126,12 @@ def _format_remaining(progress: dict) -> str:
         hours, minutes = divmod(minutes, 60)
         text = (f"about {hours} h {minutes:02d} min left" if minutes
                 else f"about {hours} h left")
-    return ("at least " + text.removeprefix("about ")) if progress.get("overrun") \
-        else text
+    if progress.get("overrun"):
+        return "at least " + text.removeprefix("about ")
+    # Predicted from the size of the job, not measured on these settings.
+    if progress.get("estimate_kind") == "model":
+        return "roughly " + text.removeprefix("about ")
+    return text
 
 
 #: One colour per step, so the steps stay apart on the bar. The done part of
@@ -188,7 +192,8 @@ def _progress_bar(progress: dict, running: bool):
     if remaining:
         status.append(remaining)
     elif not progress.get("has_reference"):
-        status.append("time left known after the first complete run")
+        # The size of the job is known once the cells are extracted.
+        status.append("time left follows after the cell extraction")
     return dmc.Stack(
         [
             dmc.Space(h=8),

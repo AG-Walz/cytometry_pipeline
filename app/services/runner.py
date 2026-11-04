@@ -19,7 +19,7 @@ import subprocess
 import threading
 import time
 
-from app.services import detached, phase_history, progress_estimate
+from app.services import detached, phase_history, progress_estimate, run_time_model
 
 #: Hard cap on retained log lines, so a pathological run cannot exhaust memory.
 MAX_LINES = 20000
@@ -35,6 +35,23 @@ _PROGRESS_RE = re.compile(
     r"^::progress:: phase=(\S+) done=(\d+) total=(\d+)"
     r"(?: elapsed=([0-9.]+))? label=(.*)$"
 )
+
+#: The size of the job, from emit_run_info() in src/R_shared/io_utils.R:
+#: ``::runinfo:: cells=2857074 fit_cells=300000 neighbors=15 threads=27``.
+#: Hidden from the log, like the progress lines.
+_RUNINFO_RE = re.compile(r"^::runinfo:: (.*)$")
+
+
+def _parse_run_info(text: str) -> dict[str, float]:
+    out = {}
+    for pair in text.split():
+        key, _, value = pair.partition("=")
+        try:
+            out[key] = float(value)
+        except ValueError:
+            continue
+    return out
+
 
 #: The phases, their labels and order live with the estimate that uses them.
 #: Re-exported here because callers have always found them on the runner.
@@ -115,6 +132,11 @@ class Runner:
         #: Phase durations of the reference run, or None; see
         #: app/services/progress_estimate.py.
         self._reference: dict[str, float] | None = None
+        #: The size of the current run (its ::runinfo:: line), the latest
+        #: total of each phase, and the saved runs the model calibrates on.
+        self._run_info: dict[str, float] = {}
+        self._phase_totals: dict[str, int] = {}
+        self._history_entries: list[dict] = []
         #: The detached run whose durations are already in the history.
         self._recorded_dir: str | None = None
         #: Set when following a run that is not our child (see attach()).
@@ -139,6 +161,8 @@ class Runner:
             self._phase_times = {}
             self._resumed = set()
             self._reference = phase_history.load(argv)
+            self._run_info, self._phase_totals = {}, {}
+            self._history_entries = phase_history.entries()
             self._started_at = time.time()
             self._finished_at = None
             self._cancelling = False
@@ -195,6 +219,12 @@ class Runner:
                             "label": label,
                         }
                         self._note_phase_time(phase, elapsed)
+                        self._phase_totals[phase] = int(total)
+                    continue
+                info = _RUNINFO_RE.match(line)
+                if info:
+                    with self._lock:
+                        self._run_info = _parse_run_info(info.group(1))
                     continue
                 with self._lock:
                     self._resumed |= progress_estimate.resumed_phases([line])
@@ -317,6 +347,8 @@ class Runner:
             self._phase_times = {}
             self._resumed = set()
             self._reference = phase_history.load(self._argv)
+            self._run_info, self._phase_totals = {}, {}
+            self._history_entries = phase_history.entries()
             self._recorded_dir = None
             self._lines = []
         self._refresh_detached()
@@ -351,18 +383,25 @@ class Runner:
         runs: list[dict] = []
         for line in lines:
             if line.startswith(detached.RUN_MARKER) or not runs:
-                runs.append({"progress": {}, "times": {}, "lines": []})
+                runs.append({"progress": {}, "times": {}, "lines": [],
+                             "info": {}, "totals": {}})
             hit = _PROGRESS_RE.match(line)
             if hit:
                 phase, done, total, elapsed, label = hit.groups()
                 runs[-1]["progress"] = {"phase": phase, "done": int(done),
                                         "total": int(total), "label": label}
                 _note_time(runs[-1]["times"], phase, elapsed)
+                runs[-1]["totals"][phase] = int(total)
+                continue
+            info = _RUNINFO_RE.match(line)
+            if info:
+                runs[-1]["info"] = _parse_run_info(info.group(1))
                 continue
             runs[-1]["lines"].append(line)
             keep.append(line)
         current = runs[-1] if runs else {"progress": {}, "times": {},
-                                          "lines": []}
+                                          "lines": [], "info": {},
+                                          "totals": {}}
         progress = current["progress"]
         resumed = progress_estimate.resumed_phases(current["lines"])
         log_reference = _reference_from_runs(runs[:-1])
@@ -387,6 +426,8 @@ class Runner:
             # R wrote, not from anything held here.
             self._phase_times = current["times"]
             self._resumed = resumed
+            self._run_info = current["info"]
+            self._phase_totals = current["totals"]
             self._progress = progress
             # A complete run with the same settings is the best reference. An
             # earlier complete run in this log is the next best: before this
@@ -481,8 +522,9 @@ class Runner:
         # clock comes from when the run started.
         run_now = (time.time() - self._started_at
                    if self._started_at and self._status == RUNNING else None)
+        reference, kind = self._best_reference()
         view = progress_estimate.estimate(
-            p, self._phase_times, self._resumed, self._reference, run_now)
+            p, self._phase_times, self._resumed, reference, run_now, kind=kind)
         if self._status != RUNNING:
             view["remaining"] = None
         return view
@@ -497,7 +539,22 @@ class Runner:
             return
         took = progress_estimate.durations(self._phase_times)
         took = {ph: v for ph, v in took.items() if ph not in self._resumed}
-        phase_history.save(self._argv, took)
+        phase_history.save(self._argv, took, info=self._run_info,
+                           totals=self._phase_totals)
+
+    def _best_reference(self) -> tuple[dict[str, float] | None, str]:
+        """The reference for the estimate, and what kind it is.
+
+        Caller holds the lock. A complete run with the same settings first;
+        else a prediction from the size of the job, calibrated on this host's
+        saved runs; else nothing (before R has said the size).
+        """
+        if self._reference:
+            return self._reference, "measured"
+        guess = run_time_model.predict(self._run_info, self._phase_totals)
+        if guess:
+            return run_time_model.calibrate(guess, self._history_entries), "model"
+        return None, "measured"
 
     @property
     def busy(self) -> bool:

@@ -391,8 +391,11 @@ The progress bar reads only the LAST run in `run.log` (each run into the same
 output folder adds to that log, after a `── started` line). The time left
 comes from a reference run: the phase times of the last complete run with the
 same settings, kept in `~/.cache/umap_flowjo_app/phase_history.json`, or else
-the last complete run in the same log. Without a reference the bar shows no
-time. `Resuming: '<step>'` lines tell it which phases a run reuses from
+the last complete run in the same log. For settings that have no complete run
+yet, the time is predicted from the size of the job, which R states in a
+`::runinfo::` line before the embedding (cells, fitted cells, neighbours,
+threads; see `app/services/run_time_model.py`), and the bar says "roughly".
+Each host corrects that prediction with its own complete runs. `Resuming: '<step>'` lines tell it which phases a run reuses from
 `checkpoints/`. See `app/services/progress_estimate.py`.
 
 ---
