@@ -516,6 +516,20 @@ opt <- parse_args(OptionParser(
     "samples and plot it by sample, by subpopulation, and by every marker.\n")
 ))
 
+# An empty value for a numeric option ("--point_size ''", which is what the app
+# sent for a cleared field) parses to NA. NA is not "unset": a point size of NA
+# makes ggplot drop every point, and the 2026-11-03 J445 run (v5) drew 2,500
+# plots with axes and legends but no cells. An empty number means the option's
+# default, as if it had not been given.
+for (.o in option_list) {
+  .d <- .o@dest
+  if (.o@type %in% c("double", "integer", "numeric") &&
+      length(opt[[.d]]) == 1L && is.na(opt[[.d]])) {
+    opt[.d] <- list(.o@default)
+  }
+}
+rm(.o, .d)
+
 # -----------------------------------------------------------------------------
 # Locate the repo 'src' dir, set the shared_dir/src_dir globals (CLI convention),
 # and source the shared utilities + analysis module in dependency order.
