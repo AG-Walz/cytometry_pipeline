@@ -29,9 +29,13 @@ if (!exists("%||%")) `%||%` <- function(a, b) if (is.null(a)) b else a
 .PF_NOT_COUNTED <- c("other (rare)", "(no decision)", "(none)", "(multiple)")
 
 # Positive markers of one label part ("IFNy+ TNFa+" -> c("IFNy", "TNFa");
-# "none" and "IFNy- TNFa-" -> none).
+# "none" and "IFNy- TNFa-" -> none). A call ends at its sign, so the part is
+# split after each "+" or "-" followed by space, not at every space: marker
+# names can contain spaces ("TNF a+ IFN y+" -> c("TNF a", "IFN y")). Split at
+# every space, the J445 run counted gates "a" and "y" besides "TNF a" and
+# "IFN y", and drew a 0-7 scale for five gates.
 .pf_positive <- function(part) {
-  tok <- strsplit(trimws(part), "[[:space:]]+")[[1]]
+  tok <- strsplit(trimws(part), "(?<=[+-])[[:space:]]+", perl = TRUE)[[1]]
   sub("\\+$", "", tok[endsWith(tok, "+")])
 }
 

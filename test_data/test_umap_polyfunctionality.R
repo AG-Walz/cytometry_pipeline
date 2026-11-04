@@ -62,6 +62,11 @@ eq("one tier (no ' | '): the whole label, its negatives as 0",
 eq("three tiers: the last tier, and NA where a label stops early",
    polyfunctional_degree(c("CD3+ | CD4+ | IFNy+", "CD3+ | CD4+ | none",
                            "CD3+ | CD4+"))$degree, c(1L, 0L, NA))
+pf <- polyfunctional_degree(c("CD4+ | TNF a+ IFN y+", "CD8+ | CD107a+ TNF a+ IL2+ IFN y+",
+                             "CD4+ | none", "CD8+ | HLA-DR+"))
+eq("marker names with spaces or a hyphen are one gate (J445: 'TNF a', 'IFN y')",
+   pf$markers, c("CD107a", "TNF a", "IL2", "IFN y", "HLA-DR"))
+eq("...and counted once each", pf$degree, c(2L, 4L, 0L, 1L))
 ok("no positive gate anywhere: NULL (nothing to draw)",
    is.null(polyfunctional_degree(c("CD4+ | none", "CD4- CD8-"))))
 
