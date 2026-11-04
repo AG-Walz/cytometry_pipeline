@@ -2535,6 +2535,16 @@ write_plot_index <- function(path, gate_index, facet_entries) {
 }
 
 
+# Point size or alpha as given, or NULL ("choose for the number of cells") when
+# it is missing, NA or not a positive number. NA must never reach geom_point:
+# ggplot drops every point whose size is NA, leaving a plot with axes, legend
+# and no cells (the 2026-11-03 J445 run, v5).
+point_setting <- function(x) {
+  if (is.null(x) || length(x) != 1L || !is.numeric(x) || !is.finite(x) || x <= 0) {
+    return(NULL)
+  }
+  x
+}
 # =============================================================================
 # umap_from_flowjo() — extraction, then embedding, then the FlowJo-specific
 # plots. Kept as the one-call entry point the standalone script and the tests
@@ -2598,6 +2608,8 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   if (!requireNamespace("viridis", quietly = TRUE)) {
     stop("Package 'viridis' is required for marker colour scales.")
   }
+  point_size  <- point_setting(point_size)
+  point_alpha <- point_setting(point_alpha)
 
   # Resolved ONCE, here, so every phase and every log line agrees on the number
   # — and so "0" (decide for me) becomes a concrete count the run can report.
@@ -3000,7 +3012,11 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   # 8.5 GB, a 417 MB SVG and a 100 MB PDF per plot for 2.86M cells.
   vector_formats <- intersect(c("svg", "pdf"),
                               names(Filter(isTRUE, output_formats)))
-  if (length(vector_formats) && nrow(combined_matrix) > 500000L) {
+  # With ggrastr the points are a 300-dpi image inside the SVG/PDF (a few MB at
+  # most; the v5 J445 SVGs were 30 KB to 1 MB), so the note only applies
+  # without it.
+  if (length(vector_formats) && nrow(combined_matrix) > 500000L &&
+      !requireNamespace("ggrastr", quietly = TRUE)) {
     cat("NOTE: ", paste(toupper(vector_formats), collapse = " and "),
         " store one vector point per cell; at ",
         format(nrow(combined_matrix), big.mark = ","), " cells each plot will ",
@@ -3570,6 +3586,8 @@ plot_flowjo_umap_facets <- function(umap_df, combined_matrix, use_markers,
   if (is.null(colour_matrix)) colour_matrix <- combined_matrix
   stopifnot(nrow(colour_matrix) == nrow(umap_df),
             identical(colnames(colour_matrix), colnames(combined_matrix)))
+  point_size  <- point_setting(point_size)
+  point_alpha <- point_setting(point_alpha)
   if (is.null(normalize_umap)) normalize_umap <- normalize
   n_wsp <- n_workspaces
 
@@ -4056,6 +4074,8 @@ replot_from_saved <- function(run_dir, output_dir = run_dir, n_cores = 1L,
     stop("replot needs cells.csv.gz and run_info.json in ", run_dir,
          " (written by runs since 2026-10-14).", call. = FALSE)
   }
+  point_size  <- point_setting(point_size)
+  point_alpha <- point_setting(point_alpha)
   n_cores <- resolve_cores(n_cores)
   info <- jsonlite::fromJSON(need[2], simplifyVector = TRUE)
   par <- info$parameters

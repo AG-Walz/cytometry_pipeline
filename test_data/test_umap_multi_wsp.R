@@ -1309,6 +1309,14 @@ ok("cells in the same gate stay as close as before; others move apart",
 ok("the weight scales the separation linearly",
    isTRUE(all.equal(gate_separation_columns(c("CD4", "CD8", "CD4", NA), m, 2), 2 * g)))
 
+# --- point size and alpha: NA means "auto", never "draw nothing" -------------
+# An empty app field reached R as NA, and ggplot dropped every point whose
+# size was NA: the 2026-11-03 J445 run (v5) drew its plots without cells.
+cat("\n--- point_setting ---\n")
+ok("NA, NULL, empty, zero and negative mean auto (NULL)",
+   all(vapply(list(NA_real_, NULL, numeric(0), 0, -1, Inf, "0.1"),
+              function(x) is.null(point_setting(x)), logical(1))))
+ok("a positive number is kept", identical(point_setting(0.1), 0.1))
 cat("\n=== ", .pass, " passed, ", .fail, " failed ===\n", sep = "")
 
 # --- summary -----------------------------------------------------------------

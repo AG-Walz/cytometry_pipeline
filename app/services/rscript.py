@@ -113,6 +113,11 @@ def run_argv(params: dict) -> list[str]:
     argv.extend(["--output_dir", params["output_dir"]])
 
     def add(flag: str, value, default) -> None:
+        # A cleared NumberInput gives "", not None. "" means "the default":
+        # sent as `--point_size ''` it reached R as NA, and an NA point size
+        # drew every plot of the 2026-11-03 J445 run (v5) without its cells.
+        if isinstance(value, str) and not value.strip():
+            value = None
         if value is not None and value != default:
             argv.extend([flag, str(value)])
 

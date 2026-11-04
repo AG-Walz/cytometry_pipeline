@@ -346,7 +346,10 @@ option_list <- list(
   make_option("--split_reference", type = "character", default = NULL,
               help = paste0("Reference level of each --split_by column for ",
                             "the fold-change maps, e.g. \"timepoint=V0\". ",
-                            "Default: the first level.")),
+                            "Default: the first level of --level_order ",
+                            "when given, else a control level (DMSO, ",
+                            "unstimulated, control, mock, ...) when there ",
+                            "is one, else the first level.")),
   make_option("--expected_samples", type = "integer", default = 0,
               help = paste0("If > 0, warn when the run does not total exactly ",
                             "this many samples across all workspaces ",
@@ -515,6 +518,20 @@ opt <- parse_args(OptionParser(
     "\nCompute a single shared UMAP over one FlowJo-gated population across ",
     "samples and plot it by sample, by subpopulation, and by every marker.\n")
 ))
+
+# An empty value for a numeric option ("--point_size ''", which is what the app
+# sent for a cleared field) parses to NA. NA is not "unset": a point size of NA
+# makes ggplot drop every point, and the 2026-11-03 J445 run (v5) drew 2,500
+# plots with axes and legends but no cells. An empty number means the option's
+# default, as if it had not been given.
+for (.o in option_list) {
+  .d <- .o@dest
+  if (.o@type %in% c("double", "integer", "numeric") &&
+      length(opt[[.d]]) == 1L && is.na(opt[[.d]])) {
+    opt[.d] <- list(.o@default)
+  }
+}
+rm(.o, .d)
 
 # -----------------------------------------------------------------------------
 # Locate the repo 'src' dir, set the shared_dir/src_dir globals (CLI convention),

@@ -59,6 +59,13 @@ class PointSize(unittest.TestCase):
         self.assertNotIn("--point_size", a)
         self.assertNotIn("--point_alpha", a)
 
+    def test_a_cleared_field_sends_nothing(self):
+        # dmc.NumberInput gives "" when cleared; "--point_size ''" reached R
+        # as NA and drew plots without points.
+        a = argv(point_size="", point_alpha="  ")
+        self.assertNotIn("--point_size", a)
+        self.assertNotIn("--point_alpha", a)
+
     def test_a_chosen_size_is_sent(self):
         a = argv(point_size=0.1)
         self.assertEqual(a[a.index("--point_size") + 1], "0.1")
