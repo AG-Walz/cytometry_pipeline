@@ -102,7 +102,7 @@ def _speed(done: dict[str, float], reference: dict[str, float]) -> float:
 
 def estimate(progress: dict, phase_times: dict[str, list[float]],
              resumed: set[str], reference: dict[str, float] | None,
-             run_now: float | None) -> dict:
+             run_now: float | None, kind: str = "measured") -> dict:
     """The progress view: one entry per phase, and the time left.
 
     ``progress`` is the latest progress line of the current run, ``run_now``
@@ -137,7 +137,10 @@ def estimate(progress: dict, phase_times: dict[str, list[float]],
     done = {p: measured[p] for p, s in states.items() if s == "done"}
 
     ref = {p: v for p, v in (reference or {}).items() if v > 0}
-    speed = _speed(done, ref) if ref else 1.0
+    # A measured reference is corrected for how fast this run goes. A model
+    # is not: the first phases read files, and their speed says nothing about
+    # the neighbour search; the model is calibrated per host instead.
+    speed = _speed(done, ref) if ref and kind == "measured" else 1.0
     expected_cur = ref[current] * speed if current in ref else None
     by_clock = total_n <= FEW_STEPS or item_fill < 0.1
 
@@ -221,6 +224,9 @@ def estimate(progress: dict, phase_times: dict[str, list[float]],
         "steps": len(steps),
         "overrun": overrun,
         "has_reference": bool(ref),
+        # "measured": a complete run with these settings. "model": predicted
+        # from the size of the job (run_time_model), so less certain.
+        "estimate_kind": kind if ref else None,
         # Seconds until the WHOLE run is done, or None.
         "remaining": remaining,
     }
