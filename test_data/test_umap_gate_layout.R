@@ -1534,6 +1534,33 @@ if (ff_ok) {
   ok("ckpt_save(): no .part file left behind",
      !length(list.files(file.path(cd, "checkpoints"), pattern = "\\.part$")))
   unlink(cd, recursive = TRUE)
+  # --no_resume stops the READ of checkpoints, never the SAVE: the J445 v5
+  # run (2026-11-03) saved nothing with it, and its rerun took 93 minutes again.
+  # The conditions of the `if`s around each ckpt_save() / ckpt_load() call in
+  # umap_from_flowjo(), from its parse tree.
+  guards <- list(save = list(), load = list())
+  walk <- function(e, conds) {
+    if (!is.call(e)) return(invisible())
+    fn <- if (is.name(e[[1]])) as.character(e[[1]]) else ""
+    if (fn %in% c("ckpt_save", "ckpt_load")) {
+      k <- if (fn == "ckpt_save") "save" else "load"
+      guards[[k]][[length(guards[[k]]) + 1L]] <<- unique(unlist(lapply(conds, all.vars)))
+    }
+    if (fn == "if") {
+      walk(e[[2]], c(conds, list(e[[2]])))
+      for (b in as.list(e)[-(1:2)]) walk(b, c(conds, list(e[[2]])))
+      return(invisible())
+    }
+    for (a in as.list(e)[-1]) if (!missing(a)) walk(a, conds)
+  }
+  walk(body(ff_env$umap_from_flowjo), list())
+  ok("umap_from_flowjo(): every checkpoint save depends on save_ckpt, not on resume",
+     length(guards$save) >= 4L &&
+       all(vapply(guards$save, function(v) "save_ckpt" %in% v && !"use_ckpt" %in% v,
+                  logical(1))))
+  ok("...and every checkpoint read depends on resume (use_ckpt)",
+     length(guards$load) >= 4L &&
+       all(vapply(guards$load, function(v) "use_ckpt" %in% v, logical(1))))
 } else {
   cat("  SKIP  umap_from_flowjo.R could not be sourced here\n")
 }

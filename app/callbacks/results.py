@@ -229,7 +229,7 @@ def _load_settings_outputs():
 
 #: Form keys "Use these settings" can set (common.form_from_settings).
 _LOADABLE = sorted({*common._SETTINGS_TO_FORM.values(), "output_formats",
-                    "resume", "polyfunctionality", "umap_subsample",
+                    "polyfunctionality", "umap_subsample",
                     "random_fit_cells"})
 
 
