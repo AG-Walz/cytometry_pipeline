@@ -927,7 +927,8 @@ def _step_run(state: dict) -> list:
             label=hint("Reuse saved steps", ("A run into a folder an earlier run used continues "
                          "from its saved steps (extraction, supercells, "
                          "model, coordinates) whose settings still match. "
-                         "Off: recompute everything (--no_resume).")),
+                         "Off: recompute everything (--no_resume). The "
+                         "new steps are saved either way.")),
             checked=state["resume"],
         ),
         dmc.Space(h=14),

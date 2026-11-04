@@ -1157,7 +1157,8 @@ distinct_palette <- function(n) {
 #   the fit is skipped and every cell is projected onto that map.
 # @param resume Reuse the steps a previous run into output_dir saved
 #   (checkpoints/: extraction, supercells, model, coordinates) whose settings
-#   match this run's; FALSE recomputes everything.
+#   match this run's; FALSE recomputes everything. Either way, the steps this
+#   run computes are saved for the next run.
 # @param supercell_max Most supercells UMAP is fitted on: gamma is raised to
 #   cells / supercell_max when the cohort would give more (fit_subset =
 #   "supercell"). Keeps the fit small enough for the spectral start.
@@ -2846,7 +2847,14 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
                         else viability_pattern,
     cells_per_combination = cells_per_combination,
     min_combination_cells = min_combination_cells)
-  use_ckpt <- isTRUE(resume) && !isTRUE(list_populations)
+  # Two separate decisions. `resume` decides only whether saved steps are READ.
+  # Steps are always SAVED (except in inspect mode), because a run that
+  # recomputed everything still made results a later run can reuse. Before
+  # 2026-11-04 --no_resume also stopped the saving: the 93-minute J445 v5 run
+  # left no checkpoints, and the next run with the same settings took 93
+  # minutes again.
+  use_ckpt  <- isTRUE(resume) && !isTRUE(list_populations)
+  save_ckpt <- !isTRUE(list_populations)
   key_extract <- ckpt_key(list(
     "extract", extract_args[setdiff(names(extract_args), "report_json")],
     inputs = ckpt_input_stamp(wsp_path, fcs_dir, sample_metadata)))
@@ -2855,7 +2863,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     ext <- do.call(extract_flowjo_population, extract_args)
     # Inspect mode already printed and returned everything it has.
     if (isTRUE(ext$inspected)) return(invisible(ext))
-    if (use_ckpt) ckpt_save(output_dir, "extract", key_extract, ext)
+    if (save_ckpt) ckpt_save(output_dir, "extract", key_extract, ext)
   }
 
   combined_matrix     <- ext$combined_matrix
@@ -3114,7 +3122,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
     write_table_gz(cbind(sc_fit$supercells, as.data.frame(sc_fit$matrix)),
                    run_path(output_dir, "data", "supercells.csv.gz"))
     cat("Wrote supercells.csv.gz (the fit set: one row per supercell)\n")
-    if (use_ckpt) ckpt_save(output_dir, "supercells", key_fitset, sc_fit)
+    if (save_ckpt) ckpt_save(output_dir, "supercells", key_fitset, sc_fit)
   }
   # The fitted model is saved the moment it exists, before the projection
   # (most of an hour on a cohort), so a failure there cannot cost the fit:
@@ -3148,7 +3156,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
           sep = "")
       FALSE
     })
-    if (model_saved && use_ckpt) {
+    if (model_saved && save_ckpt) {
       ckpt_save(output_dir, "model", key_embed, "model/umap_model.uwot")
     }
   }
@@ -3251,7 +3259,7 @@ umap_from_flowjo <- function(wsp_path, fcs_dir,
   attr(umap_coords, "model") <- NULL
   if (!is.null(umap_model) && !model_saved) save_model(umap_model)
   rm(umap_model, saved_model)
-  if (use_ckpt && !embedding_resumed) {
+  if (save_ckpt && !embedding_resumed) {
     ckpt_save(output_dir, "embedding", key_embed, umap_coords)
   }
 
