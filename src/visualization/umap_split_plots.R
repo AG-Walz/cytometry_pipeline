@@ -258,6 +258,29 @@ combination_change_table <- function(freq, level, reference, pseudo_pct) {
 # Returns (invisibly) a data.frame of the figures written: file (stem), kind,
 # column, level, reference.
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# The control level of a split column: the first level with a word that names
+# a control (DMSO, unstimulated, control, ctrl, mock, untreated, vehicle,
+# medium, baseline, negative), or NULL. Levels are compared word by word and
+# case-blind, so "stimulated" is not "unstimulated" and "CTA DMSO" is a
+# control of "condition".
+#
+# Why: the reference of the change maps used to be the first level in natural
+# order. That is a control only by luck; in the J445 run (2026-11-03) it was
+# "class I" for stimulation, "stimulated" for stimulated and "Cryptic class I"
+# for condition, so every change map was the wrong way round.
+# -----------------------------------------------------------------------------
+.CONTROL_WORDS <- c("dmso", "unstim", "unstimulated", "nonstimulated", "control",
+                    "ctrl", "mock", "untreated", "vehicle", "medium", "media",
+                    "baseline", "negative", "neg", "nc", "unstained")
+
+control_level <- function(levels) {
+  levels <- as.character(levels)
+  words <- strsplit(tolower(levels), "[^[:alnum:]]+")
+  hit <- vapply(words, function(w) any(w %in% .CONTROL_WORDS), logical(1))
+  if (any(hit)) levels[which(hit)[1]] else NULL
+}
+
 plot_gate_layout <- function(cells, colour_matrix, use_markers, population,
                              output_dir, split_cols = character(0),
                              level_order = list(), split_reference = list(),
@@ -429,12 +452,18 @@ plot_gate_layout <- function(cells, colour_matrix, use_markers, population,
     }
     ref <- split_reference[[col]]
     if (is.null(ref) || !ref %in% levels) {
+      # Given a level order, its first level is the reference, as documented.
+      # Without one, a control level (DMSO, unstimulated, ...) if there is
+      # one, else the first level.
+      ctrl <- if (length(level_order[[col]])) NULL else control_level(levels)
+      default_ref <- if (is.null(ctrl)) levels[1] else ctrl
       if (!is.null(ref)) {
         warning("reference level '", ref, "' of '", col, "' is not present; using '",
-                levels[1], "'.", call. = FALSE)
+                default_ref, "'.", call. = FALSE)
       }
-      ref <- levels[1]
+      ref <- default_ref
     }
+    cat(sprintf("Change maps for '%s': against '%s'.\n", col, ref))
 
     # Level of each sample, and the frequency table for this column.
     s_lv <- tapply(vals, cells$sample, function(v) v[1])

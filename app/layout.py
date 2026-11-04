@@ -422,7 +422,9 @@ def _step_gates(state: dict) -> list:
             id="in-level-order",
             label=hint("Level order", (
                 "column=a,b;column2=c. The first level is the reference for "
-                "the fold-change maps. Empty: natural order."
+                "the fold-change maps. Empty: natural order, and the change "
+                "maps compare against a control level (DMSO, unstimulated, "
+                "control, ...) when the column has one."
             )),
             value=state["level_order"],
             placeholder="timepoint=V0,V1,V2",
